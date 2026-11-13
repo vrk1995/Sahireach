@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/staff-login/app.css?v=646d8cb532">
+<link rel="stylesheet" href="/staff-login/app.css?v=ad1131b28a">
 <style>
 /* Sign-in screen. Everything behind it (the tool and its data) only arrives after sign-in. */
 .app[hidden], .tabbar[hidden] { display: none !important; }
@@ -33,6 +33,7 @@
 .gate-sub { color: var(--ink-2); font-size: 15px; margin-top: 8px; text-wrap: balance; }
 .gate form { text-align: left; }
 .gate form h1, .gate form .gate-sub { text-align: center; }
+#g-load .gate-error { text-align: left; }
 .fld { display: block; margin-top: 16px; }
 .fld > span:first-child { display: block; font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 2px 6px; }
 .gate .input { height: 46px; font-size: 16px; padding: 0 14px; border-radius: var(--r-md); }
@@ -68,6 +69,15 @@
     <div class="gate-state" id="g-wait"><div class="spinner"></div><div id="g-wait-msg">Checking your sign-in…</div></div>
 
     <div class="gate-state" id="g-retry" hidden><div id="g-retry-msg"></div><button class="btn btn-primary" type="button" id="g-retry-go">Try again</button><div><button class="linkish" type="button" id="g-retry-out" style="margin-top:14px;font-size:14px">Sign out</button></div></div>
+
+    <div id="g-load" hidden>
+      <h1>Load your workspace</h1>
+      <p class="gate-sub">One-time step. Choose the workspace file you were sent. It is saved in your private database, never on the website.</p>
+      <div class="gate-error" id="ld-err" role="alert" hidden></div>
+      <input type="file" id="ld-file" accept=".json,application/json" hidden>
+      <button class="btn btn-primary btn-lg gate-go" type="button" id="ld-go">Choose workspace file</button>
+      <p class="gate-alt"><button type="button" class="linkish" id="ld-out">Sign out</button></p>
+    </div>
 
     <form id="g-signin" hidden novalidate>
       <h1>Staff sign in</h1>
@@ -109,7 +119,7 @@
   "use strict";
   var SB = "https://rfkxgfpoecugcubshwvv.supabase.co";
   var KEY = "sb_publishable_vYObsiaY6R2Zb_Yjf-a0hA_kKjo4w2Y";
-  var STORE = "sr.staff.session", BUILD = "646d8cb532";
+  var STORE = "sr.staff.session";
   var $ = function (id) { return document.getElementById(id); };
   var session = null, refreshing = null;
 
@@ -150,24 +160,8 @@
     if (!quiet) location.reload();
   }
 
-  /* ---------- the encrypted workspace ---------- */
-  function b64(s) { var bin = atob(s), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
-  async function openWorkspace(snap) {
-    if (!(window.crypto && crypto.subtle)) throw new Error("This browser is too old to open the workspace. Update it and try again.");
-    var gz = typeof DecompressionStream === "function";
-    var res;
-    try { res = await fetch("/staff-login/" + (gz ? snap.file.replace(/\.enc$/, ".gz.enc") : snap.file) + "?v=" + BUILD); }
-    catch (e) { var ne = new Error("Could not reach the server. Check your internet connection and try again."); ne.network = true; throw ne; }
-    if (!res.ok) throw new Error("Could not load the workspace (" + res.status + "). Please try again in a minute.");
-    var buf = new Uint8Array(await res.arrayBuffer());
-    var key = await crypto.subtle.importKey("raw", b64(snap.key), "AES-GCM", false, ["decrypt"]);
-    var plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: buf.subarray(0, 12) }, key, buf.subarray(12));
-    var text = gz ? await new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream("gzip"))).text() : new TextDecoder().decode(plain);
-    return JSON.parse(text);
-  }
-
   /* ---------- screens ---------- */
-  var PANELS = ["g-wait", "g-retry", "g-signin", "g-setup"];
+  var PANELS = ["g-wait", "g-retry", "g-load", "g-signin", "g-setup"];
   function panel(id) { PANELS.forEach(function (p) { $(p).hidden = p !== id; }); }
   function wait(msg) { $("g-wait-msg").textContent = msg; panel("g-wait"); }
   function showError(id, msg) { var el = $(id); el.textContent = msg || ""; el.hidden = !msg; }
@@ -179,12 +173,17 @@
   }
   function busy(btn, on, label) { btn.disabled = on; if (label) btn.textContent = label; }
 
+  function firstName(me) { return String((me && me.name) || "").trim().split(/\s+/)[0]; }
   async function start() {
     wait("Opening your workspace…");
     var info = await authed("/rest/v1/rpc/staff_bootstrap", {});
     if (!info || !info.staff) { await signOut(true); form("signin", "This account does not have staff access. Ask the owner for a setup code."); return; }
-    if (!info.snapshot) throw new Error("You are signed in" + (info.me && info.me.name ? ", " + String(info.me.name).split(" ")[0] : "") + ". The workspace is being switched on and will open here shortly.");
-    var bundle = await openWorkspace(info.snapshot);
+    if (!info.ready) {
+      if (info.me && info.me.role === "owner") { showError("ld-err", ""); panel("g-load"); return; }
+      throw new Error("You are signed in, " + firstName(info.me) + ". The workspace has not been set up yet. Please check again later.");
+    }
+    var bundle = await authed("/rest/v1/rpc/staff_workspace_get", {});
+    if (!bundle || typeof bundle.js !== "string" || !bundle.data) throw new Error("The workspace could not be opened. Please try again.");
     window.SR = {
       me: info.me, data: bundle.data, logo: "/logo.png",
       signOut: function () { signOut(false); },
@@ -240,6 +239,25 @@
     if (t.dataset.mode) { form(t.dataset.mode); return; }
     var input = $(t.dataset.for), show = input.type === "password";
     input.type = show ? "text" : "password"; t.textContent = show ? "Hide" : "Show"; t.setAttribute("aria-label", show ? "Hide password" : "Show password");
+  });
+  /* ---------- owner: load the workspace file into the database (one time) ---------- */
+  $("ld-go").addEventListener("click", function () { $("ld-file").click(); });
+  $("ld-out").addEventListener("click", function () { signOut(true).then(function () { form("signin"); }); });
+  $("ld-file").addEventListener("change", async function () {
+    var f = this.files && this.files[0], btn = $("ld-go"); this.value = "";
+    if (!f) return;
+    showError("ld-err", ""); busy(btn, true, "Loading… please wait");
+    try {
+      var obj;
+      try { obj = JSON.parse(await f.text()); } catch (e) { throw new Error("That file could not be read. Choose the workspace file you were sent (its name ends in .json)."); }
+      if (!obj || obj.kind !== "sahireach-order-tool" || typeof obj.js !== "string" || !obj.data) throw new Error("That is not a SahiReach workspace file.");
+      await authed("/rest/v1/rpc/staff_workspace_put", { p_bundle: obj });
+    } catch (e) {
+      busy(btn, false, "Choose workspace file");
+      showError("ld-err", e.code === "PGRST202" ? "The database step has not been done yet. Do step 1 first, then try again." : e.message);
+      return;
+    }
+    busy(btn, false, "Choose workspace file"); go();
   });
   $("g-retry-go").addEventListener("click", function () { if (session) go(); else form("signin"); });
   $("g-retry-out").addEventListener("click", function () { signOut(true).then(function () { form("signin"); }); });

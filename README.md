@@ -16,8 +16,8 @@ The "Staff Login" link in the site header opens `staff-login/index.html`: a sign
 
 - **Accounts** live in the same Supabase project as the enquiry form (Supabase Auth). An account only counts as staff if it has a row in `public.staff`; nothing else is readable, even for a signed-in non-staff account.
 - **New accounts** are created with a one-time setup code ("Set up your account" on the sign-in screen), never by open sign-up. Codes are stored hashed in `private.staff_invites`, work once and expire after 7 days. The owner can create codes for teammates from the Account panel inside the tool; the database function is `public.staff_invite_create()`.
-- **After sign-in** the page calls `public.staff_bootstrap()`, which returns the staff member's name and role and what the page needs to open the workspace.
-- Database objects: `public.staff`, `private.staff_invites`, `private.staff_vault`, and the functions `public.staff_claim`, `public.staff_bootstrap`, `public.staff_invite_create` (migration `staff_login_accounts`).
+- **After sign-in** the page calls `public.staff_bootstrap()` (name, role, whether the workspace is loaded) and then `public.staff_workspace_get()`, which returns the tool's code and data to staff only. The workspace lives in `private.staff_workspace`; it is never stored on this website or in this repository. The owner loads it once from the sign-in page (`public.staff_workspace_put()`, owner only).
+- Database objects: `public.staff`, `private.staff_invites`, `private.staff_workspace`, and the functions `public.staff_claim`, `public.staff_bootstrap`, `public.staff_invite_create`, `public.staff_workspace_get`, `public.staff_workspace_put`.
 
 ## Deployment
 
