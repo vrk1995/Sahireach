@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="same-origin">
+<title>SahiReach Staff</title>
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SahiReach">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/staff-login/app.css?v=646d8cb532">
+<style>
+/* Sign-in screen. Everything behind it (the tool and its data) only arrives after sign-in. */
+.app[hidden], .tabbar[hidden] { display: none !important; }
+.gate { position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; align-items: center;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--bg); z-index: 50; }
+.gate::before, .gate::after { content: ""; flex: 1 1 24px; }
+.gate::after { flex-grow: 1.4; }
+.gate-card { width: 100%; max-width: 400px; background: var(--surface); border-radius: var(--r-xl); box-shadow: var(--shadow-1); padding: 36px 32px 30px; text-align: center; flex: none; }
+.gate-logo { width: 56px; height: 56px; object-fit: contain; display: block; margin: 0 auto 10px; }
+.gate-brand { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+.gate-brand span { color: var(--tint); }
+.gate h1 { font-size: 26px; line-height: 1.15; font-weight: 700; letter-spacing: -0.025em; margin-top: 22px; }
+.gate-sub { color: var(--ink-2); font-size: 15px; margin-top: 8px; text-wrap: balance; }
+.gate form { text-align: left; }
+.gate form h1, .gate form .gate-sub { text-align: center; }
+.fld { display: block; margin-top: 16px; }
+.fld > span:first-child { display: block; font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 2px 6px; }
+.gate .input { height: 46px; font-size: 16px; padding: 0 14px; border-radius: var(--r-md); }
+.fld .hint { display: block; font-size: 12.5px; color: var(--ink-3); margin: 6px 2px 0; font-weight: 400; }
+.pw { position: relative; display: block; }
+.pw .input { padding-right: 64px; }
+.pw-toggle { position: absolute; right: 6px; top: 6px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--tint); }
+.pw-toggle:hover { background: var(--fill-2); }
+#su-code { font-family: var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+#su-code::placeholder { letter-spacing: 0.02em; }
+.gate-go { width: 100%; margin-top: 24px; }
+.gate-go[disabled] { opacity: 0.6; }
+.gate-alt { text-align: center; color: var(--ink-2); font-size: 14px; margin-top: 18px; }
+.linkish { color: var(--tint); font-weight: 600; font-size: inherit; }
+.linkish:hover { text-decoration: underline; }
+.gate-error { margin-top: 18px; background: var(--bad-soft); color: var(--bad); border-radius: var(--r-md); padding: 11px 14px; font-size: 14px; font-weight: 500; }
+.gate-state { padding: 26px 0 8px; color: var(--ink-2); font-size: 15px; }
+.gate-state .btn { margin-top: 18px; }
+.spinner { width: 26px; height: 26px; margin: 0 auto 14px; border-radius: 50%; border: 2.5px solid var(--fill); border-top-color: var(--tint); animation: gate-spin 0.8s linear infinite; }
+@keyframes gate-spin { to { transform: rotate(360deg); } }
+.gate-back { margin-top: 22px; font-size: 14px; color: var(--ink-2); flex: none; }
+.gate-back:hover { color: var(--ink); }
+@media (max-width: 440px) { .gate-card { padding: 30px 22px 26px; } .gate h1 { font-size: 24px; } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+</style>
+</head>
+<body>
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <img class="gate-logo" src="/logo.png" alt="" width="56" height="56">
+    <div class="gate-brand">Sahi<span>Reach</span></div>
+
+    <div class="gate-state" id="g-wait"><div class="spinner"></div><div id="g-wait-msg">Checking your sign-in…</div></div>
+
+    <div class="gate-state" id="g-retry" hidden><div id="g-retry-msg"></div><button class="btn btn-primary" type="button" id="g-retry-go">Try again</button><div><button class="linkish" type="button" id="g-retry-out" style="margin-top:14px;font-size:14px">Sign out</button></div></div>
+
+    <form id="g-signin" hidden novalidate>
+      <h1>Staff sign in</h1>
+      <p class="gate-sub">Orders, dispatch, stock and more, in one place.</p>
+      <div class="gate-error" id="si-err" role="alert" hidden></div>
+      <label class="fld"><span>Email</span><input class="input" id="si-email" name="email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" required></label>
+      <label class="fld"><span>Password</span><span class="pw"><input class="input" id="si-pass" name="password" type="password" autocomplete="current-password" required><button type="button" class="pw-toggle" data-for="si-pass" aria-label="Show password">Show</button></span></label>
+      <button class="btn btn-primary btn-lg gate-go" type="submit" id="si-go">Sign in</button>
+      <p class="gate-alt">First time here? <button type="button" class="linkish" data-mode="setup">Set up your account</button></p>
+    </form>
+
+    <form id="g-setup" hidden novalidate>
+      <h1>Set up your account</h1>
+      <p class="gate-sub">You need the one-time setup code you were given.</p>
+      <div class="gate-error" id="su-err" role="alert" hidden></div>
+      <label class="fld"><span>Your name</span><input class="input" id="su-name" name="name" type="text" autocomplete="name" autocapitalize="words" maxlength="80" required></label>
+      <label class="fld"><span>Email</span><input class="input" id="su-email" name="email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" required></label>
+      <label class="fld"><span>Choose a password</span><span class="pw"><input class="input" id="su-pass" name="new-password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><button type="button" class="pw-toggle" data-for="su-pass" aria-label="Show password">Show</button></span><span class="hint">At least 8 characters.</span></label>
+      <label class="fld"><span>Setup code</span><input class="input" id="su-code" name="setup-code" type="text" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="24" required></label>
+      <button class="btn btn-primary btn-lg gate-go" type="submit" id="su-go">Create account</button>
+      <p class="gate-alt">Already set up? <button type="button" class="linkish" data-mode="signin">Sign in</button></p>
+    </form>
+  </div>
+  <a class="gate-back" href="/">← Back to sahireach.com</a>
+</div>
+
+<div class="app" id="app" hidden>
+  <aside class="sidebar" id="sidebar" aria-label="Main navigation"></aside>
+  <main class="main" id="main"><div id="view"></div></main>
+</div>
+<nav class="tabbar" id="tabbar" aria-label="Main navigation" hidden></nav>
+<div class="scrim" id="scrim" hidden data-act="closeSheet"></div>
+<aside class="sheet" id="sheet" hidden aria-label="Details"></aside>
+<div id="modal-root"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+  var SB = "https://rfkxgfpoecugcubshwvv.supabase.co";
+  var KEY = "sb_publishable_vYObsiaY6R2Zb_Yjf-a0hA_kKjo4w2Y";
+  var STORE = "sr.staff.session", BUILD = "646d8cb532";
+  var $ = function (id) { return document.getElementById(id); };
+  var session = null, refreshing = null;
+
+  /* ---------- session ---------- */
+  function load() { try { return JSON.parse(localStorage.getItem(STORE)) || null; } catch (e) { return null; } }
+  function save(s) { session = s; try { if (s) localStorage.setItem(STORE, JSON.stringify(s)); else localStorage.removeItem(STORE); } catch (e) {} }
+  function keep(t) { save({ access_token: t.access_token, refresh_token: t.refresh_token, expires_at: Math.floor(Date.now() / 1000) + (t.expires_in || 3600) }); return session; }
+
+  async function call(path, body, token, method) {
+    var res, headers = { apikey: KEY, "Content-Type": "application/json" };
+    if (token) headers.Authorization = "Bearer " + token;
+    try { res = await fetch(SB + path, { method: method || "POST", headers: headers, body: body == null ? undefined : JSON.stringify(body) }); }
+    catch (e) { var ne = new Error("Could not reach the server. Check your internet connection and try again."); ne.network = true; throw ne; }
+    var text = await res.text(), json = null;
+    try { json = text ? JSON.parse(text) : null; } catch (e) {}
+    if (!res.ok) {
+      var er = new Error((json && (json.msg || json.message || json.error_description)) || "Something went wrong. Please try again.");
+      er.status = res.status; er.code = json && (json.error_code || json.code); throw er;
+    }
+    return json;
+  }
+  function refresh() {
+    if (!refreshing) {
+      var rt = session && session.refresh_token;
+      refreshing = call("/auth/v1/token?grant_type=refresh_token", { refresh_token: rt }).then(keep).finally(function () { refreshing = null; });
+    }
+    return refreshing;
+  }
+  async function authed(path, body, method) {
+    if (!session) { var se = new Error("Please sign in again."); se.status = 401; throw se; }
+    if (session.expires_at - Date.now() / 1000 < 90) await refresh();
+    try { return await call(path, body, session.access_token, method); }
+    catch (e) { if (e.status !== 401) throw e; await refresh(); return call(path, body, session.access_token, method); }
+  }
+  async function signOut(quiet) {
+    var t = session && session.access_token; save(null);
+    if (t) { try { await call("/auth/v1/logout?scope=local", null, t); } catch (e) {} }
+    if (!quiet) location.reload();
+  }
+
+  /* ---------- the encrypted workspace ---------- */
+  function b64(s) { var bin = atob(s), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
+  async function openWorkspace(snap) {
+    if (!(window.crypto && crypto.subtle)) throw new Error("This browser is too old to open the workspace. Update it and try again.");
+    var gz = typeof DecompressionStream === "function";
+    var res;
+    try { res = await fetch("/staff-login/" + (gz ? snap.file.replace(/\.enc$/, ".gz.enc") : snap.file) + "?v=" + BUILD); }
+    catch (e) { var ne = new Error("Could not reach the server. Check your internet connection and try again."); ne.network = true; throw ne; }
+    if (!res.ok) throw new Error("Could not load the workspace (" + res.status + "). Please try again in a minute.");
+    var buf = new Uint8Array(await res.arrayBuffer());
+    var key = await crypto.subtle.importKey("raw", b64(snap.key), "AES-GCM", false, ["decrypt"]);
+    var plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: buf.subarray(0, 12) }, key, buf.subarray(12));
+    var text = gz ? await new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream("gzip"))).text() : new TextDecoder().decode(plain);
+    return JSON.parse(text);
+  }
+
+  /* ---------- screens ---------- */
+  var PANELS = ["g-wait", "g-retry", "g-signin", "g-setup"];
+  function panel(id) { PANELS.forEach(function (p) { $(p).hidden = p !== id; }); }
+  function wait(msg) { $("g-wait-msg").textContent = msg; panel("g-wait"); }
+  function showError(id, msg) { var el = $(id); el.textContent = msg || ""; el.hidden = !msg; }
+  function form(mode, msg) {
+    panel(mode === "setup" ? "g-setup" : "g-signin");
+    showError("si-err", mode === "signin" ? msg : ""); showError("su-err", mode === "setup" ? msg : "");
+    var first = mode === "setup" ? $("su-name") : ($("si-email").value ? $("si-pass") : $("si-email"));
+    if (window.matchMedia("(hover: hover)").matches) { try { first.focus(); } catch (e) {} }
+  }
+  function busy(btn, on, label) { btn.disabled = on; if (label) btn.textContent = label; }
+
+  async function start() {
+    wait("Opening your workspace…");
+    var info = await authed("/rest/v1/rpc/staff_bootstrap", {});
+    if (!info || !info.staff) { await signOut(true); form("signin", "This account does not have staff access. Ask the owner for a setup code."); return; }
+    if (!info.snapshot) throw new Error("You are signed in" + (info.me && info.me.name ? ", " + String(info.me.name).split(" ")[0] : "") + ". The workspace is being switched on and will open here shortly.");
+    var bundle = await openWorkspace(info.snapshot);
+    window.SR = {
+      me: info.me, data: bundle.data, logo: "/logo.png",
+      signOut: function () { signOut(false); },
+      invite: function () { return authed("/rest/v1/rpc/staff_invite_create", {}); },
+      team: function () { return authed("/rest/v1/staff?select=name,role&active=is.true&order=created_at", null, "GET"); }
+    };
+    $("gate").remove(); $("app").hidden = false; $("tabbar").hidden = false;
+    var s = document.createElement("script"); s.textContent = bundle.js; document.body.appendChild(s);
+  }
+  function startFailed(e) {
+    if (e && (e.status === 400 || e.status === 401 || e.status === 403)) { save(null); form("signin", "Your sign-in has ended. Please sign in again."); return; }
+    $("g-retry-msg").textContent = (e && e.message) || "Something went wrong. Please try again."; panel("g-retry");
+  }
+  function go() { start().catch(startFailed); }
+
+  /* ---------- sign in ---------- */
+  $("g-signin").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var email = $("si-email").value.trim(), pass = $("si-pass").value, btn = $("si-go");
+    if (!email || !pass) { showError("si-err", "Enter your email and password."); return; }
+    showError("si-err", ""); busy(btn, true, "Signing in…");
+    try { keep(await call("/auth/v1/token?grant_type=password", { email: email, password: pass })); }
+    catch (e) {
+      busy(btn, false, "Sign in");
+      showError("si-err", e.code === "invalid_credentials" ? "That email or password is not right. Check them and try again." : e.message);
+      return;
+    }
+    busy(btn, false, "Sign in"); $("si-pass").value = ""; go();
+  });
+
+  /* ---------- first-time setup ---------- */
+  $("su-code").addEventListener("input", function () {
+    var raw = this.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16);
+    this.value = raw.replace(/(.{4})(?=.)/g, "$1-");
+  });
+  $("g-setup").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var name = $("su-name").value.trim(), email = $("su-email").value.trim(), pass = $("su-pass").value, code = $("su-code").value.trim(), btn = $("su-go");
+    var problem = !name ? "Enter your name." : !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? "Enter a valid email address." : pass.length < 8 ? "Choose a password with at least 8 characters." : code.replace(/[^A-Za-z0-9]/g, "").length !== 16 ? "Enter the 16-character setup code." : "";
+    if (problem) { showError("su-err", problem); return; }
+    showError("su-err", ""); busy(btn, true, "Creating your account…");
+    try {
+      await call("/rest/v1/rpc/staff_claim", { p_code: code, p_email: email, p_password: pass, p_name: name });
+      keep(await call("/auth/v1/token?grant_type=password", { email: email, password: pass }));
+    } catch (e) { busy(btn, false, "Create account"); showError("su-err", e.message); return; }
+    busy(btn, false, "Create account"); $("su-pass").value = ""; $("su-code").value = ""; go();
+  });
+
+  /* ---------- small controls ---------- */
+  document.addEventListener("click", function (ev) {
+    var t = ev.target.closest ? ev.target.closest("[data-mode], .pw-toggle") : null;
+    if (!t || !$("gate")) return;
+    if (t.dataset.mode) { form(t.dataset.mode); return; }
+    var input = $(t.dataset.for), show = input.type === "password";
+    input.type = show ? "text" : "password"; t.textContent = show ? "Hide" : "Show"; t.setAttribute("aria-label", show ? "Hide password" : "Show password");
+  });
+  $("g-retry-go").addEventListener("click", function () { if (session) go(); else form("signin"); });
+  $("g-retry-out").addEventListener("click", function () { signOut(true).then(function () { form("signin"); }); });
+
+  session = load();
+  if (session && session.refresh_token) go(); else form(/[?&]setup\b/.test(location.search) ? "setup" : "signin");
+})();
+</script>
+</body>
+</html>

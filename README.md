@@ -10,6 +10,15 @@ Static single-page site for SahiReach LLP, FMCG super stockist for Kerala.
 
 There is no application server. The site is static files on GitHub Pages. The one piece of dynamic behaviour is the "Brand partnership enquiry" form on the contact section, which `fetch()`s directly from the browser to a small [Supabase](https://supabase.com) project (`sahireach-site`, project ref `rfkxgfpoecugcubshwvv`, under the `SahiStart` org) and inserts a row into the `public.enquiries` table. The key embedded in the page is the `anon`/publishable key, which is safe to expose client-side — row-level security on the table only allows anonymous `INSERT`, not `SELECT`/`UPDATE`/`DELETE`, so a visitor can submit an enquiry but can't read anyone else's. View submissions in the Supabase dashboard (Table Editor → `enquiries`) or with the `service_role` key.
 
+## Staff login (`/staff-login/`)
+
+The "Staff Login" link in the site header opens `staff-login/index.html`: a sign-in screen for the SahiReach Order Tool (the web version of the Excel order tool). The page and `app.css` are public and contain no business data.
+
+- **Accounts** live in the same Supabase project as the enquiry form (Supabase Auth). An account only counts as staff if it has a row in `public.staff`; nothing else is readable, even for a signed-in non-staff account.
+- **New accounts** are created with a one-time setup code ("Set up your account" on the sign-in screen), never by open sign-up. Codes are stored hashed in `private.staff_invites`, work once and expire after 7 days. The owner can create codes for teammates from the Account panel inside the tool; the database function is `public.staff_invite_create()`.
+- **After sign-in** the page calls `public.staff_bootstrap()`, which returns the staff member's name and role and what the page needs to open the workspace.
+- Database objects: `public.staff`, `private.staff_invites`, `private.staff_vault`, and the functions `public.staff_claim`, `public.staff_bootstrap`, `public.staff_invite_create` (migration `staff_login_accounts`).
+
 ## Deployment
 
 Pushes to `main` deploy automatically to GitHub Pages via `.github/workflows/deploy-pages.yml`.
@@ -27,7 +36,6 @@ DNS propagation and certificate issuance can take anywhere from a few minutes to
 
 ## Before launch
 
-- **Not responsive yet** — the layout is desktop-only below ~1100px.
 - **Enquiry form has no notification.** Submissions land in Supabase but nothing currently pings anyone when a new row arrives — check the dashboard, or wire up a Supabase database webhook/edge function to alert on new rows.
 - **Coverage map** currently pins all 11 mainland Kerala districts. Confirm which are live versus on request.
 - Copyright year is hard-coded to 2026.
