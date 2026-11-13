@@ -17,7 +17,9 @@ The "Staff Login" link in the site header opens `staff-login/index.html`: a sign
 - **Accounts** live in the same Supabase project as the enquiry form (Supabase Auth). An account only counts as staff if it has a row in `public.staff`; nothing else is readable, even for a signed-in non-staff account.
 - **New accounts** are created with a one-time setup code ("Set up your account" on the sign-in screen), never by open sign-up. Codes are stored hashed in `private.staff_invites`, work once and expire after 7 days. The owner can create codes for teammates from the Account panel inside the tool; the database function is `public.staff_invite_create()`.
 - **After sign-in** the page calls `public.staff_bootstrap()` (name, role, whether the workspace is loaded) and then `public.staff_workspace_get()`, which returns the tool's code and data to staff only. The workspace lives in `private.staff_workspace`; it is never stored on this website or in this repository. The owner loads it once from the sign-in page (`public.staff_workspace_put()`, owner only).
-- Database objects: `public.staff`, `private.staff_invites`, `private.staff_workspace`, and the functions `public.staff_claim`, `public.staff_bootstrap`, `public.staff_invite_create`, `public.staff_workspace_get`, `public.staff_workspace_put`.
+- **Saving:** every change in the tool is saved a moment later with `public.staff_workspace_save(p_version, p_data)` (any staff). Saves carry the version they started from; if someone else saved in between, the save is refused rather than overwriting their work. The last 30 versions are kept in `private.staff_workspace_history`.
+- The screens' code (`staff-login/app.js`, no business data) is served from this site; the data comes from the database after sign-in.
+- Database objects: `public.staff`, `private.staff_invites`, `private.staff_workspace`, `private.staff_workspace_history`, and the functions `public.staff_claim`, `public.staff_bootstrap`, `public.staff_invite_create`, `public.staff_workspace_get`, `public.staff_workspace_put`, `public.staff_workspace_save`, `public.staff_workspace_version`.
 
 ## Deployment
 

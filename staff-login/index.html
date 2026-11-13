@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/staff-login/app.css?v=227c4b7712">
+<link rel="stylesheet" href="/staff-login/app.css?v=50d115f407">
 <style>
 /* Sign-in screen. Everything behind it (the tool and its data) only arrives after sign-in. */
 .app[hidden], .tabbar[hidden] { display: none !important; }
@@ -131,7 +131,7 @@
   async function call(path, body, token, method) {
     var res, headers = { apikey: KEY, "Content-Type": "application/json" };
     if (token) headers.Authorization = "Bearer " + token;
-    try { res = await fetch(SB + path, { method: method || "POST", headers: headers, body: body == null ? undefined : JSON.stringify(body) }); }
+    try { res = await fetch(SB + path, { method: method || "POST", headers: headers, body: body == null ? undefined : typeof body === "string" ? body : JSON.stringify(body) }); }
     catch (e) { var ne = new Error("Could not reach the server. Check your internet connection and try again."); ne.network = true; throw ne; }
     var text = await res.text(), json = null;
     try { json = text ? JSON.parse(text) : null; } catch (e) {}
@@ -185,7 +185,9 @@
     var bundle = await authed("/rest/v1/rpc/staff_workspace_get", {});
     if (!bundle || typeof bundle.js !== "string" || !bundle.data) throw new Error("The workspace could not be opened. Please try again.");
     window.SR = {
-      me: info.me, data: bundle.data, logo: "/logo.png", xlsxSrc: "/staff-login/vendor/xlsx-0.18.5.full.min.js",
+      me: info.me, data: bundle.data, logo: "/logo.png", version: typeof bundle.version === "number" ? bundle.version : null, savedBy: bundle.saved_by || null, savedAt: bundle.saved_at || null,
+      save: function (json, version) { return authed("/rest/v1/rpc/staff_workspace_save", '{"p_version":' + Number(version) + ',"p_data":' + json + "}"); },
+      latest: function () { return authed("/rest/v1/rpc/staff_workspace_version", {}); }, xlsxSrc: "/staff-login/vendor/xlsx-0.18.5.full.min.js",
       signOut: function () { signOut(false); },
       invite: function () { return authed("/rest/v1/rpc/staff_invite_create", {}); },
       team: function () { return authed("/rest/v1/staff?select=name,role&active=is.true&order=created_at", null, "GET"); },
@@ -198,7 +200,7 @@
     };
     /* the screens' code comes from this site (it holds no business data); the data came from the database above */
     await new Promise(function (ok, bad) {
-      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=227c4b7712";
+      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=50d115f407";
       s.onload = function () { $("gate").remove(); $("app").hidden = false; $("tabbar").hidden = false; ok(); };
       s.onerror = function () { bad(new Error("Could not load the tool. Check your internet connection and try again.")); };
       document.body.appendChild(s);

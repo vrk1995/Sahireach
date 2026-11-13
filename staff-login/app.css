@@ -446,3 +446,13 @@ table.t th.sticky-col { background: var(--surface-2); z-index: 2; }
 
 /* iPhone zooms the page when a focused field's text is under 16px */
 @media (max-width: 960px) { input, select, textarea { font-size: 16px !important; } }
+
+/* save status */
+.save-state { position: fixed; left: 262px; bottom: 18px; z-index: 60; display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 13px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--surface); color: var(--ink-2); box-shadow: var(--shadow-2); border: 1px solid var(--hairline); opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity 0.2s, transform 0.2s; }
+.save-state.on { opacity: 1; transform: none; pointer-events: auto; }
+.save-state.saved { color: var(--good); }
+.save-state.error, .save-state.conflict { color: var(--bad); background: var(--surface); border-color: var(--bad); cursor: pointer; }
+.save-state.off { color: var(--warn); }
+.save-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--fill); border-top-color: var(--tint); animation: save-spin 0.8s linear infinite; }
+@keyframes save-spin { to { transform: rotate(360deg); } }
+@media (max-width: 960px) { .save-state { right: auto; left: 50%; bottom: auto; top: max(10px, env(safe-area-inset-top)); transform: translate(-50%, -6px); } .save-state.on { transform: translate(-50%, 0); } }

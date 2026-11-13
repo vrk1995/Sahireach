@@ -181,7 +181,7 @@ function copyText(text, okMsg) {
   const fallback = () => { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); done(); } catch (e) { toast("Select and copy the text", "info"); } ta.remove(); };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(fallback); else fallback();
 }
-function logActivity(action, ref, detail) { D.activity.unshift({ time: iso(NOW()), action, ref, detail }); }
+function logActivity(action, ref, detail) { D.activity.unshift({ time: iso(NOW()), action, ref, detail, by: HOST ? ME.name : undefined }); }
 
 /* ---- small shared builders ---- */
 const statusPill = (s) => {
@@ -1223,7 +1223,7 @@ function specialHtml() {
 }
 function activityHtml() {
   const list = D.activity.slice(0, 70), tone = (a) => (/cancel/i.test(a) ? "bad" : /dispatch|delivered|received/i.test(a) ? "good" : /edited|hand/i.test(a) ? "warn" : "tint");
-  return `<div class="card card-pad"><div class="timeline">${list.map((a) => `<div class="tl"><span class="tl-dot ${tone(a.action)}"></span><div><div><b>${esc(a.action)}</b>${a.ref ? ` <span class="mono dim">${esc(a.ref)}</span>` : ""}</div><div class="row-sub">${esc(a.detail || "")}</div><div class="row-sub dim">${fmtDT(a.time)}</div></div></div>`).join("")}</div></div>`;
+  return `<div class="card card-pad"><div class="timeline">${list.map((a) => `<div class="tl"><span class="tl-dot ${tone(a.action)}"></span><div><div><b>${esc(a.action)}</b>${a.ref ? ` <span class="mono dim">${esc(a.ref)}</span>` : ""}</div><div class="row-sub">${esc(a.detail || "")}</div><div class="row-sub dim">${fmtDT(a.time)}${a.by ? " · " + esc(a.by) : ""}</div></div></div>`).join("")}</div></div>`;
 }
 VIEWS.setup = () => {
   const tab = S.setupTab, searchable = tab === "distributors" || tab === "products";
@@ -1260,7 +1260,7 @@ ACT.account = () => {
   const owner = ME.role === "owner";
   openSheet("Account", `<div class="card card-pad"><div class="hstack gap-12"><span class="avatar lg soft">${esc(initials(ME.name))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(ME.name)}</div><div class="row-sub">${owner ? "Owner" : "Staff"} · SahiReach LLP</div></div></div></div>
     <div style="margin-top:22px"><div class="group-label"><span>Team</span></div><div class="group" id="team-list"><div class="row"><span class="row-sub">Loading…</span></div></div></div>
-    ${owner ? `<div id="invite-box" style="margin-top:18px"><button class="btn btn-secondary" data-act="inviteStaff">${ic("plus", "sm")} Invite a teammate</button><button class="btn btn-secondary" data-act="dataUpload" style="margin-left:8px">${ic("doc", "sm")} Update data file</button><div class="row-sub" style="margin-top:8px">Creates a one-time setup code. Your teammate opens sahireach.com/staff-login, chooses “Set up your account” and enters it.</div></div>` : ""}`,
+    ${owner ? `<div id="invite-box" style="margin-top:18px"><button class="btn btn-secondary" data-act="inviteStaff">${ic("plus", "sm")} Invite a teammate</button><div class="row-sub" style="margin-top:8px">Creates a one-time setup code. Your teammate opens sahireach.com/staff-login, chooses “Set up your account” and enters it.</div></div>` : ""}`,
     `<button class="btn btn-secondary" data-act="signOut">${ic("logout", "sm")} Sign out</button>`);
   HOST.team().then((rows) => part("team-list", rows.map((r) => `<div class="row"><span class="avatar soft">${esc(initials(r.name).slice(0, 1) || "S")}</span><span class="grow"><div class="row-title">${esc(r.name)}</div></span><span class="row-sub">${r.role === "owner" ? "Owner" : "Staff"}</span></div>`).join("") || `<div class="row"><span class="row-sub">Just you so far.</span></div>`))
     .catch(() => part("team-list", `<div class="row"><span class="row-sub">Could not load the team. Check your connection.</span></div>`));
@@ -1331,3 +1331,76 @@ go(ROUTES[location.hash.slice(1)] ? location.hash.slice(1) : "home");
 
 let wasNarrow = isNarrow(), rzT = 0;
 window.addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { if (isNarrow() !== wasNarrow) { wasNarrow = isNarrow(); if (S.route === "home") render(); } }, 150); });
+
+/* ===== saving: every change is written to the database a moment after it is made ===== */
+function snapshot() {
+  const flat = (m) => Object.keys(m).reduce((a, k) => a.concat(m[k] || []), []);
+  const out = Object.assign({}, D, {
+    orderLines: flat(linesByOrder),
+    qcLines: flat(qcLinesByPO),
+    special: Object.assign({}, D.special, { distributors: D.distributors.filter((d) => d.special).map((d) => d.name) }),
+  });
+  return JSON.stringify(out);
+}
+const SAVE = { on: false, why: "", version: null, last: null, busy: false, again: false, timer: 0, state: "", conflict: false };
+(function initSave() {
+  if (!HOST) return;
+  if (!HOST.save || HOST.version == null) { SAVE.why = "setup"; return; }
+  if (DATA_OLD) { SAVE.why = "old"; return; }
+  SAVE.on = true; SAVE.version = HOST.version; SAVE.last = snapshot();
+})();
+function saveBadge() {
+  let el = $("#save-state");
+  if (!el) { el = document.createElement("button"); el.id = "save-state"; el.className = "save-state"; el.setAttribute("data-act", "saveRetry"); el.setAttribute("aria-live", "polite"); document.body.appendChild(el); }
+  return el;
+}
+function setSaveState(st, msg) {
+  SAVE.state = st; const el = saveBadge();
+  const txt = { saving: "Saving…", saved: "Saved", error: msg || "Not saved · tap to retry", conflict: "Changed by someone else · tap to reload", off: msg || "Saving is off" }[st] || "";
+  el.innerHTML = (st === "saved" ? ic("check", "sm") : st === "saving" ? `<span class="save-spin"></span>` : ic("alert", "sm")) + `<span>${esc(txt)}</span>`;
+  el.className = "save-state " + st + " on";
+  clearTimeout(el._t); if (st === "saved") el._t = setTimeout(() => el.classList.remove("on"), 1800);
+}
+function dirty() { return SAVE.on && snapshot() !== SAVE.last; }
+function queueSave() { if (!SAVE.on || SAVE.conflict) return; clearTimeout(SAVE.timer); SAVE.timer = setTimeout(doSave, 400); }
+async function doSave() {
+  if (!SAVE.on || SAVE.conflict) return;
+  if (SAVE.busy) { SAVE.again = true; return; }
+  const s = snapshot(); if (s === SAVE.last) return;
+  SAVE.busy = true; setSaveState("saving");
+  try {
+    const r = await HOST.save(s, SAVE.version);
+    SAVE.version = r && typeof r.version === "number" ? r.version : SAVE.version + 1; SAVE.last = s; setSaveState("saved");
+  } catch (e) {
+    const m = (e && e.message) || "";
+    if (/CONFLICT/.test(m)) { SAVE.conflict = true; setSaveState("conflict"); conflictSheet(m); }
+    else setSaveState("error", e && e.network ? "Offline · not saved yet · tap to retry" : "Not saved · tap to retry");
+  }
+  SAVE.busy = false;
+  if (SAVE.again) { SAVE.again = false; doSave(); }
+}
+function conflictSheet(m) {
+  const who = (m.split("CONFLICT:")[1] || "").trim();
+  openSheet("Someone else saved first", `<div class="banner warn">${ic("alert", "sm")}<span><b>${esc(who || "Another team member")} saved changes while you were working.</b> Your last change was not saved, so that nobody's work is overwritten. Reload to get the latest, then do your last step again.</span></div>`, `<button class="btn btn-primary" data-act="reloadLatest">${ic("undo", "sm")} Reload the latest</button>`);
+}
+ACT.reloadLatest = () => location.reload();
+ACT.saveRetry = () => { if (SAVE.state === "conflict") location.reload(); else if (SAVE.state === "error") doSave(); };
+/* save after anything the user does; IN handlers fire per keystroke, so the debounce matters */
+["click", "change", "keydown"].forEach((t) => document.addEventListener(t, () => setTimeout(queueSave, 0)));
+document.addEventListener("input", () => queueSave());
+window.addEventListener("beforeunload", (e) => { if (SAVE.on && !SAVE.conflict && (SAVE.busy || dirty())) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("online", () => { if (SAVE.state === "error") doSave(); });
+
+/* pick up what others saved: when the tab comes back, and every minute */
+async function checkLatest() {
+  if (!SAVE.on || SAVE.busy || SAVE.conflict || !HOST.latest) return;
+  let r; try { r = await HOST.latest(); } catch (e) { return; }
+  if (!r || typeof r.version !== "number" || r.version <= SAVE.version) return;
+  const busyHere = sheetOpen || (S.draft && S.draft.lines.length) || dirty();
+  if (!busyHere) { toast(`Updated by ${r.saved_by || "a team member"} · refreshing`, "undo"); setTimeout(() => location.reload(), 700); }
+  else setSaveState("conflict");
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkLatest(); });
+setInterval(checkLatest, 60000);
+
+if (HOST && !SAVE.on) setSaveState("off", SAVE.why === "setup" ? "Saving is off · database step needed" : "Load the new data file to start saving");
