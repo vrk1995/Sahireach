@@ -1145,14 +1145,14 @@ ACT.stockCat = (el) => { S.stockCat = el.dataset.cat; render(); };
 ACT.stockLow = () => { S.stockTab = "own"; S.stockCat = "Below reorder"; render(); };
 ACT.productSheet = (el) => {
   const sap = el.dataset.sap, s = stockBySap[sap], c = catBySap[sap] || {}, r = replBySap[sap] || {}, name = (s && s.name) || c.name || sap;
-  if (!s) { openSheet(esc(shortName(name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(name)}</div><div class="row-sub">${esc(c.cat || "")} · SAP ${esc(sap)}</div><div class="banner warn" style="margin-top:14px">${ic("info", "sm")}<span>You do not stock this product. Requests for it are logged as demand.</span></div></div>`); return; }
-  const cr = cratesOf(s), recent = D.orderLines.filter((l) => l.sap === sap).slice(-6).reverse();
+  if (!s) { openSheet(esc(shortName(name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(name)}</div><div class="row-sub">${esc(c.cat || "")} · SAP ${esc(sap)}</div><div class="banner warn" style="margin-top:14px">${ic("info", "sm")}<span>You do not stock this product. Requests for it are logged as demand.</span></div></div>${price(sap) != null ? `<div class="card card-pad"><div class="kv"><div><div class="k">Distributor rate</div><div class="v num">${rs2(price(sap))}</div></div><div><div class="k">SS rate</div><div class="v num">${rs2(ssRate(sap))}</div></div><div><div class="k">Pack</div><div class="v">${c.upc || "–"} boxes / crate</div></div></div></div>` : ""}`, `<button class="btn btn-secondary" data-act="productEdit" data-sap="${esc(sap)}">${ic("pencil", "sm")} Edit product</button>`); return; }
+  const cr = cratesOf(s), recent = D.orders.filter((o) => o.status !== "Cancelled").sort((a, b) => (a.time < b.time ? 1 : -1)).flatMap((o) => (linesByOrder[o.id] || []).filter((l) => l.sap === sap)).slice(0, 6);
   openSheet(esc(shortName(name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(s.name)}</div><div class="row-sub">${esc(s.cat || "")}</div><div class="hstack gap-8 wrap" style="margin-top:10px">${classPill(r.cls)}${s.tier ? `<span class="pill plain">${esc(s.tier)}</span>` : ""}<span class="pill plain mono">SAP ${esc(s.sap)}</span>${s.trop ? `<span class="pill plain mono">${esc(s.trop)}</span>` : ""}</div>
       <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">In stock</div><div class="v num" ${cr <= 0 ? 'style="color:var(--bad)"' : ""}>${nf(cr, 2)} crates</div></div><div><div class="k">Boxes</div><div class="v num">${nf(s.ea)}</div></div><div><div class="k">Pieces</div><div class="v num">${nf(s.ea * (s.ppe || 1))}</div></div><div><div class="k">Pack</div><div class="v">${s.upc} boxes / crate · ${s.ppe} pcs / box</div></div></div></div>
     <div><div class="group-label"><span>Price per box</span></div><div class="card card-pad"><div class="kv"><div><div class="k">MRP</div><div class="v num">${rs2(s.mrp)}</div></div><div><div class="k">Your cost (SS rate)</div><div class="v num">${rs2(s.cost)}</div></div><div><div class="k">Selling price</div><div class="v num">${rs2(s.price)}</div></div><div><div class="k">Margin</div><div class="v num">${rs2(s.margin)}${s.price ? ` <span class="muted" style="font-weight:500">(${pct(s.margin / s.price, 1)})</span>` : ""}</div></div></div></div></div>
     ${r.sap ? `<div><div class="group-label"><span>Replenishment</span></div><div class="card card-pad"><div class="kv"><div><div class="k">Sells per day</div><div class="v num">${nf(r.perDay, 2)} crates</div></div><div><div class="k">Days of stock</div><div class="v num">${r.perDay > 0 ? (cr / r.perDay).toFixed(1) : "–"}</div></div><div><div class="k">Reorder point</div><div class="v num">${nf(r.rop, 1)} crates</div></div><div><div class="k">Target stock</div><div class="v num">${nf(r.target, 1)} crates</div></div><div><div class="k">On order</div><div class="v num">${nf(r.onOrder, 1)} crates</div></div><div><div class="k">Missed, 28 days</div><div class="v num">${nf(r.missed, 1)} crates</div></div></div></div></div>` : ""}
     ${s.move ? `<div class="banner info">${ic("clock", "sm")}<span><b>Last movement.</b> ${esc(s.move)}</span></div>` : ""}
-    ${recent.length ? `<div><div class="group-label"><span>Latest orders with it</span></div><div class="group">${recent.map((l) => { const o = orderById(l.id) || {}; return `<div class="row"><span class="grow"><div class="row-title clip">${esc(o.dist || "")}</div><div class="row-sub">${fmtDate(o.time)}</div></span><span class="row-end"><span class="row-value">${nf(l.crates, 2)} crates</span></span></div>`; }).join("")}</div></div>` : ""}`);
+    ${recent.length ? `<div><div class="group-label"><span>Latest orders with it</span></div><div class="group">${recent.map((l) => { const o = orderById(l.id) || {}; return `<div class="row"><span class="grow"><div class="row-title clip">${esc(o.dist || "")}</div><div class="row-sub">${fmtDate(o.time)}</div></span><span class="row-end"><span class="row-value">${nf(l.crates, 2)} crates</span></span></div>`; }).join("")}</div></div>` : ""}`, `<button class="btn btn-secondary" data-act="productEdit" data-sap="${esc(sap)}">${ic("pencil", "sm")} Edit product and prices</button>`);
 };
 ACT.purchaseSheet = (el) => {
   const lines = D.purchases.filter((p) => p.id === el.dataset.id), g = lines[0];
@@ -1299,9 +1299,9 @@ function activityHtml() {
 VIEWS.setup = () => {
   const tab = S.setupTab, searchable = tab === "distributors" || tab === "products";
   return `<div class="page">
-    <div class="page-head"><div><h1 class="title">Setup</h1><div class="subtitle">Distributors, products and prices, and a record of everything that was changed.</div></div></div>
-    <div class="hstack gap-12 wrap">${seg("setupTab", tab, [["distributors", "Distributors", D.distributors.length], ["products", "Products & prices"], ["special", "Special prices"], ["activity", "Activity"]])}${searchable ? `<div class="search">${ic("search", "sm")}<input class="input" id="setup-q" type="search" placeholder="${tab === "distributors" ? "Search distributors" : "Search products, codes or categories"}" value="${esc(S.setupQ)}" data-in="setupQ" autocomplete="off"></div>` : ""}</div>
-    <div id="setup-body">${tab === "distributors" ? distGrid() : tab === "products" ? catalogGrid() : tab === "special" ? specialHtml() : activityHtml()}</div></div>`;
+    <div class="page-head"><div><h1 class="title">Setup</h1><div class="subtitle">Distributors, products and prices, company details, and a record of everything that was changed.</div></div>${tab === "distributors" ? `<div class="head-actions"><button class="btn btn-primary" data-act="distEdit">${ic("plus", "sm")} Add distributor</button></div>` : tab === "products" ? `<div class="head-actions"><button class="btn btn-primary" data-act="productEdit">${ic("plus", "sm")} Add product</button></div>` : ""}</div>
+    <div class="hstack gap-12 wrap">${seg("setupTab", tab, [["distributors", "Distributors", D.distributors.length], ["products", "Products & prices"], ["special", "Special prices"], ["settings", "Company & QC"], ["activity", "Activity"]])}${searchable ? `<div class="search">${ic("search", "sm")}<input class="input" id="setup-q" type="search" placeholder="${tab === "distributors" ? "Search distributors" : "Search products, codes or categories"}" value="${esc(S.setupQ)}" data-in="setupQ" autocomplete="off"></div>` : ""}</div>
+    <div id="setup-body">${tab === "distributors" ? distGrid() : tab === "products" ? catalogGrid() : tab === "special" ? specialHtml() : tab === "settings" ? settingsHtml() : activityHtml()}</div></div>`;
 };
 IN.setupQ = (el) => { S.setupQ = el.value; part("setup-body", S.setupTab === "distributors" ? distGrid() : catalogGrid()); };
 ACT.toggleSpecial = (el) => { const d = distByKey[key(el.dataset.name)]; d.special = !d.special; part("setup-body", specialHtml()); toast(d.special ? `${d.name} now gets special prices` : `${d.name} is back on the normal rate`); };
@@ -1316,7 +1316,7 @@ ACT.distSheet = (el) => {
     ${perf ? `<div class="tiles" style="grid-template-columns:repeat(2,minmax(0,1fr))"><div class="tile"><div class="tile-label">${esc(R.label)}</div><div class="tile-value">${rs(perf.now)}</div><div>${perf.prev > 0 ? growthChip(perf.now / perf.prev - 1) : ""}</div><div class="tile-sub">${perf.orders} order${perf.orders === 1 ? "" : "s"} · ${nf(perf.crates, 0)} crates</div></div><div class="tile"><div class="tile-label">Last dispatch</div><div class="tile-value">${fmtDate(perf.last)}</div><div class="tile-sub">${perf.days} day${perf.days === 1 ? "" : "s"} ago</div></div></div>` : ""}
     ${buy ? `<div class="banner tint">${ic("info", "sm")}<span><b>Buys ${buy.skus} products.</b> Most of all ${esc(shortName(buy.top))} (${pct(buy.topShare, 0)} of sales). Premium share ${pct(buy.premium, 0)}, entry level ${pct(buy.entry, 0)}.</span></div>` : ""}
     ${orders.length ? `<div><div class="group-label"><span>Orders</span><span>${orders.length}</span></div><div class="group">${orders.slice(0, 8).map((o) => `<button class="row" data-act="orderSheet" data-id="${o.id}"><span class="grow"><div class="row-title">${fmtDate(o.time)} · ${nf(o.crates)} crates</div><div class="row-sub">${o.lines} lines</div></span><span class="row-end">${statusPill(o.status)}<span class="row-value">${rs(o.value)}</span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div></div>` : ""}`,
-    `<button class="btn btn-primary" data-act="orderFor" data-name="${esc(d.name)}">${ic("plus", "sm")} New order for ${esc(d.short || d.name)}</button>`);
+    `<button class="btn btn-secondary" data-act="distEdit" data-name="${esc(d.name)}">${ic("pencil", "sm")} Edit details</button><button class="btn btn-primary" data-act="orderFor" data-name="${esc(d.name)}">${ic("plus", "sm")} New order for ${esc(d.short || d.name)}</button>`);
 };
 ACT.orderFor = (el) => { S.draft = newDraft(); S.draft.dist = el.dataset.name; closeSheet(); closeCmd(); go("new-order"); };
 
@@ -1384,6 +1384,172 @@ document.addEventListener("keydown", (e) => {
   if ((e.key === " " || e.key === "Enter") && e.target.matches && e.target.matches('[role="checkbox"][data-act]')) { e.preventDefault(); e.target.click(); }
 });
 window.addEventListener("hashchange", () => { const r = location.hash.slice(1); if (r && r !== S.route && ROUTES[r]) go(r); });
+
+/* ===== EDITING MASTERS: distributors, products and prices, quick commerce and company details ===== */
+const CAN_PRICE = !HOST || ME.role === "owner";
+const numOrNull = (v) => (v === "" || v == null || isNaN(+v) ? null : +v);
+const r4 = (v) => (v == null ? null : Math.round(v * 10000) / 10000);
+function fld(id, label, value, opts = {}) {
+  const attrs = `id="${id}" ${opts.disabled ? "disabled" : ""} ${opts.required ? "required" : ""}`;
+  let input;
+  if (opts.options) input = `<select class="select" ${attrs}>${opts.options.map((o) => { const v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : o; return `<option value="${esc(v)}" ${String(v) === String(value == null ? "" : value) ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
+  else input = `<input class="input" ${attrs} type="${opts.type || "text"}" ${opts.type === "number" ? `inputmode="decimal" step="${opts.step || "any"}" min="0"` : ""} ${opts.list ? `list="${id}-list"` : ""} value="${esc(value == null ? "" : value)}" placeholder="${esc(opts.ph || "")}" autocomplete="off">${opts.list ? `<datalist id="${id}-list">${opts.list.map((o) => `<option value="${esc(o)}">`).join("")}</datalist>` : ""}`;
+  return `<div class="field ${opts.full ? "full" : ""}"><label class="label" for="${id}">${esc(label)}</label>${input}${opts.hint ? `<div class="row-sub" style="margin-top:5px">${esc(opts.hint)}</div>` : ""}</div>`;
+}
+const val = (id) => { const el = $("#" + id); return el ? el.value.trim() : ""; };
+const formErr = (msg) => { part("form-err", msg ? `<div class="banner bad">${ic("alert", "sm")}<span>${esc(msg)}</span></div>` : ""); if (msg) { const e = $("#form-err"); if (e) e.scrollIntoView({ block: "nearest" }); } return false; };
+
+/* ---------- distributors ---------- */
+function rebuildDistIndex() { Object.keys(distByKey).forEach((k) => delete distByKey[k]); D.distributors.forEach((d) => { distByKey[key(d.name)] = d; }); }
+function renameDistributor(oldName, newName) {
+  const ren = (x, f) => { if (x && x[f] === oldName) x[f] = newName; };
+  D.orders.forEach((o) => ren(o, "dist")); D.oos.forEach((o) => ren(o, "dist")); D.tod.lines.forEach((o) => ren(o, "dist")); D.tod.byDist.forEach((o) => ren(o, "name"));
+  (D.salesBefore || []).forEach((r) => ren(r, "dist")); D.notes.forEach((n) => ren(n, "party"));
+  if (S.draft && S.draft.dist === oldName) S.draft.dist = newName;
+}
+ACT.distEdit = (el) => {
+  const d = el && el.dataset.name ? distByKey[key(el.dataset.name)] : null, isNew = !d, x = d || {};
+  const districts = [...new Set(D.distributors.map((y) => y.district).filter(Boolean))].sort();
+  openSheet(isNew ? "Add distributor" : "Edit distributor", `<div id="form-err"></div><div class="card card-pad"><div class="form-grid">
+      ${fld("df-name", "Name, as on invoices", x.name, { full: true, required: true, ph: "e.g. Supreme Traders Kerala LLP" })}
+      ${fld("df-short", "Short name for pick lists", x.short, { ph: "e.g. Supreme" })}
+      ${fld("df-phone", "Phone", x.phone, { type: "tel", ph: "10-digit mobile" })}
+      ${fld("df-district", "District", x.district, { list: districts, ph: "e.g. Ernakulam" })}
+      ${fld("df-uom", "Usually orders in", x.uom || "Crate", { options: [["Crate", "Crates"], ["EA (Box)", "Boxes"], ["Pieces", "Pieces"]] })}
+      ${fld("df-pay", "Payment", x.pay || "", { options: [["", "Not set"], "Cheque", "Bank Transfer", "UPI", "Cash"] })}
+      ${fld("df-credit", "Credit days", x.credit, { type: "number", step: "1" })}
+      ${fld("df-deposit", "Security deposit (₹)", x.deposit, { type: "number", step: "1" })}
+      ${fld("df-freezer", "Freezer", x.freezer || "", { options: [["", "Not set"], "Free Freezer", "Paid Freezer", "Own Freezer", "No Freezer"] })}
+      ${fld("df-pricing", "Pricing", x.special ? "special" : "normal", { options: [["normal", "Normal South Kerala rate"], ["special", `Special prices (${Math.round(D.special.pct * 100)}% off, TOD tracked)`]], full: true })}
+    </div></div>
+    ${!isNew && !D.orders.some((o) => o.dist === x.name) && !(D.salesBefore || []).some((r) => r.dist === x.name) ? `<button class="btn-plain" style="color:var(--bad);font-weight:600;height:auto;margin-top:4px" data-act="distDelete" data-name="${esc(x.name)}">${ic("trash", "sm")} Remove this distributor</button>` : ""}`,
+    `<button class="btn btn-secondary" data-act="${isNew ? "closeSheet" : "distSheet"}" data-name="${esc(x.name || "")}">Cancel</button><button class="btn btn-primary" data-act="distSave" data-name="${esc(x.name || "")}">${ic("check", "sm")} Save</button>`);
+};
+ACT.distSave = (el) => {
+  const old = el.dataset.name ? distByKey[key(el.dataset.name)] : null, name = val("df-name").replace(/\s+/g, " ");
+  if (!name) return formErr("Enter the distributor's name.");
+  const clash = distByKey[key(name)]; if (clash && clash !== old) return formErr("A distributor with this name already exists.");
+  const phone = val("df-phone").replace(/[^\d+]/g, ""); if (phone && phone.replace(/\D/g, "").length < 10) return formErr("The phone number looks too short.");
+  const credit = numOrNull(val("df-credit")), deposit = numOrNull(val("df-deposit"));
+  const d = old || { updated: null };
+  const before = old ? JSON.stringify(old) : "";
+  if (old && old.name !== name) renameDistributor(old.name, name);
+  Object.assign(d, { name, short: val("df-short") || null, phone: phone || null, district: val("df-district") || null, uom: val("df-uom"), pay: val("df-pay") || null, credit: credit != null ? Math.round(credit) : null, deposit: deposit != null ? Math.round(deposit) : null, freezer: val("df-freezer") || null, special: val("df-pricing") === "special", updated: iso(NOW()) });
+  d.pricing = d.special ? "Special prices" : "Normal";
+  if (!old) D.distributors.push(d);
+  rebuildDistIndex();
+  if (old && before === JSON.stringify(d)) { ACT.distSheet({ dataset: { name } }); return; }
+  logActivity(old ? "Distributor edited" : "Distributor added", name, old ? "Details updated" : `${d.district || "No district"} · ${d.special ? "special prices" : "normal rate"}`);
+  render(); ACT.distSheet({ dataset: { name } }); toast(old ? "Distributor updated" : "Distributor added");
+};
+ACT.distDelete = (el) => {
+  const d = distByKey[key(el.dataset.name)]; if (!d) return;
+  if (!el.dataset.sure) { el.dataset.sure = "1"; el.innerHTML = `${ic("trash", "sm")} Tap again to remove ${esc(d.name)}`; return; }
+  D.distributors.splice(D.distributors.indexOf(d), 1); rebuildDistIndex();
+  logActivity("Distributor removed", d.name, "Had no orders"); closeSheet(); render(); toast("Distributor removed");
+};
+
+/* ---------- products and prices ---------- */
+ACT.productEdit = (el) => {
+  const sap = el && el.dataset.sap, isNew = !sap, c = (sap && catBySap[sap]) || {}, st = (sap && stockBySap[sap]) || null, p = (sap && D.prices[sap]) || [], qc = (sap && qcBySap[sap]) || null;
+  const cats = [...new Set(D.catalog.map((x) => x.cat).filter(Boolean))].sort(), lock = !CAN_PRICE;
+  const sp = sap ? D.special.prices[sap] : null;
+  openSheet(isNew ? "Add product" : "Edit product", `<div id="form-err"></div>
+    <div class="card card-pad"><div class="card-title" style="margin-bottom:12px">Product</div><div class="form-grid">
+      ${fld("pf-name", "Name", c.name || (st && st.name), { full: true, required: true, ph: "e.g. Chocobar Max ( 20 x 50ml )" })}
+      ${fld("pf-sap", "SAP code", sap, { disabled: !isNew, required: true, ph: "7 digits", hint: isNew ? "" : "The SAP code links the product to orders and cannot be changed." })}
+      ${fld("pf-cat", "Category", c.cat || (st && st.cat), { list: cats })}
+      ${fld("pf-upc", "Boxes per crate", c.upc || (st && st.upc), { type: "number", step: "1", required: true })}
+      ${fld("pf-ppe", "Pieces per box", c.ppe || (st && st.ppe) || 1, { type: "number", step: "1" })}
+      ${fld("pf-trop", "Tropicana code", st && st.trop, { ph: "e.g. SR 005" })}
+      ${fld("pf-hsn", "HSN code", (st && st.hsn) || "21050000")}
+    </div></div>
+    <div class="card card-pad"><div class="card-title" style="margin-bottom:4px">Prices per box, excl. GST</div><div class="row-sub" style="margin-bottom:12px">${lock ? "Only the owner can change prices." : "From the Hangyo South Kerala price list. The distributor rate is what orders are billed at."}</div><div class="form-grid">
+      ${fld("pf-dist", "Distributor rate (₹)", r4(p[1] != null ? p[1] : st && st.price), { type: "number", disabled: lock })}
+      ${fld("pf-ss", "Your cost, SS rate (₹)", r4(p[0] != null ? p[0] : st && st.cost), { type: "number", disabled: lock })}
+      ${fld("pf-dealer", "Dealer price (₹)", r4(p[2]), { type: "number", disabled: lock })}
+      ${fld("pf-mrp", "MRP per box (₹)", p[3] != null ? p[3] : c.mrp, { type: "number", disabled: lock })}
+      ${fld("pf-special", `Special price (₹)`, r4(sp), { type: "number", disabled: lock, hint: `For distributors on special prices. Leave empty to bill them the normal rate. ${Math.round(D.special.pct * 100)}% off would be ${p[1] ? rs2(p[1] * (1 - D.special.pct)) : "–"}.`, full: true })}
+    </div></div>
+    <div class="card card-pad"><div class="hstack between"><span><div class="card-title">We stock this product</div><div class="row-sub">Off means requests for it are logged as demand, not sold.</div></span><button class="toggle" role="switch" id="pf-stocked" aria-checked="${!!st}" data-act="pfToggle" aria-label="We stock this product"></button></div></div>
+    <div class="card card-pad"><div class="hstack between"><span><div class="card-title">Sold on Swiggy / Zepto</div><div class="row-sub">Prices per piece, excl. GST, as on their POs.</div></span><button class="toggle" role="switch" id="pf-qc" aria-checked="${!!qc}" data-act="pfToggle" aria-label="Sold on quick commerce"></button></div>
+      <div class="form-grid" id="pf-qc-fields" style="margin-top:14px" ${qc ? "" : "hidden"}>
+        ${fld("pf-qc-ppc", "Pieces per crate (QC)", qc ? qc.ppc : (c.upc || 0) * (c.ppe || 1) || "", { type: "number", step: "1" })}
+        ${fld("pf-qc-sw", "Swiggy price per piece (₹)", r4(qc && (qc.swPrice || qc.swiggy)), { type: "number", disabled: lock })}
+        ${fld("pf-qc-zp", "Zepto price per piece (₹)", r4(qc && (qc.zpPrice || qc.zepto)), { type: "number", disabled: lock })}
+        ${fld("pf-qc-swcode", "Swiggy item code", qc && qc.swCode)}
+      </div></div>`,
+    `<button class="btn btn-secondary" data-act="${isNew ? "closeSheet" : "productSheet"}" data-sap="${esc(sap || "")}">Cancel</button><button class="btn btn-primary" data-act="productSave" data-sap="${esc(sap || "")}">${ic("check", "sm")} Save</button>`, true);
+};
+ACT.pfToggle = (el) => { const on = el.getAttribute("aria-checked") !== "true"; el.setAttribute("aria-checked", on); if (el.id === "pf-qc") $("#pf-qc-fields").hidden = !on; };
+ACT.productSave = (el) => {
+  const isNew = !el.dataset.sap, sap = isNew ? val("pf-sap").replace(/\s/g, "") : el.dataset.sap, name = val("pf-name").replace(/\s+/g, " ");
+  if (!name) return formErr("Enter the product name.");
+  if (!/^\d{5,10}$/.test(sap)) return formErr("Enter the SAP code (numbers only).");
+  if (isNew && (catBySap[sap] || stockBySap[sap])) return formErr("A product with this SAP code already exists. Search for it instead.");
+  const upc = Math.round(+val("pf-upc")), ppe = Math.max(1, Math.round(+val("pf-ppe") || 1));
+  if (!(upc > 0)) return formErr("Enter how many boxes go in one crate.");
+  const dist = numOrNull(val("pf-dist")), ss = numOrNull(val("pf-ss")), dealer = numOrNull(val("pf-dealer")), mrp = numOrNull(val("pf-mrp")), special = numOrNull(val("pf-special"));
+  if (CAN_PRICE && special != null && dist != null && special > dist) return formErr("The special price should not be higher than the distributor rate.");
+  const stocked = $("#pf-stocked").getAttribute("aria-checked") === "true", onQC = $("#pf-qc").getAttribute("aria-checked") === "true";
+  let c = catBySap[sap]; if (!c) { c = { sap, times: 0 }; D.catalog.push(c); catBySap[sap] = c; }
+  const oldUpc = c.upc;
+  Object.assign(c, { name, cat: val("pf-cat") || null, upc, ppe, mrp, stocked: stocked ? 1 : 0 });
+  catByName[key(name)] = c;
+  if (CAN_PRICE) {
+    const p = (D.prices[sap] = D.prices[sap] || [null, null, null, null, null]);
+    p[0] = ss; p[1] = dist; p[2] = dealer; p[3] = mrp; p[4] = mrp != null && ppe ? Math.round((mrp / ppe) * 100) / 100 : p[4];
+    if (special != null) D.special.prices[sap] = special; else delete D.special.prices[sap];
+  }
+  let st = stockBySap[sap];
+  if (stocked && !st) { st = { trop: null, name, sap, cat: c.cat, hsn: null, upc, ppe, ea: 0, crates: 0, pcs: 0, mrp, cost: ss, price: dist, margin: null, inSK: D.prices[sap] ? "Yes" : "No", updated: iso(NOW()), move: "Added in Setup", notes: null, tier: null }; D.stock.push(st); stockBySap[sap] = st; }
+  if (!stocked && st && st.ea > 0) return formErr(`There are still ${nf(st.ea / st.upc, 2)} crates in stock. Sell or adjust them before switching this off.`);
+  if (!stocked && st) { D.stock.splice(D.stock.indexOf(st), 1); delete stockBySap[sap]; st = null; }
+  if (st) {
+    Object.assign(st, { name, cat: c.cat, upc, ppe, trop: val("pf-trop") || null, hsn: val("pf-hsn") || null, mrp: mrp != null ? mrp : st.mrp });
+    if (CAN_PRICE) Object.assign(st, { cost: ss, price: dist, margin: dist != null && ss != null ? Math.round((dist - ss) * 100) / 100 : null });
+    st.crates = st.ea / upc; st.pcs = st.ea * ppe;
+    if (oldUpc && oldUpc !== upc) st.move = `Boxes per crate changed ${oldUpc} → ${upc} in Setup`;
+  }
+  const r = replBySap[sap]; if (r) Object.assign(r, { name, upc });
+  let q = qcBySap[sap];
+  if (onQC) {
+    const ppc = Math.round(+val("pf-qc-ppc")); if (!(ppc > 0)) return formErr("Enter how many pieces go in one crate for Swiggy / Zepto.");
+    if (!q) { q = { sap, trop: st ? st.trop : null, name, upc, ppe, cat: c.cat, mrp, crates: 0, ea: 0, ppc, updated: iso(NOW()), move: "Added in Setup", notes: null }; D.qcStock.push(q); qcBySap[sap] = q; }
+    Object.assign(q, { name, ppc, upc, ppe, swCode: val("pf-qc-swcode") || null });
+    if (CAN_PRICE) { q.swPrice = numOrNull(val("pf-qc-sw")); q.zpPrice = numOrNull(val("pf-qc-zp")); q.swiggy = q.swPrice; q.zepto = q.zpPrice; }
+  } else if (q && !(q.crates > 0)) { D.qcStock.splice(D.qcStock.indexOf(q), 1); delete qcBySap[sap]; }
+  logActivity(isNew ? "Product added" : "Product edited", sap, name + (CAN_PRICE && dist != null ? ` · distributor rate ${rs2(dist)}` : ""));
+  render(); ACT.productSheet({ dataset: { sap } }); toast(isNew ? "Product added" : "Product updated");
+};
+
+/* ---------- company and quick commerce settings ---------- */
+function settingsHtml() {
+  const C = D.company || (D.company = {}), Q = D.qcPick;
+  return `<div class="grid-2" style="align-items:start"><div class="card card-pad"><div class="card-title">Company details</div><div class="row-sub" style="margin:4px 0 14px">Printed on every sales order.</div><div class="form-grid">
+      ${fld("cf-name", "Company name", C.name, { full: true })}${fld("cf-address", "Address", C.address, { full: true })}
+      ${fld("cf-gstin", "GSTIN", C.gstin)}${fld("cf-fssai", "FSSAI licence", C.fssai)}
+      ${fld("cf-phone", "Phone", C.phone)}${fld("cf-email", "Email", C.email)}
+    </div><button class="btn btn-primary" style="margin-top:16px" data-act="companySave" ${CAN_PRICE ? "" : "disabled"}>${ic("check", "sm")} Save company details</button></div>
+    <div class="card card-pad"><div class="card-title">Swiggy and Zepto</div><div class="row-sub" style="margin:4px 0 14px">Where deliveries go and the smallest delivery worth sending.</div><div class="form-grid">
+      ${fld("qf-swto", "Swiggy delivery point", Q.swiggyTo, { full: true })}${fld("qf-swmin", "Swiggy minimum per delivery (₹)", Q.minSwiggy, { type: "number", step: "1" })}
+      ${fld("qf-zpto", "Zepto delivery point", Q.zeptoTo, { full: true })}${fld("qf-zpmin", "Zepto minimum per delivery (₹)", Q.minZepto, { type: "number", step: "1" })}
+      ${fld("qf-pct", "Special price discount (%)", Math.round(D.special.pct * 1000) / 10, { type: "number", hint: "Used to suggest special prices for new products.", disabled: !CAN_PRICE })}
+    </div><button class="btn btn-primary" style="margin-top:16px" data-act="qcSettingsSave">${ic("check", "sm")} Save</button></div></div>`;
+}
+ACT.companySave = () => {
+  if (!CAN_PRICE) return;
+  const C = D.company || (D.company = {});
+  Object.assign(C, { name: val("cf-name") || "SahiReach LLP", address: val("cf-address"), gstin: val("cf-gstin").toUpperCase(), fssai: val("cf-fssai"), phone: val("cf-phone"), email: val("cf-email") });
+  Object.assign(CO, C); logActivity("Company details edited", "", C.name); toast("Company details saved");
+};
+ACT.qcSettingsSave = () => {
+  const Q = D.qcPick;
+  Q.swiggyTo = val("qf-swto") || Q.swiggyTo; Q.zeptoTo = val("qf-zpto") || Q.zeptoTo;
+  Q.minSwiggy = Math.max(0, Math.round(+val("qf-swmin") || 0)); Q.minZepto = Math.max(0, Math.round(+val("qf-zpmin") || 0));
+  if (CAN_PRICE) { const pc = +val("qf-pct"); if (pc >= 0 && pc < 100) D.special.pct = pc / 100; }
+  logActivity("Quick commerce settings edited", "", `Swiggy minimum ${rs(Q.minSwiggy)}, Zepto minimum ${rs(Q.minZepto)}`); toast("Settings saved");
+};
 
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
 (function buildShell() {
