@@ -315,6 +315,181 @@ function stockValue() {
   return { own, qc, total: own + qc, cats };
 }
 
+/* ===== live truck plan: the Excel "Plan the Truck" engine, worked out again every time it is looked at,
+   from today's date, the orders, missed sales, Vyapar sales before the tool, stock and open Hangyo POs.
+   Your rules per product (order rule, min, max, adjust, your crates) and the Rules page are kept as inputs. ===== */
+function normInv(p) { // Acklam's inverse normal, accurate to about 1e-9
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239], b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572], c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783], d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const pl = 0.02425; let q, r;
+  if (p < pl) { q = Math.sqrt(-2 * Math.log(p)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+  if (p > 1 - pl) { q = Math.sqrt(-2 * Math.log(1 - p)); return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+  q = p - 0.5; r = q * q; return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+}
+const xr = (v, n = 0) => { const f = Math.pow(10, n); return Math.sign(v) * Math.round(Math.abs(v) * f + 1e-9) / f; }; // Excel ROUND
+const roundUp = (v) => (v > 0 ? Math.ceil(v - 1e-12) : Math.floor(v + 1e-12));
+const roundDown = (v) => (v > 0 ? Math.floor(v + 1e-12) : Math.ceil(v - 1e-12));
+function replSetting(re, dflt) { const s = (D.repl.settings || []).find((x) => re.test(x.name)); return s && s.value !== "" && s.value != null ? s.value : dflt; }
+function replCfg() {
+  const num = (re, d) => { const v = replSetting(re, d); return typeof v === "number" ? v : isNaN(+v) ? d : +v; }, yes = (re, d) => String(replSetting(re, d)).trim().toUpperCase() === "YES";
+  const dateOf = (re, d) => { const v = replSetting(re, d); return v ? String(v).slice(0, 10) : d; };
+  const svc = (v) => normInv(Math.min(0.999, Math.max(0.5, v)));
+  return {
+    truck: num(/^Truck size/, 630), lead: num(/^Lead time/, 2), season: num(/^Season factor/, 1),
+    w14: num(/last 14 days/, 0.5), w28: num(/days 15 to 28/, 0.3), w56: num(/days 29 to 56/, 0.2),
+    heroShare: num(/^Hero: SKUs making/, 0.6), coreShare: num(/^Core: SKUs up to/, 0.9), heroMinOrders: num(/^Hero: in at least/, 0.2),
+    zHero: svc(num(/Service level: Hero/, 0.95)), zCore: svc(num(/Service level: Core/, 0.9)), zTail: svc(num(/Service level: Tail/, 0.7)),
+    ssMax: num(/^Most safety stock/, 7), heroExtra: num(/Hero can be topped/, 10), coreExtra: num(/Core SKU can be topped/, 5),
+    pushDays: num(/keep about/, 7), pushTrigger: num(/reorder only below/, 3), qcSafety: num(/^QC: extra days/, 3),
+    countMissed: yes(/Count missed sales/, "Yes"), toolFrom: dateOf(/Order tool sales counted from/, "2026-10-08"), seedTo: dateOf(/counted up to/, "2026-10-09"), scale: yes(/^Scale sales/, "Yes"),
+  };
+}
+/* one-time tidy-up: "Your crates" and the typed QC crates belonged to the plan the last Hangyo PO was placed from */
+(function clearPlacedPlan() {
+  const lastPO = D.hpoLog.reduce((m, l) => (l.placed > m ? l.placed : m), "");
+  if (D.repl.planned && lastPO && lastPO >= D.repl.planned) { D.repl.rows.forEach((r) => { r.yours = null; }); D.repl.qcCrates = null; D.repl.planned = null; }
+})();
+/* products counted as another one (an old pack and its new code): sales, missed sales, stock and on-order go to
+   the one you order, and they are not ordered themselves. Set on the Excel Replenishment sheet, column AN. */
+(function sameSkuDefaults() {
+  if (D.repl.sameSet) return;
+  const dflt = { "5300012": "9000001", "5300014": "9000004", "5300187": "9000003" };
+  D.repl.rows.forEach((r) => { if (r.same === undefined) r.same = dflt[r.sap] || null; });
+  D.repl.sameSet = true;
+})();
+function syncReplRows() {
+  D.stock.forEach((s) => { if (!replBySap[s.sap]) { const r = { sap: s.sap, name: s.name, cat: s.cat, upc: s.upc, rule: "", reason: "", min: null, max: null, adj: null, yours: null }; D.repl.rows.push(r); replBySap[s.sap] = r; } });
+}
+let REPL_AT = null;
+function recomputeRepl() {
+  syncReplRows();
+  const C = replCfg(), today = ymd(NOW()), rows = D.repl.rows, idx = {};
+  rows.forEach((r) => { idx[r.sap] = r; Object.assign(r, { _d14: 0, _d28: 0, _d56: 0, _miss: 0, _ord: 0, _wk: [0, 0, 0, 0, 0, 0, 0, 0], _to: null, _f: 1, _main: false }); const st = stockBySap[r.sap]; if (st) { r.name = st.name; r.upc = st.upc; r.cat = st.cat; } });
+  rows.forEach((r) => { const t = r.same && idx[r.same]; if (t && t !== r && !t.same) { r._to = t; t._main = true; r._f = r.upc > 0 && t.upc > 0 ? r.upc / t.upc : 1; } });
+  const nowIso = iso(NOW()), seenMain = new Set();
+  const ids = new Set();
+  const add = (sap, date, q, ordKey) => {
+    const age = daysBetween(date, today); if (age < 0 || age > 55) return;
+    if (ordKey && age <= 27) ids.add(ordKey);
+    let r = idx[sap]; if (!r) return;
+    if (r._to) { q *= r._f; r = r._to; }
+    if (age <= 13) r._d14 += q; else if (age <= 27) r._d28 += q; else r._d56 += q;
+    r._wk[Math.floor(age / 7)] += q;
+    return { r, age };
+  };
+  D.orders.forEach((o) => {
+    if (o.status === "Cancelled") return; const d = o.time.slice(0, 10); if (d < C.toolFrom) return;
+    if (o.time > nowIso) return;
+    (linesByOrder[o.id] || []).forEach((l) => { const x = add(l.sap, d, l.crates || 0, "T:" + o.id); if (x && x.age <= 27) { const k = "T:" + o.id + "|" + x.r.sap; if (!x.r._main) x.r._ord++; else if (!seenMain.has(k)) { seenMain.add(k); x.r._ord++; } } });
+  });
+  if (C.countMissed) D.oos.forEach((m) => { if (typeof m.missed !== "number" || !(m.missed > 0)) return; const d = (m.time || "").slice(0, 10); if (d < C.toolFrom) return; if ((m.time || "") > nowIso) return; const x = add(m.sap, d, m.missed); if (x && x.age <= 27) x.r._miss += m.missed * (idx[m.sap] && idx[m.sap]._to ? idx[m.sap]._f : 1); });
+  (D.salesBefore || []).forEach((s) => { if (s.date > C.seedTo) return; const q = s.crates || 0; const x = add(s.sap, s.date, q, q > 0 ? "S:" + s.inv : null); if (x && x.age <= 27 && q > 0) { const k = "S:" + s.inv + "|" + x.r.sap; if (!x.r._main) x.r._ord++; else if (!seenMain.has(k)) { seenMain.add(k); x.r._ord++; } } });
+  const orders28 = ids.size, wsum = C.w14 + C.w28 + C.w56 || 1;
+  let sumJ = 0, sumAM = 0;
+  rows.forEach((r) => {
+    const m = r._wk.reduce((a, b) => a + b, 0) / 8; r.swing = xr(Math.sqrt(r._wk.reduce((a, b) => a + (b - m) * (b - m), 0) / 8), 2);
+    r.s14 = xr(r._d14, 2); r.s28 = xr(r._d28, 2); r.s56 = xr(r._d56, 2); r.missed = xr(r._miss, 2); r.orders = r._ord;
+    r._am = xr((C.w14 * r.s14 / 14 + C.w28 * r.s28 / 14 + C.w56 * r.s56 / 28) / wsum, 6); sumJ += r.s14; sumAM += r._am;
+  });
+  const level = C.scale && sumAM > 0 ? xr(sumJ / 14 / sumAM, 6) : 1;
+  let G10 = 0; rows.forEach((r) => { r.perDay = xr(r._am * level * C.season, 3); G10 += r.perDay; });
+  /* quick commerce side (QC Stock sheet) */
+  let qcPerDay = 0; const qcRows = D.qcStock.map((q) => {
+    let pcs28 = 0; D.qcPOs.forEach((p) => { const age = daysBetween(p.date.slice(0, 10), today); if (age < 0 || age > 27 || p.status === "Cancelled") return; (qcLinesByPO[p.po] || []).forEach((l) => { if (l.sap === q.sap && l.ppc > 0) pcs28 += l.pcs / l.ppc; }); });
+    q.ord28 = xr(pcs28, 2); q.perDay = xr((q.ord28 / 28) * C.season, 3); qcPerDay += q.perDay; return q;
+  });
+  const cycle = xr(Math.min(30, Math.max(5, C.truck / Math.max(0.01, G10 + qcPerDay))), 1);
+  let qcPlan = 0;
+  qcRows.forEach((q) => {
+    const pcsPerCrate = (q.upc || 0) * (q.ppe || 0) || q.ppc || 0;
+    let open = 0; D.qcPOs.forEach((p) => { if (p.status !== "Open" || p.expiry.slice(0, 10) < today) return; (qcLinesByPO[p.po] || []).forEach((l) => { if (l.sap === q.sap && l.status === "Open") open += l.pcs; }); });
+    q.openPcs = open; q.openCrates = pcsPerCrate ? xr(open / pcsPerCrate, 2) : 0;
+    q.onOrder = D.hpoLog.filter((l) => l.sap === q.sap && /QC/i.test(l.pool) && (l.status === "Open" || l.status === "Part received")).reduce((a, l) => a + Math.max(0, (l.crates || 0) - (l.upc ? (l.received || 0) / l.upc : 0)), 0);
+    q.target = xr(q.perDay * (C.lead + cycle + C.qcSafety) + q.openCrates, 2);
+    q.suggested = Math.max(0, roundUp(xr(q.target - (q.crates || 0) - q.onOrder - 0.1, 4)));
+    q.final = q.yours != null && q.yours !== "" ? +q.yours : q.suggested; qcPlan += q.final;
+    q.daysAfter = q.perDay > 0 ? xr(((q.crates || 0) + q.onOrder - q.openCrates) / q.perDay, 1) : null;
+  });
+  /* classes, stock, targets */
+  rows.forEach((r) => {
+    r.share = G10 > 0 ? r.perDay / G10 : 0;
+    r._al = G10 > 0 ? rows.reduce((a, x) => a + (x.perDay > r.perDay ? x.perDay : 0), 0) / G10 : 0;
+    r.clsData = r._to ? "Same SKU" : r.perDay <= 0 ? "No sales" : r._al < C.heroShare && r.orders >= C.heroMinOrders * orders28 ? "Hero" : r._al < C.coreShare ? "Core" : "Tail";
+    r.cls = r._to ? "Same SKU" : r.rule && r.rule !== "Auto" ? r.rule : r.clsData;
+    const ownEA = (s) => { const st = stockBySap[s.sap]; return st ? st.ea || 0 : 0; }, ordEA = (s) => D.hpoLog.filter((l) => l.sap === s.sap && /own/i.test(l.pool) && (l.status === "Open" || l.status === "Part received")).reduce((a, l) => a + Math.max(0, (l.boxes || (l.crates || 0) * (l.upc || 0)) - (l.received || 0)), 0);
+    const linked = rows.filter((x) => x._to === r), upc = r.upc || (stockBySap[r.sap] || {}).upc || 0;
+    r.stock = upc ? (ownEA(r) + linked.reduce((a, x) => a + ownEA(x), 0)) / upc : 0;
+    r.onOrder = upc ? (ordEA(r) + linked.reduce((a, x) => a + ordEA(x), 0)) / upc : 0;
+    const have = r.stock + r.onOrder, P = r.perDay, S2 = r.cls, noSS = S2 === "Push" || S2 === "Don't order" || S2 === "Same SKU" || P <= 0;
+    const z = S2 === "Hero" ? C.zHero : S2 === "Core" ? C.zCore : S2 === "Tail" || S2 === "No sales" ? C.zTail : 0;
+    r.days = P > 0 ? xr(have / P, 1) : null;
+    r.safety = noSS ? 0 : xr(Math.min(z * r.swing * Math.sqrt((C.lead + cycle) / 7), P * C.ssMax), 2);
+    r.rop = xr(P * C.lead + (noSS ? 0 : Math.min(z * r.swing * Math.sqrt(C.lead / 7), P * C.ssMax)), 2);
+    const base = S2 === "Push" ? P * C.pushDays : P * (C.lead + cycle) + r.safety, mn = +r.min || 0, mx = r.max != null && r.max !== "" ? +r.max : null;
+    r.target = S2 === "Don't order" || S2 === "Same SKU" ? 0 : xr(Math.max(mn, mx != null ? Math.min(mx, base) : base), 2);
+    let need = 0;
+    if (S2 !== "Don't order" && S2 !== "Same SKU") {
+      need = S2 === "Push" ? (have < Math.max(P * C.pushTrigger, mn) ? xr(r.target - have, 0) : 0) : S2 === "Hero" || S2 === "Core" ? roundUp(xr(Math.max(0, r.target - have) - 0.1, 4)) : xr(Math.max(0, r.target - have), 0);
+      need = Math.max(0, Math.max(0, need) + (+r.adj || 0));
+    }
+    r.need = need;
+    const lim = r.target + P * (S2 === "Hero" ? C.heroExtra : C.coreExtra);
+    r.room = S2 !== "Hero" && S2 !== "Core" ? 0 : Math.max(0, roundDown(xr((mx != null ? Math.min(mx, lim) : lim) - have - need, 4)));
+    r.belowRop = (S2 === "Hero" || S2 === "Core") && P > 0 && have < r.rop ? 1 : 0;
+    r._untilRop = (S2 === "Hero" || S2 === "Core") && P > 0 ? Math.max(0, xr((have - r.rop) / P, 1)) : null;
+    r._fixed = r.yours != null && r.yours !== "";
+  });
+  /* fill the truck to its size, or trim it */
+  const qcOnTruck = D.repl.qcCrates != null && D.repl.qcCrates !== "" ? +D.repl.qcCrates : qcPlan;
+  const cap = D.repl.ownOverride > 0 ? +D.repl.ownOverride : Math.max(0, C.truck - qcOnTruck);
+  rows.forEach((r) => { r.top = 0; });
+  let tot = rows.reduce((a, r) => a + (r._fixed ? +r.yours : r.need), 0), gap = cap - tot, topup = 0, trimmed = 0, shortC = 0, overC = 0;
+  const cov = (r) => (r.stock + r.onOrder + r.need + r.top) / r.perDay;
+  if (gap > 0) {
+    for (const cls of ["Hero", "Core"]) {
+      while (gap > 0) {
+        let best = null;
+        rows.forEach((r) => { if (r._fixed || r.cls !== cls || !(r.perDay > 0) || r.top >= r.room) return; if (!best || cov(r) < cov(best) || (cov(r) === cov(best) && r.perDay > best.perDay)) best = r; });
+        if (!best) break; best.top++; gap--; topup++;
+      }
+    }
+    shortC = gap;
+  } else if (gap < 0) {
+    let excess = -gap;
+    for (const cls of ["Push", "Tail", "No sales", "Core", "Hero"]) {
+      while (excess > 0) {
+        let best = null;
+        rows.forEach((r) => { if (r._fixed || r.cls !== cls || !(r.need + r.top > 0)) return; const c = r.perDay > 0 ? cov(r) : 1e18; const bc = best ? (best.perDay > 0 ? cov(best) : 1e18) : -1; if (!best || c > bc || (c === bc && r.perDay < best.perDay)) best = r; });
+        if (!best) break; best.top--; excess--; trimmed++;
+      }
+    }
+    overC = excess;
+  }
+  let G8 = 0, L8 = 0, G7 = 0, ownFinal = 0, minUntil = null;
+  rows.forEach((r) => {
+    r.suggested = Math.max(0, r.need + r.top); r.final = r._fixed ? +r.yours : r.suggested; r.boxes = r.final * (r.upc || 0);
+    r.daysAfter = r.perDay > 0 ? xr((r.stock + r.onOrder + r.final) / r.perDay, 1) : null; r.value = r.boxes * (ssRate(r.sap) || 0);
+    const notes = [];
+    if (r._to) notes.push(`Counted in ${shortName(r._to.name)} (same product), not ordered itself.`);
+    if (r._main) notes.push(`Also counts ${rows.filter((x) => x._to === r).map((x) => shortName(x.name)).join(", ")} (same product).`);
+    if (r.cls === "Don't order") notes.push("Not ordered" + (r.reason ? ": " + r.reason : "") + ".");
+    if (r.missed > 0 && r.cls !== "Don't order") notes.push(`Missed ${nf(r.missed, 1)} crate(s) in the last 28 days.`);
+    if (r.perDay <= 0 && r.stock > 0) notes.push(`No sales in 8 weeks, ${nf(r.stock, 1)} crate(s) in stock.`);
+    if (r.perDay > 0 && r.days > C.lead + cycle + C.heroExtra) notes.push(`Overstocked: ${nf(r.days, 1)} days of stock.`);
+    r.note = notes.join(" ");
+    G8 += r.need; L8 += r.room; G7 += r.belowRop; ownFinal += r.final; if (r._untilRop != null && (minUntil == null || r._untilRop < minUntil)) minUntil = r._untilRop;
+  });
+  const decision = G7 > 0 && G8 + L8 >= cap ? "ORDER NOW" : G7 > 0 ? "ORDER SOON" : G8 >= cap ? "ORDER NOW" : "HOLD";
+  const orderBy = minUntil != null ? addDays(today, Math.floor(minUntil)) : null;
+  let why;
+  if (decision === "ORDER NOW" && G7 > 0) why = `${G7} Hero/Core product${G7 > 1 ? "s are" : " is"} below the reorder point. Base need ${nf(G8)} crates; topping up Hero and Core products fills the ${nf(cap)} crates of own stock on the truck.`;
+  else if (decision === "ORDER SOON") why = `${G7} Hero/Core product${G7 > 1 ? "s are" : " is"} below the reorder point, but base need ${nf(G8)} + the most the top-up allows (${nf(L8)}) is only ${nf(G8 + L8)} of ${nf(cap)} crates. Order once the truck can be filled, or order now and type extra crates under "Your crates".`;
+  else if (decision === "ORDER NOW") why = `Base need is ${nf(G8)} crates, enough to fill the ${nf(cap)} crates of own stock on the truck.`;
+  else why = `Nothing is below its reorder point and base need is only ${nf(G8)} of ${nf(cap)} crates.${orderBy ? ` The first product reaches its reorder point around ${fmtDate(orderBy)}.` : ""}`;
+  Object.assign(D.repl, { truck: C.truck, qcPlan, qcOnTruck, cap, ownPlan: cap, ownFinal, total: ownFinal + qcOnTruck, decision, why, belowRop: G7, baseNeed: G8, topUp: L8, orderBy, perDay: xr(G10, 2), qcPerDay: xr(qcPerDay, 2), truckDays: cycle, short: shortC, over: overC, toppedUp: topup, trimmed });
+  REPL_AT = NOW();
+  return D.repl;
+}
+
 /* ===== charts (inline SVG, one y-axis each, hover layer, table twin) ===== */
 const cssVar = (n) => `var(${n})`;
 const isNarrow = () => window.innerWidth < 720;
@@ -425,7 +600,7 @@ ACT.dataUpload = () => {
   inp.click();
 };
 function greeting() { const h = NOW().getHours(); return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; }
-function lowStockRows() { return D.repl.rows.filter((r) => { const st = stockBySap[r.sap]; if (!st || !st.upc || !["Hero", "Core"].includes(r.cls)) return false; return st.ea / st.upc < (r.rop || 0); }); }
+function lowStockRows() { return D.repl.rows.filter((r) => r.belowRop); }
 function quietDistributors(facts) {
   const today = ymd(NOW()), last = {};
   facts.forEach((f) => { if (f.ch === "gt" && f.kind !== "note" && f.value > 0 && (!last[f.dist] || f.date > last[f.dist])) last[f.dist] = f.date; });
@@ -433,8 +608,8 @@ function quietDistributors(facts) {
 }
 function attention(facts) {
   const out = [];
-  const R = D.repl, cls = R.decision.includes("NOW") ? "bad" : R.decision.includes("SOON") ? "warn" : "tint";
-  out.push({ ic: "cycle", cls, title: `Hangyo truck: ${R.decision.toLowerCase().replace(/^./, (c) => c.toUpperCase())}`, sub: `${R.belowRop} Hero/Core SKUs below reorder point · plan is ${R.total} of ${R.truck} crates`, go: "replenish" });
+  const R = recomputeRepl(), cls = R.decision.includes("NOW") ? "bad" : R.decision.includes("SOON") ? "warn" : "tint", ob = R.orderBy ? (R.orderBy <= ymd(NOW()) ? "order today" : "order by " + fmtDate(R.orderBy)) : "";
+  out.push({ ic: "cycle", cls, title: `Hangyo truck: ${R.decision.toLowerCase().replace(/^./, (c) => c.toUpperCase())}${ob && R.decision !== "HOLD" ? " · " + ob : ""}`, sub: `${R.belowRop} Hero/Core product${R.belowRop === 1 ? "" : "s"} below reorder point · plan is ${nf(R.total)} of ${nf(R.truck)} crates`, go: "replenish" });
   const pend = pendingOrders();
   if (pend.length) out.push({ ic: "truck", cls: "tint", title: `${pend.length} order${pend.length > 1 ? "s" : ""} waiting to dispatch`, sub: `${nf(pend.reduce((a, o) => a + o.crates, 0), 2)} crates · ${rs(pend.reduce((a, o) => a + o.value, 0))}`, go: "dispatch" });
   const open = openQC(), soon = open.filter((p) => daysLeft(p) <= 3 && daysLeft(p) >= 0), exp = open.filter((p) => daysLeft(p) < 0);
@@ -1176,11 +1351,12 @@ ACT.recvSave = () => {
   const R = S.recv, lines = R.lines.filter((l) => l.crates > 0); if (!lines.length) { toast("Add at least one product", "info"); return; }
   const now = NOW(), id = "PUR-" + stamp(now);
   lines.forEach((l) => { const s = stockBySap[l.sap], rate = ssRate(l.sap) || s.cost || 0, ea = l.crates * l.upc; if (R.pool === "Own Stock") { s.ea += ea; s.crates = s.ea / s.upc; s.move = `${id}: +${nf(ea)} boxes`; } else if (qcBySap[l.sap]) { qcBySap[l.sap].crates += l.crates; } D.purchases.push({ time: iso(now), id, inv: R.inv, invDate: iso(now), supplier: "Hangyo", pool: R.pool, product: l.name, sap: l.sap, unit: "Crate", qty: l.crates, ea, crates: l.crates, batch: "", rate, value: ea * rate, isNew: "No" }); });
+  lines.forEach((l) => { let left = l.crates * l.upc; D.hpoLog.filter((h) => h.sap === l.sap && (R.pool === "Own Stock" ? /own/i.test(h.pool) : /QC/i.test(h.pool)) && (h.status === "Open" || h.status === "Part received")).sort((a, b) => (a.placed > b.placed ? 1 : -1)).forEach((h) => { if (left <= 0) return; const want = Math.max(0, (h.boxes || h.crates * h.upc) - (h.received || 0)), take = Math.min(want, left); h.received = (h.received || 0) + take; left -= take; h.toCome = Math.max(0, h.crates - h.received / (h.upc || 1)); h.status = h.toCome > 1e-9 ? "Part received" : "Received"; h.changed = iso(now); h.receivedOn = iso(now); h.purchases = ((h.purchases ? h.purchases + ", " : "") + id); }); });
   logActivity("Purchase saved", id, `${lines.length} lines into ${R.pool}`); closeSheet(); S.stockTab = "purchases"; render(); toast("Stock received and added");
 };
 
 /* ===== REPLENISHMENT ===== */
-function replTotals() { const own = D.repl.rows.reduce((a, r) => a + (r.final || 0), 0); return { own, qc: D.repl.qcCrates || 0, total: own + (D.repl.qcCrates || 0), value: D.repl.rows.reduce((a, r) => a + (r.final || 0) * (r.upc || 0) * (ssRate(r.sap) || 0), 0) }; }
+function replTotals() { const own = D.repl.rows.reduce((a, r) => a + (r.final || 0), 0), qc = D.repl.qcOnTruck || 0; return { own, qc, total: own + qc, value: D.repl.rows.reduce((a, r) => a + (r.final || 0) * (r.upc || 0) * (ssRate(r.sap) || 0), 0) }; }
 function truckHtml() {
   const R = D.repl, T = replTotals(), free = R.truck - T.total;
   return `<div class="hstack between wrap gap-12"><div><div class="card-title">This truck</div><div class="row-sub">Hangyo sends a truck from ${R.truck} crates, own stock and quick commerce together</div></div><div class="tile-value">${nf(T.total)}<small>of ${R.truck} crates</small></div></div>
@@ -1197,20 +1373,21 @@ function replGrid() {
   return `<div class="dg" style="--cols:minmax(0,2fr) 84px 76px 70px minmax(100px,130px) 80px 96px 70px;--cols-sm:minmax(0,1fr) 84px"><div class="dg-row dg-head"><span>Product</span><span class="c-hide">Class</span><span class="r c-hide">Sells / day</span><span class="r c-hide">Stock</span><span class="c-hide">Days of stock</span><span class="r c-hide">Suggested</span><span class="r">Your crates</span><span class="r c-hide">Final</span></div>
   ${rows.map((r) => { const open = S.replOpen === r.sap, low = r.belowRop; return `<div class="dg-row" style="cursor:pointer" data-act="replToggle" data-sap="${r.sap}"><span><div class="strong clip">${esc(shortName(r.name))}</div><div class="row-sub clip">${low ? `<span style="color:var(--bad);font-weight:600">Below reorder point</span>${r.note && !/^below reorder/i.test(r.note) ? " · " + esc(r.note) : ""}` : r.note ? esc(r.note) : esc(r.cat || "")}</div></span><span class="c-hide">${classPill(r.cls)}</span><span class="r c-hide">${nf(r.perDay, 2)}</span><span class="r c-hide">${nf(r.stock, 1)}</span><span class="bar-cell c-hide">${r.days != null ? `<div class="meter ${low ? "bad" : r.days < 8 ? "warn" : ""}"><i style="width:${Math.min(100, (r.days / 30) * 100)}%"></i></div><span class="num" style="font-size:13px;min-width:30px;text-align:right">${nf(r.days, 0)}d</span>` : `<span class="dim">–</span>`}</span><span class="r c-hide">${nf(r.suggested)}</span><span class="r"><input class="input sm num-in" style="width:76px" type="number" min="0" placeholder="${nf(r.suggested)}" value="${r.yours != null ? r.yours : ""}" id="rp-${r.sap}" data-in="replYours" data-sap="${r.sap}" aria-label="Your crates"></span><span class="r strong c-hide" id="rf-${r.sap}">${nf(r.final)}</span></div>
     ${open ? `<div class="dg-row" style="--cols:1fr;background:var(--surface-2);display:block"><div class="kv"><div><div class="k">Sold, last 14 days</div><div class="v num">${nf(r.s14, 1)} crates</div></div><div><div class="k">Days 15 to 28</div><div class="v num">${nf(r.s28, 1)}</div></div><div><div class="k">Days 29 to 56</div><div class="v num">${nf(r.s56, 1)}</div></div><div><div class="k">Missed, 28 days</div><div class="v num">${nf(r.missed, 1)}</div></div><div><div class="k">Reorder point</div><div class="v num">${nf(r.rop, 1)}</div></div><div><div class="k">Target stock</div><div class="v num">${nf(r.target, 1)}</div></div><div><div class="k">On order</div><div class="v num">${nf(r.onOrder, 1)}</div></div><div><div class="k">After this truck</div><div class="v num">${r.daysAfter != null ? nf(r.daysAfter, 0) + " days" : "–"}</div></div></div>
-      <div class="form-grid" style="margin-top:14px;grid-template-columns:repeat(4,minmax(0,1fr))"><div class="field"><label class="label" for="rr-${r.sap}">Order rule</label><select class="select sm" id="rr-${r.sap}" data-in="replRule" data-sap="${r.sap}">${["Auto", "Hero", "Core", "Tail", "Push", "Don't order"].map((x) => `<option ${(r.rule || "Auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div class="field"><label class="label">Min crates</label><input class="input sm num-in" type="number" value="${r.min != null ? r.min : ""}" placeholder="–"></div><div class="field"><label class="label">Max crates</label><input class="input sm num-in" type="number" value="${r.max != null ? r.max : ""}" placeholder="–"></div><div class="field"><label class="label">Adjust + / −</label><input class="input sm num-in" type="number" value="${r.adj != null ? r.adj : ""}" placeholder="0"></div></div>${r.reason ? `<div class="row-sub" style="margin-top:10px">Note: ${esc(r.reason)}</div>` : ""}</div>` : ""}`; }).join("")}</div>`;
+      <div class="form-grid" style="margin-top:14px;grid-template-columns:repeat(4,minmax(0,1fr))"><div class="field"><label class="label" for="rr-${r.sap}">Order rule</label><select class="select sm" id="rr-${r.sap}" data-in="replRule" data-sap="${r.sap}">${["Auto", "Hero", "Core", "Tail", "Push", "Don't order"].map((x) => `<option ${(r.rule || "Auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div class="field"><label class="label">Min crates</label><input class="input sm num-in" type="number" min="0" value="${r.min != null ? r.min : ""}" placeholder="–" data-in="replNum" data-repl="1" data-f="min" data-sap="${r.sap}"></div><div class="field"><label class="label">Max crates</label><input class="input sm num-in" type="number" min="0" value="${r.max != null ? r.max : ""}" placeholder="–" data-in="replNum" data-repl="1" data-f="max" data-sap="${r.sap}"></div><div class="field"><label class="label">Adjust + / −</label><input class="input sm num-in" type="number" value="${r.adj != null ? r.adj : ""}" placeholder="0" data-in="replNum" data-repl="1" data-f="adj" data-sap="${r.sap}"></div></div><div class="field" style="margin-top:12px"><label class="label" for="rn-${r.sap}">Reason / note</label><input class="input sm" id="rn-${r.sap}" value="${esc(r.reason || "")}" placeholder="Why this rule (optional)" data-in="replNote" data-sap="${r.sap}"></div>${r.note ? `<div class="row-sub" style="margin-top:10px">${esc(r.note)}</div>` : ""}</div>` : ""}`; }).join("")}</div>`;
 }
 function poLogHtml() {
   const byPO = {}; D.hpoLog.forEach((l) => { const g = (byPO[l.po] = byPO[l.po] || { po: l.po, placed: l.placed, pool: l.pool, lines: [], crates: 0, value: 0, toCome: 0 }); g.lines.push(l); g.crates += l.crates || 0; g.value += l.value || 0; g.toCome += l.toCome || 0; });
   return `<div class="group">${Object.values(byPO).sort((a, b) => (a.placed < b.placed ? 1 : -1)).map((g) => { const cnt = (s) => g.lines.filter((l) => l.status === s).length, open = g.toCome > 0 || cnt("Open") > 0; return `<button class="row" data-act="poSheet" data-po="${g.po}"><span class="attn-ic ${open ? "info" : "tint"}">${ic(open ? "truck" : "check")}</span><span class="grow"><div class="row-title mono" style="font-size:14.5px">${esc(g.po)}</div><div class="row-sub clip">Placed ${fmtDT(g.placed)} · ${esc(g.pool)} · ${g.lines.length} lines · ${cnt("Received")} received${cnt("Part received") ? ", " + cnt("Part received") + " part" : ""}${cnt("Closed short") ? ", " + cnt("Closed short") + " closed short" : ""}${cnt("Open") ? ", " + cnt("Open") + " still to come" : ""}</div></span><span class="row-end"><span style="text-align:right"><div class="row-value">${nf(g.crates)} crates</div><div class="row-sub num">${rs(g.value)}</div></span>${ic("chevR", "sm chev")}</span></button>`; }).join("")}</div>`;
 }
 function rulesHtml() {
-  return `<div class="banner info">${ic("info", "sm")}<span>These are the rules the truck plan follows. Change a value and plan the truck again.</span></div><div class="group">${D.repl.settings.map((s, i) => { const isP = typeof s.value === "number" && s.value > 0 && s.value <= 1 && /Weight|Hero:|Core:|Service/.test(s.name); const val = typeof s.value === "string" && /^\d{4}-/.test(s.value) ? fmtDate(s.value) + " " + s.value.slice(0, 4) : isP ? Math.round(s.value * 100) + "%" : s.value; return `<div class="row" style="align-items:flex-start"><span class="grow"><div class="row-title">${esc(s.name.replace(/\.\.\./g, "…"))}</div><div class="row-sub" style="max-width:62ch">${esc(s.help)}</div></span><span class="row-end"><input class="input sm num-in" style="width:104px" id="rs-${i}" value="${esc(val)}" aria-label="${esc(s.name)}"></span></div>`; }).join("")}</div>`;
+  return `<div class="banner info">${ic("info", "sm")}<span>These are the rules the truck plan follows. Change a value and the plan is worked out again straight away.</span></div><div class="group">${D.repl.settings.map((s, i) => { const isP = typeof s.value === "number" && s.value > 0 && s.value <= 1 && /Weight|Hero:|Core:|Service/.test(s.name); const val = typeof s.value === "string" && /^\d{4}-/.test(s.value) ? fmtDate(s.value) + " " + s.value.slice(0, 4) : isP ? Math.round(s.value * 100) + "%" : s.value; return `<div class="row" style="align-items:flex-start"><span class="grow"><div class="row-title">${esc(s.name.replace(/\.\.\./g, "…"))}</div><div class="row-sub" style="max-width:62ch">${esc(s.help)}</div></span><span class="row-end"><input class="input sm num-in" style="width:104px" id="rs-${i}" value="${esc(val)}" aria-label="${esc(s.name)}" data-in="replSetting" data-repl="1" data-i="${i}"></span></div>`; }).join("")}</div>`;
 }
 VIEWS.replenish = () => {
+  recomputeRepl();
   const R = D.repl, dec = R.decision, cls = dec.includes("NOW") ? "bad" : dec.includes("SOON") ? "warn" : "good", word = dec.includes("NOW") ? "Order now" : dec.includes("SOON") ? "Order soon" : "Hold";
   const count = (f) => D.repl.rows.filter((r) => (f === "On this truck" ? r.final > 0 : f === "Below reorder" ? r.belowRop : r.cls === f)).length;
-  const plan = `<div class="grid-2"><div class="decision ${cls}"><div class="tile-label" style="color:inherit;opacity:.75">The engine says</div><div class="decision-word">${word}</div><div style="font-size:14.5px;max-width:60ch">${esc(R.why)}</div><div class="kv" style="margin-top:10px"><div><div class="k">Order by</div><div class="v">${fmtDate(R.orderBy)}</div></div><div><div class="k">Below reorder point</div><div class="v">${R.belowRop} Hero / Core</div></div><div><div class="k">Own sales</div><div class="v num">${nf(R.perDay, 1)} crates / day</div></div><div><div class="k">One truck lasts</div><div class="v num">${R.truckDays} days</div></div></div></div>
-      <div class="card card-pad"><div id="truck">${truckHtml()}</div><div class="divider" style="margin:16px 0"></div><div class="hstack between gap-12"><div><div class="row-title">Quick commerce crates on this truck</div><div class="row-sub">Hangyo decides this. The QC plan suggests ${R.qcPlan}.</div></div><input class="input num-in" style="width:96px" type="number" min="0" id="rp-qc" value="${R.qcCrates}" data-in="replQC" aria-label="QC crates"></div><div class="row-sub" style="margin-top:12px">Last planned ${fmtDT(R.planned)}</div></div></div>
+  const plan = `<div class="grid-2"><div class="decision ${cls}"><div class="tile-label" style="color:inherit;opacity:.75">The engine says</div><div class="decision-word">${word}</div><div style="font-size:14.5px;max-width:60ch">${esc(R.why)}</div><div class="kv" style="margin-top:10px"><div><div class="k">Order by</div><div class="v">${!R.orderBy ? "–" : R.orderBy <= ymd(NOW()) ? "Today" : R.orderBy === addDays(ymd(NOW()), 1) ? "Tomorrow" : fmtDate(R.orderBy)}</div></div><div><div class="k">Below reorder point</div><div class="v">${R.belowRop} Hero / Core</div></div><div><div class="k">Own sales</div><div class="v num">${nf(R.perDay, 1)} crates / day</div></div><div><div class="k">One truck lasts</div><div class="v num">${R.truckDays} days</div></div></div></div>
+      <div class="card card-pad"><div id="truck">${truckHtml()}</div><div class="divider" style="margin:16px 0"></div><div class="hstack between gap-12"><div><div class="row-title">Quick commerce crates on this truck</div><div class="row-sub">Hangyo decides this. Leave it empty to use the QC plan of ${nf(R.qcPlan)} crates.</div></div><input class="input num-in" style="width:96px" type="number" min="0" id="rp-qc" value="${R.qcCrates != null ? R.qcCrates : ""}" placeholder="${nf(R.qcPlan)}" data-in="replQC" data-repl="1" aria-label="QC crates"></div><div class="row-sub" style="margin-top:12px">Worked out live from today's stock, orders, missed sales and open Hangyo POs · ${fmtTime(REPL_AT)}</div></div></div>
     <div class="sec-head"><div><div class="section-title">What goes on the truck</div><div class="section-sub">Type your own crates to override a suggestion. Tap a row to see why and set rules.</div></div></div>
     <div class="chips">${["All", "On this truck", "Below reorder", "Hero", "Core", "Tail", "Push", "Don't order"].map((f) => `<button class="chip" data-act="replFilter" data-f="${esc(f)}" aria-pressed="${S.replFilter === f}">${esc(f)}${f !== "All" ? ` <span style="opacity:.6">${count(f)}</span>` : ""}</button>`).join("")}</div>
     <div id="repl-grid">${replGrid()}</div>`;
@@ -1221,10 +1398,27 @@ VIEWS.replenish = () => {
 };
 ACT.replFilter = (el) => { S.replFilter = el.dataset.f; part("repl-grid", replGrid()); $$('[data-act="replFilter"]').forEach((b) => b.setAttribute("aria-pressed", b.dataset.f === S.replFilter)); };
 ACT.replToggle = (el, e) => { if (e.target.closest("input,select,label")) return; S.replOpen = S.replOpen === el.dataset.sap ? null : el.dataset.sap; part("repl-grid", replGrid()); };
-IN.replYours = (el) => { const r = replBySap[el.dataset.sap]; r.yours = el.value === "" ? null : Math.max(0, +el.value); r.final = r.yours != null ? r.yours : r.suggested; r.boxes = r.final * (r.upc || 0); const f = $("#rf-" + r.sap); if (f) f.textContent = nf(r.final); part("truck", truckHtml()); };
-IN.replQC = (el) => { D.repl.qcCrates = Math.max(0, +el.value || 0); part("truck", truckHtml()); };
-IN.replRule = (el) => { const r = replBySap[el.dataset.sap]; r.rule = el.value === "Auto" ? "" : el.value; if (el.value !== "Auto") r.cls = el.value; toast(`Rule set to ${el.value}`); };
-ACT.planTruck = () => { D.repl.planned = iso(NOW()); render(); toast("Truck planned from the latest orders and stock", "cycle"); };
+/* typing updates the truck at once; the full list is redrawn when you leave the box (so the cursor stays put) */
+function replLight() { recomputeRepl(); part("truck", truckHtml()); D.repl.rows.forEach((x) => { const f = $("#rf-" + x.sap); if (f) f.textContent = nf(x.final); }); }
+IN.replYours = (el) => { const r = replBySap[el.dataset.sap]; r.yours = el.value === "" ? null : Math.max(0, Math.round(+el.value)); replLight(); };
+IN.replQC = (el) => { D.repl.qcCrates = el.value === "" ? null : Math.max(0, Math.round(+el.value || 0)); replLight(); };
+IN.replNum = (el) => { const r = replBySap[el.dataset.sap], v = el.value.trim(); r[el.dataset.f] = v === "" ? null : el.dataset.f === "adj" ? Math.round(+v) : Math.max(0, +v); replLight(); };
+IN.replNote = (el) => { replBySap[el.dataset.sap].reason = el.value; };
+IN.replRule = (el) => { const r = replBySap[el.dataset.sap]; r.rule = el.value === "Auto" ? "" : el.value; logActivity("Order rule changed", r.sap, `${shortName(r.name)}: ${el.value}`); render(); toast(`Rule set to ${el.value}`); };
+IN.replSetting = (el) => {
+  const s = D.repl.settings[+el.dataset.i], raw = el.value.trim(); if (!s) return;
+  if (typeof s.value === "number") { const isP = s.value > 0 && s.value <= 1 && /Weight|Hero:|Core:|Service/.test(s.name); let v = parseFloat(raw.replace("%", "")); if (isNaN(v)) return; if (isP || /%/.test(raw)) v = v / 100; s.value = v; }
+  else if (/^\d{4}-/.test(String(s.value))) { const d = toDate(raw.length === 10 ? raw : null); if (d && !isNaN(d)) s.value = ymd(d) + "T00:00"; }
+  else s.value = raw;
+};
+let replRedraw = 0;
+document.addEventListener("change", (e) => {
+  if (S.route !== "replenish" || !e.target.closest('[data-repl="1"]')) return;
+  if (e.target.dataset.in === "replSetting") logActivity("Replenishment rule changed", "", e.target.getAttribute("aria-label") + ": " + e.target.value);
+  /* redraw after the click that moved focus has finished, never in the middle of another redraw */
+  clearTimeout(replRedraw); replRedraw = setTimeout(() => { if (S.route === "replenish") render(); }, 0);
+});
+ACT.planTruck = () => { recomputeRepl(); render(); toast(`Plan worked out again: ${D.repl.decision.toLowerCase()}`, "cycle"); };
 ACT.makePO = () => {
   const lines = D.repl.rows.filter((r) => r.final > 0).sort((a, b) => a.name.localeCompare(b.name)), T = replTotals();
   openSheet("Hangyo purchase order", `<div class="card card-pad"><div class="kv"><div><div class="k">Stock pool</div><div class="v">Own stock</div></div><div><div class="k">Lines</div><div class="v">${lines.length}</div></div><div><div class="k">Crates</div><div class="v num">${nf(T.own)}</div></div><div><div class="k">Boxes for the portal</div><div class="v num">${nf(lines.reduce((a, r) => a + r.final * (r.upc || 0), 0))}</div></div><div><div class="k">Value at SS rate</div><div class="v num">${rs(T.value)}</div></div></div></div>
@@ -1234,8 +1428,10 @@ ACT.makePO = () => {
 ACT.copyPO = () => copyText(D.repl.rows.filter((r) => r.final > 0).map((r) => `${r.name}\t${r.final} crates\t${r.final * (r.upc || 0)} boxes`).join("\n"), "PO lines copied");
 ACT.placePO = () => {
   const now = NOW(), po = "HPO-" + stamp(now);
-  D.repl.rows.filter((r) => r.final > 0).forEach((r) => { D.hpoLog.push({ placed: iso(now), po, pool: "Own stock", product: r.name, sap: r.sap, upc: r.upc, crates: r.final, boxes: r.final * (r.upc || 0), status: "Open", value: r.final * (r.upc || 0) * (ssRate(r.sap) || 0), received: 0, toCome: r.final }); r.onOrder = (r.onOrder || 0) + r.final; });
-  logActivity("Hangyo PO placed", po, `${nf(replTotals().own)} crates`); closeSheet(); S.replTab = "orders"; render(); toast("PO marked as placed");
+  D.repl.rows.filter((r) => r.final > 0).forEach((r) => { D.hpoLog.push({ placed: iso(now), po, pool: "Own stock", product: r.name, sap: r.sap, upc: r.upc, crates: r.final, boxes: r.final * (r.upc || 0), status: "Open", value: r.final * (r.upc || 0) * (ssRate(r.sap) || 0), received: 0, toCome: r.final }); });
+  logActivity("Hangyo PO placed", po, `${nf(replTotals().own)} crates`);
+  D.repl.rows.forEach((r) => { r.yours = null; }); D.repl.qcCrates = null;
+  closeSheet(); S.replTab = "orders"; render(); toast("PO marked as placed");
 };
 ACT.poSheet = (el) => {
   const lines = D.hpoLog.filter((l) => l.po === el.dataset.po), g = lines[0];
@@ -1577,7 +1773,7 @@ function snapshot() {
     qcLines: flat(qcLinesByPO),
     special: Object.assign({}, D.special, { distributors: D.distributors.filter((d) => d.special).map((d) => d.name) }),
   });
-  return JSON.stringify(out);
+  return JSON.stringify(out, (k, v) => (k.charCodeAt(0) === 95 ? undefined : v)); /* working fields starting with "_" are not saved */
 }
 const SAVE = { on: false, why: "", version: null, last: null, busy: false, again: false, timer: 0, state: "", conflict: false };
 (function initSave() {
