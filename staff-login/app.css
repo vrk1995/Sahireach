@@ -456,3 +456,9 @@ table.t th.sticky-col { background: var(--surface-2); z-index: 2; }
 .save-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--fill); border-top-color: var(--tint); animation: save-spin 0.8s linear infinite; }
 @keyframes save-spin { to { transform: rotate(360deg); } }
 @media (max-width: 960px) { .save-state { right: auto; left: 50%; bottom: auto; top: max(10px, env(safe-area-inset-top)); transform: translate(-50%, -6px); } .save-state.on { transform: translate(-50%, 0); } }
+
+.qc-ins { display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
+.qc-ins label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); font-weight: 600; }
+.qc-ins small { font-weight: 400; color: var(--ink-3); font-size: 12px; }
+.qc-ins input.pick-in { width: 64px; height: 36px; text-align: right; border-radius: 8px; border: 1px solid var(--hairline); background: var(--surface); padding: 0 8px; font-variant-numeric: tabular-nums; }
+.qc-ins input.pick-in.changed { border-color: var(--warn); background: var(--warn-soft); }

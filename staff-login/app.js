@@ -104,7 +104,7 @@ const S = {
   ordersTab: "Pending", ordersQ: "",
   draft: null,
   picked: {}, pickList: null,
-  qcTab: "open", qcPlatform: "Swiggy", qcPicked: {}, qcOwn: true,
+  qcTab: "open", qcPlatform: "Swiggy", qcPicked: {}, qcOwn: true, qcOverride: {},
   stockTab: "own", stockQ: "", stockCat: "All",
   replTab: "plan", replFilter: "All", replOpen: null,
   moneyTab: "tod",
@@ -895,13 +895,20 @@ function loadScriptOnce(src, test) {
   return new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = () => (test() ? ok() : bad(new Error("not loaded"))); s.onerror = () => bad(new Error("not loaded")); document.head.appendChild(s); });
 }
 const XLSX_SRC = (HOST && HOST.xlsxSrc) || "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+async function downloadXlsx(el, aoa, cols, file, sheet, merges) {
+  if (el) el.disabled = true;
+  try { await loadScriptOnce(XLSX_SRC, () => !!window.XLSX); }
+  catch (e) { if (el) el.disabled = false; toast("Could not prepare the Excel file. Check your internet and try again.", "alert"); return false; }
+  const X = window.XLSX, ws = X.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = cols.map((w) => ({ wch: w })); if (merges) ws["!merges"] = merges;
+  const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, sheet);
+  X.writeFile(wb, file, { compression: true });
+  if (el) el.disabled = false; return true;
+}
+const stampOf = (d) => `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)}-${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 ACT.pickExcel = async (el) => {
   const P = S.pickList; if (!P) return;
-  el.disabled = true;
-  try { await loadScriptOnce(XLSX_SRC, () => !!window.XLSX); }
-  catch (e) { el.disabled = false; toast("Could not prepare the Excel file. Check your internet and try again.", "alert"); return; }
-  const X = window.XLSX, made = P.made || NOW(), stampTxt = `${pad2(made.getDate())}-${pad2(made.getMonth() + 1)}-${made.getFullYear()} ${pad2(made.getHours())}:${pad2(made.getMinutes())}`;
-  const names = P.orders.map((o) => shortOf(o.dist));
+  const stampTxt = stampOf(P.made || NOW()), names = P.orders.map((o) => shortOf(o.dist));
   const aoa = [
     ["PICK LIST FOR TROPICANA LOGISTICS, WILLINGDON ISLAND  (SahiReach LLP)"],
     ["Orders in this pick list", `${P.orders.length} order(s): ${P.orders.map((o) => o.id).join(", ")}   |   generated ${stampTxt}`],
@@ -912,13 +919,9 @@ ACT.pickExcel = async (el) => {
   P.rows.forEach((r) => aoa.push([tropCode(r.sap), r.name].concat(P.orders.map((o, ci) => (r.cells[ci] ? +r.cells[ci].toFixed(2) : null)), [+r.total.toFixed(2)])));
   aoa.push(["", "TOTAL CRATES"].concat(P.orders.map((o) => +o.crates.toFixed(2)), [+P.total.toFixed(2)]));
   aoa.push([]); aoa.push(["Vehicle", (vehicleFor(P.total) || "").replace(/\s*\(.*\)/, "")]);
-  const ws = X.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 14 }, { wch: 46 }].concat(names.map((n) => ({ wch: Math.max(9, Math.min(22, n.length + 2)) })), [{ wch: 14 }]);
-  ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: Math.min(names.length + 3, 8) } }];
-  ws["!freeze"] = { xSplit: 2, ySplit: 5 };
-  const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, "Pick List");
-  X.writeFile(wb, `SahiReach pick list ${stampTxt.replace(":", "")}.xlsx`, { compression: true });
-  el.disabled = false; logActivity("Pick list downloaded", `${P.orders.length} order(s)`, "Excel"); toast("Excel pick list downloaded", "doc");
+  if (await downloadXlsx(el, aoa, [14, 46].concat(names.map((n) => Math.max(9, Math.min(22, n.length + 2))), [14]), `SahiReach pick list ${stampTxt.replace(":", "")}.xlsx`, "Pick List", [{ s: { r: 0, c: 0 }, e: { r: 0, c: Math.min(names.length + 3, 8) } }])) {
+    logActivity("Pick list downloaded", `${P.orders.length} order(s)`, "Excel"); toast("Excel pick list downloaded", "doc");
+  }
 };
 ACT.copyPick = () => {
   const P = S.pickList; if (!P) return;
@@ -944,9 +947,12 @@ function qcDelivery() {
   pos.forEach((p) => (qcLinesByPO[p.po] || []).forEach((l) => { const k = l.sap || l.product, a = (agg[k] = agg[k] || { sap: l.sap, name: l.product, pcs: 0, value: 0, ppc: l.ppc }); a.pcs += l.pcs; a.value += l.value; }));
   const rows = Object.values(agg).map((a) => {
     const qc = qcBySap[a.sap] || {}, own = stockBySap[a.sap] || {}, ppc = a.ppc || qc.ppc || 1;
-    const full = Math.floor(a.pcs / ppc), qcCr = Math.floor(qc.crates || 0), fromQC = Math.min(full, qcCr);
-    const ownCr = own.upc ? Math.floor(own.ea / own.upc) : 0, fromOwn = S.qcOwn ? Math.min(full - fromQC, ownCr) : 0, send = fromQC + fromOwn;
-    return { ...a, ppc, full, qcCr, ownCr, fromQC, fromOwn, send, sendPcs: send * ppc, notSent: a.pcs - send * ppc, sendValue: (a.value / a.pcs) * send * ppc };
+    const full = Math.floor(a.pcs / ppc), qcCr = Math.max(0, Math.floor(qc.crates || 0)), ownCr = own.upc ? Math.max(0, Math.floor(own.ea / own.upc)) : 0;
+    let fromQC = Math.min(full, qcCr), fromOwn = S.qcOwn ? Math.min(full - fromQC, ownCr) : 0;
+    const ov = (S.qcOverride[S.qcPlatform] || {})[a.sap], edited = !!ov;
+    if (ov) { fromQC = Math.max(0, Math.min(ov.q, qcCr)); fromOwn = Math.max(0, Math.min(ov.o, ownCr)); }
+    const send = fromQC + fromOwn, sendPcs = Math.min(a.pcs, send * ppc);
+    return { ...a, ppc, full, qcCr, ownCr, fromQC, fromOwn, send, edited, sendPcs, notSent: a.pcs - sendPcs, extra: Math.max(0, send * ppc - a.pcs), sendValue: a.pcs ? (a.value / a.pcs) * sendPcs : 0 };
   }).sort((a, b) => a.name.localeCompare(b.name));
   return { pos, rows, crates: rows.reduce((a, r) => a + r.send, 0), value: rows.reduce((a, r) => a + r.sendValue, 0), min: S.qcPlatform === "Swiggy" ? D.qcPick.minSwiggy : D.qcPick.minZepto };
 }
@@ -956,12 +962,13 @@ function qcOpenHtml() {
   if (!list.length) return `<div class="group"><div class="empty"><div class="big">No open ${esc(S.qcPlatform)} POs</div>Add a PO when it arrives and it will show here until it is delivered or lapses.</div></div>`;
   return `<div class="split s320">
     <div class="stack gap-20"><div><div class="group-label"><span>Open POs, soonest expiry first</span></div><div class="group">${list.map((p) => { const exp = daysLeft(p) < 0; return `<div class="row tap" ${exp ? "" : `role="checkbox" tabindex="0" aria-checked="${!!S.qcPicked[p.po]}" data-act="toggleQC" data-po="${p.po}" style="cursor:pointer"`}><span class="check" aria-checked="${!exp && !!S.qcPicked[p.po]}" ${exp ? 'style="opacity:.3"' : ""}>${ic("check")}</span><span class="grow"><div class="row-title mono" style="font-size:14.5px">${esc(p.po)}</div><div class="row-sub">${p.lines} lines · ${nf(p.pcs)} pieces · PO of ${fmtDate(p.date)}</div></span><span class="row-end"><span style="text-align:right"><div class="row-value">${rs(p.value)}</div><div style="margin-top:3px">${expiryPill(p)}</div></span><button class="icon-btn" data-act="qcPOSheet" data-po="${p.po}" aria-label="Open PO">${ic("chevR", "sm")}</button></span></div>`; }).join("")}</div></div>
-      ${Dl.rows.length ? `<div><div class="group-label"><span>What goes on this delivery</span><span>whole crates only</span></div><div class="dg" style="--cols:minmax(0,1.6fr) 80px 80px 90px 90px 90px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">Pieces on POs</span><span class="r c-hide">Per crate</span><span class="r c-hide">From QC stock</span><span class="r c-hide">From own stock</span><span class="r">Crates to send</span></div>${Dl.rows.map((r) => `<div class="dg-row"><span><div class="strong clip">${esc(shortName(r.name))}</div>${r.notSent > 0 ? `<div class="row-sub" style="color:var(--warn)">${nf(r.notSent)} pieces not sent${r.send < r.full ? " · stock short" : " · under a full crate"}</div>` : `<div class="row-sub">Sent in full</div>`}</span><span class="r c-hide">${nf(r.pcs)}</span><span class="r c-hide">${r.ppc}</span><span class="r c-hide">${r.fromQC}<span class="dim"> of ${r.qcCr}</span></span><span class="r c-hide">${r.fromOwn || `<span class="dim">–</span>`}</span><span class="r strong">${r.send}</span></div>`).join("")}</div></div>` : ""}</div>
+      ${Dl.rows.length ? `<div><div class="group-label"><span>What goes on this delivery</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="qcPickEdit">${ic("pencil", "sm")} Edit crates</button></div><div class="dg" style="--cols:minmax(0,1.6fr) 80px 80px 90px 90px 90px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">Pieces on POs</span><span class="r c-hide">Per crate</span><span class="r c-hide">From QC stock</span><span class="r c-hide">From own stock</span><span class="r">Crates to send</span></div>${Dl.rows.map((r) => `<div class="dg-row"><span><div class="strong clip">${esc(shortName(r.name))}</div>${r.notSent > 0 ? `<div class="row-sub" style="color:var(--warn)">${nf(r.notSent)} pieces not sent${r.edited ? " · changed by you" : r.send < r.full ? " · stock short" : " · under a full crate"}</div>` : `<div class="row-sub">${r.extra ? nf(r.extra) + " pieces over the PO" : "Sent in full"}${r.edited ? " · changed by you" : ""}</div>`}</span><span class="r c-hide">${nf(r.pcs)}</span><span class="r c-hide">${r.ppc}</span><span class="r c-hide">${r.fromQC}<span class="dim"> of ${r.qcCr}</span></span><span class="r c-hide">${r.fromOwn || `<span class="dim">–</span>`}</span><span class="r strong">${r.send}</span></div>`).join("")}</div></div>` : ""}</div>
     <div class="sticky"><div class="card card-pad"><div class="card-title">This delivery</div><div class="row-sub">${esc(S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo)}</div>
       <div class="tile-value" style="margin-top:10px">${nf(Dl.crates)}<small>crates</small></div><div class="row-sub">${Dl.pos.length} PO${Dl.pos.length === 1 ? "" : "s"} ticked · ${rs(Dl.value)} excl. GST</div>
       ${Dl.min ? `<div style="margin-top:14px"><div class="hstack between" style="font-size:13px"><span class="muted">Minimum per delivery ${rs(Dl.min)}</span>${ok ? `<span class="pill good">OK</span>` : `<span class="pill warn">${rs(Dl.min - Dl.value)} short</span>`}</div><div class="meter ${ok ? "" : "warn"}" style="margin-top:7px;height:8px"><i style="width:${prog}%"></i></div></div>` : ""}
       <div class="hstack between" style="margin-top:16px"><span style="font-size:14px">Use own stock when QC stock is short</span><button class="toggle" role="switch" aria-checked="${S.qcOwn}" data-act="toggleOwn" aria-label="Use own stock"></button></div>
-      <div class="stack gap-8" style="margin-top:16px"><button class="btn btn-primary btn-lg btn-block" data-act="qcDeliver" ${Dl.crates ? "" : "disabled"}>${ic("truck", "sm")} Mark delivered</button><button class="btn btn-secondary btn-block" data-act="qcLapse">Lapse expired POs</button></div>
+      <div class="stack gap-8" style="margin-top:16px"><button class="btn btn-primary btn-lg btn-block" data-act="qcPick" ${Dl.rows.length ? "" : "disabled"}>${ic("doc", "sm")} Create pick list</button><button class="btn btn-secondary btn-block" data-act="qcDeliverAsk" ${Dl.crates ? "" : "disabled"}>${ic("truck", "sm")} Mark delivered</button><button class="btn btn-secondary btn-block" data-act="qcLapse">Lapse expired POs</button></div>
+      <div id="qc-confirm"></div>
       <div class="row-sub" style="margin-top:10px">Marking delivered takes the crates off stock, shares the pieces to the POs that expire first, and lapses what was not sent.</div></div></div></div>`;
 }
 function qcHistoryHtml() {
@@ -997,6 +1004,69 @@ VIEWS.quick = () => {
     ${seg("qcTab", S.qcTab, [["open", "Open POs"], ["add", "New PO"], ["grn", "GRN"], ["history", "History"]])}
     ${tabs[S.qcTab]()}</div>`;
 };
+function qcPickTable(Dl, editing) {
+  if (isNarrow()) {
+    const inp = (r, k, v, max) => `<input class="pick-in" type="number" inputmode="numeric" min="0" max="${max}" step="1" value="${v}" data-sap="${esc(r.sap)}" data-k="${k}" data-in="pickCell" data-was="${v}" aria-label="${esc(shortName(r.name))} from ${k === "q" ? "QC" : "own"} stock">`;
+    return `<div class="group">${Dl.rows.map((r) => `<div class="row" style="align-items:flex-start"><span class="grow"><div class="row-title clip">${esc(shortName(r.name))}</div><div class="row-sub">${esc(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "")} · ${nf(r.pcs)} pcs · ${r.ppc} per crate${r.notSent > 0 ? ` · <span style="color:var(--warn)">${nf(r.notSent)} not sent</span>` : ""}</div>
+      ${editing ? `<div class="qc-ins"><label>QC ${inp(r, "q", r.fromQC, r.qcCr)}<small>of ${r.qcCr}</small></label><label>Own ${inp(r, "o", r.fromOwn, r.ownCr)}<small>of ${r.ownCr}</small></label></div>` : `<div class="row-sub">${r.fromQC} from QC stock${r.fromOwn ? ` · ${r.fromOwn} from own stock` : ""}</div>`}</span>
+      <span class="row-end"><span style="text-align:right"><div class="row-value">${r.send}</div><div class="row-sub">crates</div></span></span></div>`).join("")}
+      <div class="row"><span class="grow"><b>Total</b></span><span class="row-end"><span class="row-value">${Dl.crates} crates</span></span></div></div>`;
+  }
+  return `<div class="table-wrap"><table class="t"><thead><tr><th class="sticky-col">Product</th><th class="r">Pieces on POs</th><th class="r">Per crate</th><th class="r">From QC stock</th><th class="r">From own stock</th><th class="r">Crates to send</th></tr></thead><tbody>
+    ${Dl.rows.map((r) => `<tr><td class="sticky-col"><div class="clip" style="max-width:240px">${esc(shortName(r.name))}</div><div class="row-sub">${esc(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "")}${r.notSent > 0 ? ` · <span style="color:var(--warn)">${nf(r.notSent)} pcs not sent</span>` : ""}</div></td><td class="r">${nf(r.pcs)}</td><td class="r">${r.ppc}</td>
+      ${editing ? `<td class="r edit-cell"><input class="pick-in" type="number" inputmode="numeric" min="0" max="${r.qcCr}" step="1" value="${r.fromQC}" data-sap="${esc(r.sap)}" data-k="q" data-in="pickCell" data-was="${r.fromQC}" aria-label="${esc(shortName(r.name))} from QC stock"><div class="row-sub">of ${r.qcCr}</div></td><td class="r edit-cell"><input class="pick-in" type="number" inputmode="numeric" min="0" max="${r.ownCr}" step="1" value="${r.fromOwn}" data-sap="${esc(r.sap)}" data-k="o" data-in="pickCell" data-was="${r.fromOwn}" aria-label="${esc(shortName(r.name))} from own stock"><div class="row-sub">of ${r.ownCr}</div></td>`
+        : `<td class="r">${r.fromQC || `<span class="dim">–</span>`}</td><td class="r">${r.fromOwn || `<span class="dim">–</span>`}</td>`}
+      <td class="r"><b>${r.send}</b></td></tr>`).join("")}
+    <tr class="total"><td class="sticky-col">Total</td><td class="r">${nf(Dl.rows.reduce((a, r) => a + r.pcs, 0))}</td><td></td><td class="r">${Dl.rows.reduce((a, r) => a + r.fromQC, 0)}</td><td class="r">${Dl.rows.reduce((a, r) => a + r.fromOwn, 0)}</td><td class="r">${Dl.crates}</td></tr></tbody></table></div>`;
+}
+function showQCPick(editing) {
+  const Dl = qcDelivery(); if (!Dl.rows.length) { toast("Tick at least one open PO first", "info"); return; }
+  const to = S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo, ok = !Dl.min || Dl.value >= Dl.min;
+  const head = `<div class="card card-pad"><div class="kv"><div><div class="k">Platform</div><div class="v">${platDot(S.qcPlatform)}${esc(S.qcPlatform)}</div></div><div><div class="k">POs</div><div class="v">${Dl.pos.length}</div></div><div><div class="k">Crates</div><div class="v num">${nf(Dl.crates)}</div></div><div><div class="k">Value excl. GST</div><div class="v num">${rs(Dl.value)}</div></div></div><div class="row-sub" style="margin-top:12px">Deliver to ${esc(to)} · POs ${Dl.pos.map((p) => esc(p.po)).join(", ")}</div>${Dl.min && !ok ? `<div class="banner warn" style="margin-top:12px">${ic("alert", "sm")}<span>Below the ${rs(Dl.min)} minimum for one delivery by ${rs(Dl.min - Dl.value)}.</span></div>` : ""}</div>`;
+  const note = editing ? `<div class="banner warn">${ic("pencil", "sm")}<span><b>Change the crates to send from each stock.</b> You cannot send more than is in stock. Pieces beyond the PO are not billed.</span></div>` : "";
+  const foot = editing
+    ? `<button class="btn btn-secondary" data-act="qcPickReset">Use the suggested crates</button><button class="btn btn-secondary" data-act="qcPick">Cancel</button><button class="btn btn-primary" data-act="qcPickSave">${ic("check", "sm")} Save changes</button>`
+    : `<button class="btn btn-secondary" data-act="qcPickEdit">${ic("pencil", "sm")} Edit</button><button class="btn btn-secondary" data-act="qcPickExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="qcPickCopy">${ic("copy", "sm")} WhatsApp</button><button class="btn btn-primary" data-act="qcDeliver" ${Dl.crates ? "" : "disabled"}>${ic("truck", "sm")} Mark delivered</button>`;
+  openSheet(editing ? `Edit ${esc(S.qcPlatform)} pick list` : `${esc(S.qcPlatform)} pick list for Tropicana`, head + note + qcPickTable(Dl, editing), foot, true);
+}
+ACT.qcPick = () => { showQCPick(false); };
+ACT.qcPickEdit = () => showQCPick(true);
+ACT.qcPickSave = () => {
+  const ov = (S.qcOverride[S.qcPlatform] = S.qcOverride[S.qcPlatform] || {}), Dl = qcDelivery(); let n = 0;
+  const vals = {}; $$("#sheet input.pick-in").forEach((el) => { (vals[el.dataset.sap] = vals[el.dataset.sap] || {})[el.dataset.k] = Math.max(0, Math.floor(+el.value || 0)); });
+  for (const sap in vals) {
+    const r = Dl.rows.find((x) => x.sap === sap); if (!r) continue;
+    const q = vals[sap].q != null ? vals[sap].q : r.fromQC, o = vals[sap].o != null ? vals[sap].o : r.fromOwn;
+    if (q > r.qcCr) { toast(`Only ${r.qcCr} crates of ${shortName(r.name)} in QC stock`, "alert"); return; }
+    if (o > r.ownCr) { toast(`Only ${r.ownCr} crates of ${shortName(r.name)} in own stock`, "alert"); return; }
+    if (q !== r.fromQC || o !== r.fromOwn) { ov[sap] = { q, o }; n++; }
+  }
+  render(); showQCPick(false); if (n) toast(`${n} product${n > 1 ? "s" : ""} changed on the pick list`);
+};
+ACT.qcPickReset = () => { S.qcOverride[S.qcPlatform] = {}; render(); showQCPick(true); };
+ACT.qcPickExcel = async (el) => {
+  const Dl = qcDelivery(), now = NOW(), stampTxt = stampOf(now), to = S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo;
+  const aoa = [
+    ["PICK LIST FOR TROPICANA LOGISTICS - QC delivery (SahiReach LLP)"],
+    ["Platform", S.qcPlatform, "", "Deliver to", to],
+    ["POs", Dl.pos.map((p) => p.po).join(", ")],
+    ["Generated", stampTxt],
+    [],
+    ["Tropicana Code", "Product", "SAP Code", "Pieces Ordered", "Pieces per Crate", "From QC Stock (crates)", "From SahiReach Stock (crates)", "Crates to Send", "Pieces to Send", "Not Sent (pieces)", "Value to Send excl. GST (Rs)"],
+  ];
+  Dl.rows.forEach((r) => aoa.push([tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "", r.name, r.sap, r.pcs, r.ppc, r.fromQC, r.fromOwn, r.send, r.sendPcs, r.notSent, Math.round(r.sendValue * 100) / 100]));
+  aoa.push(["", "TOTAL", "", Dl.rows.reduce((a, r) => a + r.pcs, 0), "", Dl.rows.reduce((a, r) => a + r.fromQC, 0), Dl.rows.reduce((a, r) => a + r.fromOwn, 0), Dl.crates, Dl.rows.reduce((a, r) => a + r.sendPcs, 0), Dl.rows.reduce((a, r) => a + r.notSent, 0), Math.round(Dl.value * 100) / 100]);
+  if (await downloadXlsx(el, aoa, [16, 44, 11, 10, 10, 14, 16, 10, 10, 10, 16], `SahiReach ${S.qcPlatform} pick list ${stampTxt.replace(":", "")}.xlsx`, "QC Pick List", [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }])) {
+    logActivity("QC pick list downloaded", S.qcPlatform, `${Dl.pos.length} PO(s), ${Dl.crates} crates`); toast("Excel pick list downloaded", "doc");
+  }
+};
+ACT.qcPickCopy = () => {
+  const Dl = qcDelivery(), to = S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo;
+  const txt = `SahiReach ${S.qcPlatform} pick list (${fmtDT(NOW())})\nDeliver to: ${to}\nPOs: ${Dl.pos.map((p) => p.po).join(", ")}\n${Dl.crates} crates\n\n` + Dl.rows.filter((r) => r.send).map((r) => `  ${r.send} x ${shortName(r.name)}${tropCode(r.sap) ? " (" + tropCode(r.sap) + ")" : ""}${r.fromOwn ? `  [${r.fromOwn} from own stock]` : ""}`).join("\n");
+  copyText(txt, "Pick list copied. Paste it into WhatsApp");
+};
+ACT.qcDeliverAsk = () => { const Dl = qcDelivery(); part("qc-confirm", `<div class="confirm" style="margin-top:12px;background:var(--tint-soft);color:var(--tint)"><span><b>Delivered to ${esc(S.qcPlatform)}?</b> ${nf(Dl.crates)} crates come off stock and ${rs(Dl.value)} counts as sales today.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="qcDeliverNo">Not yet</button><button class="btn btn-sm btn-primary" data-act="qcDeliver">Yes, delivered</button></span></div>`); };
+ACT.qcDeliverNo = () => part("qc-confirm", "");
 ACT.toggleQC = (el, e) => { if (e.target.closest('[data-act="qcPOSheet"]')) return; S.qcPicked[el.dataset.po] = !S.qcPicked[el.dataset.po]; render(); };
 ACT.toggleOwn = () => { S.qcOwn = !S.qcOwn; render(); };
 ACT.qcPOSheet = (el) => {
@@ -1008,6 +1078,7 @@ ACT.qcDeliver = () => {
   const Dl = qcDelivery(), now = iso(NOW()); if (!Dl.crates) return;
   Dl.rows.forEach((r) => { const qc = qcBySap[r.sap], own = stockBySap[r.sap]; if (qc) { qc.crates -= r.fromQC; qc.ea = qc.crates * (qc.upc || 1); } if (own && r.fromOwn) { own.ea -= r.fromOwn * own.upc; own.crates = own.ea / own.upc; } });
   Dl.pos.forEach((p) => { const sent = (qcLinesByPO[p.po] || []).reduce((a, l) => { const r = Dl.rows.find((x) => x.sap === l.sap), share = r && r.pcs ? Math.min(l.pcs, Math.round((l.pcs / r.pcs) * r.sendPcs)) : 0; l.status = "Delivered"; l.delivered = share; l.accepted = share; l.short = 0; l.lapsed = l.pcs - share; l.valueAccepted = Math.round(share * l.price * 100) / 100; return a + share; }, 0); Object.assign(p, { status: "Delivered", deliveredOn: now, pcsDelivered: sent, pcsAccepted: sent, valueAccepted: (qcLinesByPO[p.po] || []).reduce((a, l) => a + (l.valueAccepted || 0), 0), fill: sent / p.pcs }); delete S.qcPicked[p.po]; });
+  S.qcOverride[S.qcPlatform] = {}; closeSheet();
   logActivity("QC delivered", S.qcPlatform, `${Dl.pos.length} PO(s), ${Dl.crates} crates`); render(); toast(`${Dl.crates} crates delivered to ${S.qcPlatform} · ${rs(Dl.pos.reduce((a, p) => a + (p.valueAccepted || 0), 0))} added to sales`, "truck");
 };
 ACT.qcLapse = () => { const ex = openQC().filter((p) => daysLeft(p) < 0); ex.forEach((p) => { p.status = "Lapsed"; p.pcsDelivered = 0; p.pcsAccepted = 0; p.valueAccepted = 0; p.fill = 0; }); render(); toast(ex.length ? `${ex.length} expired PO${ex.length > 1 ? "s" : ""} lapsed` : "No expired POs to lapse", ex.length ? "check" : "info"); };
