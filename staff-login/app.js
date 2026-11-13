@@ -399,13 +399,14 @@ function recomputeRepl() {
   });
   const cycle = xr(Math.min(30, Math.max(5, C.truck / Math.max(0.01, G10 + qcPerDay))), 1);
   let qcPlan = 0;
+  const qcSug = (q, crates) => Math.max(0, roundUp(xr(q.target - crates - q.onOrder - 0.1, 4)));
   qcRows.forEach((q) => {
     const pcsPerCrate = (q.upc || 0) * (q.ppe || 0) || q.ppc || 0;
     let open = 0; D.qcPOs.forEach((p) => { if (p.status !== "Open" || p.expiry.slice(0, 10) < today) return; (qcLinesByPO[p.po] || []).forEach((l) => { if (l.sap === q.sap && l.status === "Open") open += l.pcs; }); });
     q.openPcs = open; q.openCrates = pcsPerCrate ? xr(open / pcsPerCrate, 2) : 0;
     q.onOrder = D.hpoLog.filter((l) => l.sap === q.sap && /QC/i.test(l.pool) && (l.status === "Open" || l.status === "Part received")).reduce((a, l) => a + Math.max(0, (l.crates || 0) - (l.upc ? (l.received || 0) / l.upc : 0)), 0);
     q.target = xr(q.perDay * (C.lead + cycle + C.qcSafety) + q.openCrates, 2);
-    q.suggested = Math.max(0, roundUp(xr(q.target - (q.crates || 0) - q.onOrder - 0.1, 4)));
+    q.suggested = qcSug(q, q.crates || 0);
     q.final = q.yours != null && q.yours !== "" ? +q.yours : q.suggested; qcPlan += q.final;
     q.daysAfter = q.perDay > 0 ? xr(((q.crates || 0) + q.onOrder - q.openCrates) / q.perDay, 1) : null;
   });
@@ -426,14 +427,16 @@ function recomputeRepl() {
     r.rop = xr(P * C.lead + (noSS ? 0 : Math.min(z * r.swing * Math.sqrt(C.lead / 7), P * C.ssMax)), 2);
     const base = S2 === "Push" ? P * C.pushDays : P * (C.lead + cycle) + r.safety, mn = +r.min || 0, mx = r.max != null && r.max !== "" ? +r.max : null;
     r.target = S2 === "Don't order" || S2 === "Same SKU" ? 0 : xr(Math.max(mn, mx != null ? Math.min(mx, base) : base), 2);
-    let need = 0;
-    if (S2 !== "Don't order" && S2 !== "Same SKU") {
-      need = S2 === "Push" ? (have < Math.max(P * C.pushTrigger, mn) ? xr(r.target - have, 0) : 0) : S2 === "Hero" || S2 === "Core" ? roundUp(xr(Math.max(0, r.target - have) - 0.1, 4)) : xr(Math.max(0, r.target - have), 0);
-      need = Math.max(0, Math.max(0, need) + (+r.adj || 0));
-    }
-    r.need = need;
-    const lim = r.target + P * (S2 === "Hero" ? C.heroExtra : C.coreExtra);
-    r.room = S2 !== "Hero" && S2 !== "Core" ? 0 : Math.max(0, roundDown(xr((mx != null ? Math.min(mx, lim) : lim) - have - need, 4)));
+    r._nr = (h) => {
+      let need = 0;
+      if (S2 !== "Don't order" && S2 !== "Same SKU") {
+        need = S2 === "Push" ? (h < Math.max(P * C.pushTrigger, mn) ? xr(r.target - h, 0) : 0) : S2 === "Hero" || S2 === "Core" ? roundUp(xr(Math.max(0, r.target - h) - 0.1, 4)) : xr(Math.max(0, r.target - h), 0);
+        need = Math.max(0, Math.max(0, need) + (+r.adj || 0));
+      }
+      const lim = r.target + P * (S2 === "Hero" ? C.heroExtra : C.coreExtra);
+      return { need, room: S2 !== "Hero" && S2 !== "Core" ? 0 : Math.max(0, roundDown(xr((mx != null ? Math.min(mx, lim) : lim) - h - need, 4))) };
+    };
+    const nr = r._nr(have); r.need = nr.need; r.room = nr.room;
     r.belowRop = (S2 === "Hero" || S2 === "Core") && P > 0 && have < r.rop ? 1 : 0;
     r._untilRop = (S2 === "Hero" || S2 === "Core") && P > 0 ? Math.max(0, xr((have - r.rop) / P, 1)) : null;
     r._fixed = r.yours != null && r.yours !== "";
@@ -478,14 +481,29 @@ function recomputeRepl() {
     r.note = notes.join(" ");
     G8 += r.need; L8 += r.room; G7 += r.belowRop; ownFinal += r.final; if (r._untilRop != null && (minUntil == null || r._untilRop < minUntil)) minUntil = r._untilRop;
   });
-  const decision = G7 > 0 && G8 + L8 >= cap ? "ORDER NOW" : G7 > 0 ? "ORDER SOON" : G8 >= cap ? "ORDER NOW" : "HOLD";
-  const orderBy = minUntil != null ? addDays(today, Math.floor(minUntil)) : null;
+  /* when can a full truck go? Walk forward day by day, stock falling at each product's sales rate */
+  const qcTyped = D.repl.qcCrates != null && D.repl.qcCrates !== "";
+  const fillsOn = (k) => {
+    const qcK = qcTyped ? +D.repl.qcCrates : qcRows.reduce((a, q) => a + (q.yours != null && q.yours !== "" ? +q.yours : qcSug(q, Math.max(0, (q.crates || 0) - q.perDay * k))), 0);
+    const capK = D.repl.ownOverride > 0 ? +D.repl.ownOverride : Math.max(0, C.truck - qcK);
+    let s = 0; rows.forEach((r) => { if (r._fixed) { s += +r.yours; return; } const x = r._nr(Math.max(0, r.stock + r.onOrder - r.perDay * k)); s += x.need + x.room; });
+    return s >= capK;
+  };
+  let fullIn = null; for (let k = 0; k <= 60; k++) if (fillsOn(k)) { fullIn = k; break; }
+  const decision = fullIn === 0 ? "ORDER NOW" : fullIn != null && fullIn <= 7 ? "ORDER SOON" : "HOLD";
+  const orderBy = fullIn != null ? addDays(today, fullIn) : null;
+  /* Hero/Core products that will run out before a truck ordered on that date arrives */
+  const arriveIn = (fullIn != null ? fullIn : 60) + C.lead;
+  const runOut = rows.filter((r) => (r.cls === "Hero" || r.cls === "Core") && r.perDay > 0 && (r.stock + r.onOrder) / r.perDay < arriveIn).sort((a, b) => (a.stock + a.onOrder) / a.perDay - (b.stock + b.onOrder) / b.perDay);
+  rows.forEach((r) => { r.runsOut = runOut.includes(r) ? addDays(today, Math.floor((r.stock + r.onOrder) / r.perDay)) : null; });
+  const dayTxt = (d) => (d === today ? "today" : d === addDays(today, 1) ? "tomorrow" : fmtDate(d));
+  const names = (list) => list.slice(0, 3).map((r) => shortName(r.name).split("(")[0].trim()).join(", ") + (list.length > 3 ? ` and ${list.length - 3} more` : "");
+  const warn = runOut.length ? ` ${runOut.length} Hero/Core product${runOut.length > 1 ? "s" : ""} will run out before ${decision === "ORDER NOW" ? "the truck arrives" : "that truck arrives"}: ${names(runOut)}.` : "";
   let why;
-  if (decision === "ORDER NOW" && G7 > 0) why = `${G7} Hero/Core product${G7 > 1 ? "s are" : " is"} below the reorder point. Base need ${nf(G8)} crates; topping up Hero and Core products fills the ${nf(cap)} crates of own stock on the truck.`;
-  else if (decision === "ORDER SOON") why = `${G7} Hero/Core product${G7 > 1 ? "s are" : " is"} below the reorder point, but base need ${nf(G8)} + the most the top-up allows (${nf(L8)}) is only ${nf(G8 + L8)} of ${nf(cap)} crates. Order once the truck can be filled, or order now and type extra crates under "Your crates".`;
-  else if (decision === "ORDER NOW") why = `Base need is ${nf(G8)} crates, enough to fill the ${nf(cap)} crates of own stock on the truck.`;
-  else why = `Nothing is below its reorder point and base need is only ${nf(G8)} of ${nf(cap)} crates.${orderBy ? ` The first product reaches its reorder point around ${fmtDate(orderBy)}.` : ""}`;
-  Object.assign(D.repl, { truck: C.truck, qcPlan, qcOnTruck, cap, ownPlan: cap, ownFinal, total: ownFinal + qcOnTruck, decision, why, belowRop: G7, baseNeed: G8, topUp: L8, orderBy, perDay: xr(G10, 2), qcPerDay: xr(qcPerDay, 2), truckDays: cycle, short: shortC, over: overC, toppedUp: topup, trimmed });
+  if (decision === "ORDER NOW") why = `A full truck of ${nf(C.truck)} crates can go today: ${nf(ownFinal)} own stock and ${nf(qcOnTruck)} quick commerce.${G7 ? ` ${G7} Hero/Core product${G7 > 1 ? "s are" : " is"} below the reorder point.` : ""}${warn}`;
+  else if (decision === "ORDER SOON") why = `A full ${nf(C.truck)}-crate truck is needed ${dayTxt(orderBy)}. Ordered today the plan would only reach ${nf(ownFinal + qcOnTruck)} crates.${warn}${runOut.length ? ` To order earlier, type extra crates under "Your crates" to make up ${nf(C.truck)}.` : ""}`;
+  else why = orderBy ? `No truck needed yet. The next full truck is due around ${fmtDate(orderBy)}.${warn}` : `No truck needed in the next 60 days at today's sales.${warn}`;
+  Object.assign(D.repl, { truck: C.truck, qcPlan, qcOnTruck, cap, ownPlan: cap, ownFinal, total: ownFinal + qcOnTruck, decision, why, fullIn, runOut: runOut.length, belowRop: G7, baseNeed: G8, topUp: L8, orderBy, perDay: xr(G10, 2), qcPerDay: xr(qcPerDay, 2), truckDays: cycle, short: shortC, over: overC, toppedUp: topup, trimmed });
   REPL_AT = NOW();
   return D.repl;
 }
@@ -1371,7 +1389,7 @@ function replGrid() {
   const rows = replRows();
   if (!rows.length) return `<div class="group"><div class="empty">No products in this group.</div></div>`;
   return `<div class="dg" style="--cols:minmax(0,2fr) 84px 76px 70px minmax(100px,130px) 80px 96px 70px;--cols-sm:minmax(0,1fr) 84px"><div class="dg-row dg-head"><span>Product</span><span class="c-hide">Class</span><span class="r c-hide">Sells / day</span><span class="r c-hide">Stock</span><span class="c-hide">Days of stock</span><span class="r c-hide">Suggested</span><span class="r">Your crates</span><span class="r c-hide">Final</span></div>
-  ${rows.map((r) => { const open = S.replOpen === r.sap, low = r.belowRop; return `<div class="dg-row" style="cursor:pointer" data-act="replToggle" data-sap="${r.sap}"><span><div class="strong clip">${esc(shortName(r.name))}</div><div class="row-sub clip">${low ? `<span style="color:var(--bad);font-weight:600">Below reorder point</span>${r.note && !/^below reorder/i.test(r.note) ? " · " + esc(r.note) : ""}` : r.note ? esc(r.note) : esc(r.cat || "")}</div></span><span class="c-hide">${classPill(r.cls)}</span><span class="r c-hide">${nf(r.perDay, 2)}</span><span class="r c-hide">${nf(r.stock, 1)}</span><span class="bar-cell c-hide">${r.days != null ? `<div class="meter ${low ? "bad" : r.days < 8 ? "warn" : ""}"><i style="width:${Math.min(100, (r.days / 30) * 100)}%"></i></div><span class="num" style="font-size:13px;min-width:30px;text-align:right">${nf(r.days, 0)}d</span>` : `<span class="dim">–</span>`}</span><span class="r c-hide">${nf(r.suggested)}</span><span class="r"><input class="input sm num-in" style="width:76px" type="number" min="0" placeholder="${nf(r.suggested)}" value="${r.yours != null ? r.yours : ""}" id="rp-${r.sap}" data-in="replYours" data-sap="${r.sap}" aria-label="Your crates"></span><span class="r strong c-hide" id="rf-${r.sap}">${nf(r.final)}</span></div>
+  ${rows.map((r) => { const open = S.replOpen === r.sap, low = r.belowRop; return `<div class="dg-row" style="cursor:pointer" data-act="replToggle" data-sap="${r.sap}"><span><div class="strong clip">${esc(shortName(r.name))}</div><div class="row-sub clip">${r.runsOut ? `<span style="color:var(--bad);font-weight:600">Runs out ${r.runsOut <= ymd(NOW()) ? "now" : "~" + fmtDate(r.runsOut)}</span>${low ? " · below reorder point" : ""} · ` : ""}${low && !r.runsOut ? `<span style="color:var(--bad);font-weight:600">Below reorder point</span>${r.note && !/^below reorder/i.test(r.note) ? " · " + esc(r.note) : ""}` : r.note ? esc(r.note) : esc(r.cat || "")}</div></span><span class="c-hide">${classPill(r.cls)}</span><span class="r c-hide">${nf(r.perDay, 2)}</span><span class="r c-hide">${nf(r.stock, 1)}</span><span class="bar-cell c-hide">${r.days != null ? `<div class="meter ${low ? "bad" : r.days < 8 ? "warn" : ""}"><i style="width:${Math.min(100, (r.days / 30) * 100)}%"></i></div><span class="num" style="font-size:13px;min-width:30px;text-align:right">${nf(r.days, 0)}d</span>` : `<span class="dim">–</span>`}</span><span class="r c-hide">${nf(r.suggested)}</span><span class="r"><input class="input sm num-in" style="width:76px" type="number" min="0" placeholder="${nf(r.suggested)}" value="${r.yours != null ? r.yours : ""}" id="rp-${r.sap}" data-in="replYours" data-sap="${r.sap}" aria-label="Your crates"></span><span class="r strong c-hide" id="rf-${r.sap}">${nf(r.final)}</span></div>
     ${open ? `<div class="dg-row" style="--cols:1fr;background:var(--surface-2);display:block"><div class="kv"><div><div class="k">Sold, last 14 days</div><div class="v num">${nf(r.s14, 1)} crates</div></div><div><div class="k">Days 15 to 28</div><div class="v num">${nf(r.s28, 1)}</div></div><div><div class="k">Days 29 to 56</div><div class="v num">${nf(r.s56, 1)}</div></div><div><div class="k">Missed, 28 days</div><div class="v num">${nf(r.missed, 1)}</div></div><div><div class="k">Reorder point</div><div class="v num">${nf(r.rop, 1)}</div></div><div><div class="k">Target stock</div><div class="v num">${nf(r.target, 1)}</div></div><div><div class="k">On order</div><div class="v num">${nf(r.onOrder, 1)}</div></div><div><div class="k">After this truck</div><div class="v num">${r.daysAfter != null ? nf(r.daysAfter, 0) + " days" : "–"}</div></div></div>
       <div class="form-grid" style="margin-top:14px;grid-template-columns:repeat(4,minmax(0,1fr))"><div class="field"><label class="label" for="rr-${r.sap}">Order rule</label><select class="select sm" id="rr-${r.sap}" data-in="replRule" data-sap="${r.sap}">${["Auto", "Hero", "Core", "Tail", "Push", "Don't order"].map((x) => `<option ${(r.rule || "Auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div class="field"><label class="label">Min crates</label><input class="input sm num-in" type="number" min="0" value="${r.min != null ? r.min : ""}" placeholder="–" data-in="replNum" data-repl="1" data-f="min" data-sap="${r.sap}"></div><div class="field"><label class="label">Max crates</label><input class="input sm num-in" type="number" min="0" value="${r.max != null ? r.max : ""}" placeholder="–" data-in="replNum" data-repl="1" data-f="max" data-sap="${r.sap}"></div><div class="field"><label class="label">Adjust + / −</label><input class="input sm num-in" type="number" value="${r.adj != null ? r.adj : ""}" placeholder="0" data-in="replNum" data-repl="1" data-f="adj" data-sap="${r.sap}"></div></div><div class="field" style="margin-top:12px"><label class="label" for="rn-${r.sap}">Reason / note</label><input class="input sm" id="rn-${r.sap}" value="${esc(r.reason || "")}" placeholder="Why this rule (optional)" data-in="replNote" data-sap="${r.sap}"></div>${r.note ? `<div class="row-sub" style="margin-top:10px">${esc(r.note)}</div>` : ""}</div>` : ""}`; }).join("")}</div>`;
 }
@@ -1386,15 +1404,15 @@ VIEWS.replenish = () => {
   recomputeRepl();
   const R = D.repl, dec = R.decision, cls = dec.includes("NOW") ? "bad" : dec.includes("SOON") ? "warn" : "good", word = dec.includes("NOW") ? "Order now" : dec.includes("SOON") ? "Order soon" : "Hold";
   const count = (f) => D.repl.rows.filter((r) => (f === "On this truck" ? r.final > 0 : f === "Below reorder" ? r.belowRop : r.cls === f)).length;
-  const plan = `<div class="grid-2"><div class="decision ${cls}"><div class="tile-label" style="color:inherit;opacity:.75">The engine says</div><div class="decision-word">${word}</div><div style="font-size:14.5px;max-width:60ch">${esc(R.why)}</div><div class="kv" style="margin-top:10px"><div><div class="k">Order by</div><div class="v">${!R.orderBy ? "–" : R.orderBy <= ymd(NOW()) ? "Today" : R.orderBy === addDays(ymd(NOW()), 1) ? "Tomorrow" : fmtDate(R.orderBy)}</div></div><div><div class="k">Below reorder point</div><div class="v">${R.belowRop} Hero / Core</div></div><div><div class="k">Own sales</div><div class="v num">${nf(R.perDay, 1)} crates / day</div></div><div><div class="k">One truck lasts</div><div class="v num">${R.truckDays} days</div></div></div></div>
-      <div class="card card-pad"><div id="truck">${truckHtml()}</div><div class="divider" style="margin:16px 0"></div><div class="hstack between gap-12"><div><div class="row-title">Quick commerce crates on this truck</div><div class="row-sub">Hangyo decides this. Leave it empty to use the QC plan of ${nf(R.qcPlan)} crates.</div></div><input class="input num-in" style="width:96px" type="number" min="0" id="rp-qc" value="${R.qcCrates != null ? R.qcCrates : ""}" placeholder="${nf(R.qcPlan)}" data-in="replQC" data-repl="1" aria-label="QC crates"></div><div class="row-sub" style="margin-top:12px">Worked out live from today's stock, orders, missed sales and open Hangyo POs · ${fmtTime(REPL_AT)}</div></div></div>
+  const plan = `<div class="grid-2"><div class="decision ${cls}"><div class="tile-label" style="color:inherit;opacity:.75">The engine says</div><div class="decision-word">${word}</div><div style="font-size:14.5px;max-width:60ch">${esc(R.why)}</div><div class="kv" style="margin-top:10px"><div><div class="k">${dec === "HOLD" ? "Next truck around" : "Order on"}</div><div class="v">${!R.orderBy ? "Not in 60 days" : R.orderBy <= ymd(NOW()) ? "Today" : R.orderBy === addDays(ymd(NOW()), 1) ? "Tomorrow" : fmtDate(R.orderBy)}</div></div><div><div class="k">Run out before the truck</div><div class="v" ${R.runOut ? 'style="color:var(--bad)"' : ""}>${R.runOut} Hero / Core</div></div><div><div class="k">Own sales</div><div class="v num">${nf(R.perDay, 1)} crates / day</div></div><div><div class="k">One truck lasts</div><div class="v num">${R.truckDays} days</div></div></div></div>
+      <div class="card card-pad"><div id="truck">${truckHtml()}</div>${dec !== "ORDER NOW" ? `<div class="row-sub" style="margin-top:8px">This is what would go if you ordered today. Hangyo needs ${nf(R.truck)} crates to send a truck.</div>` : ""}<div class="divider" style="margin:16px 0"></div><div class="hstack between gap-12"><div><div class="row-title">Quick commerce crates on this truck</div><div class="row-sub">Hangyo decides this. Leave it empty to use the QC plan of ${nf(R.qcPlan)} crates (<button class="btn-plain" style="height:auto;padding:0;font-size:inherit;font-weight:600;color:var(--tint)" data-act="seg" data-name="replTab" data-value="qc">see Swiggy &amp; Zepto</button>).</div></div><input class="input num-in" style="width:96px" type="number" min="0" id="rp-qc" value="${R.qcCrates != null ? R.qcCrates : ""}" placeholder="${nf(R.qcPlan)}" data-in="replQC" data-repl="1" aria-label="QC crates"></div><div class="row-sub" style="margin-top:12px">Worked out live from today's stock, orders, missed sales and open Hangyo POs · ${fmtTime(REPL_AT)}</div></div></div>
     <div class="sec-head"><div><div class="section-title">What goes on the truck</div><div class="section-sub">Type your own crates to override a suggestion. Tap a row to see why and set rules.</div></div></div>
     <div class="chips">${["All", "On this truck", "Below reorder", "Hero", "Core", "Tail", "Push", "Don't order"].map((f) => `<button class="chip" data-act="replFilter" data-f="${esc(f)}" aria-pressed="${S.replFilter === f}">${esc(f)}${f !== "All" ? ` <span style="opacity:.6">${count(f)}</span>` : ""}</button>`).join("")}</div>
     <div id="repl-grid">${replGrid()}</div>`;
   return `<div class="page">
     <div class="page-head"><div><h1 class="title">Replenishment</h1><div class="subtitle">What to order from Hangyo and when, worked out from your sales, missed sales and stock.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="planTruck">${ic("cycle", "sm")} Plan the truck</button><button class="btn btn-primary" data-act="makePO">${ic("doc", "sm")} Make Hangyo PO</button></div></div>
-    ${seg("replTab", S.replTab, [["plan", "Truck plan"], ["orders", "Hangyo POs"], ["rules", "Rules"]])}
-    ${S.replTab === "plan" ? plan : S.replTab === "orders" ? poLogHtml() : rulesHtml()}</div>`;
+    ${seg("replTab", S.replTab, [["plan", "Truck plan"], ["qc", "Swiggy & Zepto"], ["orders", "Hangyo POs"], ["rules", "Rules"]])}
+    ${S.replTab === "plan" ? plan : S.replTab === "qc" ? qcReplHtml() : S.replTab === "orders" ? poLogHtml() : rulesHtml()}</div>`;
 };
 ACT.replFilter = (el) => { S.replFilter = el.dataset.f; part("repl-grid", replGrid()); $$('[data-act="replFilter"]').forEach((b) => b.setAttribute("aria-pressed", b.dataset.f === S.replFilter)); };
 ACT.replToggle = (el, e) => { if (e.target.closest("input,select,label")) return; S.replOpen = S.replOpen === el.dataset.sap ? null : el.dataset.sap; part("repl-grid", replGrid()); };
@@ -1419,20 +1437,43 @@ document.addEventListener("change", (e) => {
   clearTimeout(replRedraw); replRedraw = setTimeout(() => { if (S.route === "replenish") render(); }, 0);
 });
 ACT.planTruck = () => { recomputeRepl(); render(); toast(`Plan worked out again: ${D.repl.decision.toLowerCase()}`, "cycle"); };
+const qcPOLines = () => D.qcStock.filter((q) => q.final > 0).sort((a, b) => a.name.localeCompare(b.name));
 ACT.makePO = () => {
-  const lines = D.repl.rows.filter((r) => r.final > 0).sort((a, b) => a.name.localeCompare(b.name)), T = replTotals();
-  openSheet("Hangyo purchase order", `<div class="card card-pad"><div class="kv"><div><div class="k">Stock pool</div><div class="v">Own stock</div></div><div><div class="k">Lines</div><div class="v">${lines.length}</div></div><div><div class="k">Crates</div><div class="v num">${nf(T.own)}</div></div><div><div class="k">Boxes for the portal</div><div class="v num">${nf(lines.reduce((a, r) => a + r.final * (r.upc || 0), 0))}</div></div><div><div class="k">Value at SS rate</div><div class="v num">${rs(T.value)}</div></div></div></div>
-    <div class="table-wrap"><table class="t"><thead><tr><th>Product</th><th>Type</th><th class="r">Per crate</th><th class="r">Crates</th><th class="r">Boxes</th></tr></thead><tbody>${lines.map((r) => `<tr><td>${esc(shortName(r.name))}<div class="row-sub mono">${esc(r.sap)}</div></td><td>${esc(r.cat || "")}</td><td class="r">${r.upc}</td><td class="r"><b>${nf(r.final)}</b></td><td class="r">${nf(r.final * (r.upc || 0))}</td></tr>`).join("")}</tbody></table></div><div class="row-sub">The Hangyo portal takes boxes. Place the order there, then mark it as placed so the next plan does not order it twice.</div>`,
+  recomputeRepl();
+  const lines = D.repl.rows.filter((r) => r.final > 0).sort((a, b) => a.name.localeCompare(b.name)), qls = qcPOLines(), T = replTotals();
+  const qcCr = qls.reduce((a, q) => a + q.final, 0), qcVal = qls.reduce((a, q) => a + q.final * (q.upc || 0) * (ssRate(q.sap) || 0), 0);
+  const tbl = (rows, get) => `<div class="table-wrap"><table class="t"><thead><tr><th>Product</th><th>Type</th><th class="r">Per crate</th><th class="r">Crates</th><th class="r">Boxes</th></tr></thead><tbody>${rows.map((r) => { const c = get(r); return `<tr><td>${esc(shortName(r.name))}<div class="row-sub mono">${esc(r.sap)}</div></td><td>${esc(r.cat || "")}</td><td class="r">${r.upc}</td><td class="r"><b>${nf(c)}</b></td><td class="r">${nf(c * (r.upc || 0))}</td></tr>`; }).join("")}</tbody></table></div>`;
+  const typedNote = D.repl.qcCrates != null && D.repl.qcCrates !== "" && +D.repl.qcCrates !== qcCr ? `<div class="banner warn">${ic("alert", "sm")}<span>You typed ${nf(+D.repl.qcCrates)} quick commerce crates for the truck, but the products below add up to ${nf(qcCr)}. Set them per product on the Swiggy &amp; Zepto tab.</span></div>` : "";
+  openSheet("Hangyo purchase order", `<div class="card card-pad"><div class="kv"><div><div class="k">Own stock</div><div class="v num">${nf(T.own)} crates</div></div><div><div class="k">Quick commerce</div><div class="v num">${nf(qcCr)} crates</div></div><div><div class="k">Total</div><div class="v num">${nf(T.own + qcCr)} of ${nf(D.repl.truck)}</div></div><div><div class="k">Value at SS rate</div><div class="v num">${rs(T.value + qcVal)}</div></div></div></div>
+    <div class="group-label" style="padding-bottom:0"><span>Own stock · ${lines.length} lines</span></div>${lines.length ? tbl(lines, (r) => r.final) : `<div class="group"><div class="empty">Nothing for own stock.</div></div>`}
+    <div class="group-label" style="padding-bottom:0"><span>Quick commerce stock · ${qls.length} lines</span></div>${typedNote}${qls.length ? tbl(qls, (q) => q.final) : `<div class="group"><div class="empty">Nothing for Swiggy / Zepto.</div></div>`}
+    <div class="row-sub">The Hangyo portal takes boxes. Place the order there, then mark it as placed so the next plan does not order it twice.</div>`,
     `<button class="btn btn-secondary" data-act="copyPO">${ic("copy", "sm")} Copy lines</button><button class="btn btn-primary" data-act="placePO">Mark PO as placed</button>`, true);
 };
-ACT.copyPO = () => copyText(D.repl.rows.filter((r) => r.final > 0).map((r) => `${r.name}\t${r.final} crates\t${r.final * (r.upc || 0)} boxes`).join("\n"), "PO lines copied");
+ACT.copyPO = () => copyText(["OWN STOCK"].concat(D.repl.rows.filter((r) => r.final > 0).map((r) => `${r.name}\t${r.final} crates\t${r.final * (r.upc || 0)} boxes`), ["", "QUICK COMMERCE STOCK"], qcPOLines().map((q) => `${q.name}\t${q.final} crates\t${q.final * (q.upc || 0)} boxes`)).join("\n"), "PO lines copied");
 ACT.placePO = () => {
-  const now = NOW(), po = "HPO-" + stamp(now);
-  D.repl.rows.filter((r) => r.final > 0).forEach((r) => { D.hpoLog.push({ placed: iso(now), po, pool: "Own stock", product: r.name, sap: r.sap, upc: r.upc, crates: r.final, boxes: r.final * (r.upc || 0), status: "Open", value: r.final * (r.upc || 0) * (ssRate(r.sap) || 0), received: 0, toCome: r.final }); });
-  logActivity("Hangyo PO placed", po, `${nf(replTotals().own)} crates`);
-  D.repl.rows.forEach((r) => { r.yours = null; }); D.repl.qcCrates = null;
+  recomputeRepl();
+  const now = NOW(), po = "HPO-" + stamp(now), push = (r, pool) => D.hpoLog.push({ placed: iso(now), po, pool, product: r.name, sap: r.sap, upc: r.upc, crates: r.final, boxes: r.final * (r.upc || 0), status: "Open", value: r.final * (r.upc || 0) * (ssRate(r.sap) || 0), received: 0, toCome: r.final });
+  const own = D.repl.rows.filter((r) => r.final > 0), qc = qcPOLines();
+  if (!own.length && !qc.length) { toast("Nothing on the plan to order", "info"); return; }
+  own.forEach((r) => push(r, "Own stock")); qc.forEach((q) => push(q, "QC stock"));
+  logActivity("Hangyo PO placed", po, `Own ${nf(own.reduce((a, r) => a + r.final, 0))} crates, QC ${nf(qc.reduce((a, q) => a + q.final, 0))} crates`);
+  D.repl.rows.forEach((r) => { r.yours = null; }); D.qcStock.forEach((q) => { q.yours = null; }); D.repl.qcCrates = null;
   closeSheet(); S.replTab = "orders"; render(); toast("PO marked as placed");
 };
+function qcReplHtml() {
+  const rows = D.qcStock.slice().sort((a, b) => (b.final || 0) - (a.final || 0) || (b.perDay || 0) - (a.perDay || 0)), tot = rows.reduce((a, q) => a + (q.final || 0), 0);
+  const typed = D.repl.qcCrates != null && D.repl.qcCrates !== "";
+  return `<div class="banner info">${ic("info", "sm")}<span><b>Stock for Swiggy and Zepto, kept apart from your own stock.</b> Suggested crates = what Swiggy and Zepto ordered per day over the last 28 days × (${replCfg().lead} days lead time + ${D.repl.truckDays} days one truck lasts + ${replCfg().qcSafety} extra days), plus what open POs still need, minus QC stock and crates already on order. Type your own number to override.</span></div>
+    <div class="tiles tiles-4"><div class="tile"><div class="tile-label">On this truck</div><div class="tile-value" id="qc-total">${nf(typed ? +D.repl.qcCrates : tot)}<small>crates</small></div><div class="tile-sub">${typed ? `You typed the total on the Truck plan tab; products add up to ${nf(tot)}` : "Sum of the final crates below"}</div></div>
+      <div class="tile"><div class="tile-label">QC sales</div><div class="tile-value">${nf(D.repl.qcPerDay, 1)}<small>crates / day</small></div><div class="tile-sub">From Swiggy and Zepto POs, last 28 days</div></div>
+      <div class="tile"><div class="tile-label">QC stock now</div><div class="tile-value">${nf(rows.reduce((a, q) => a + (q.crates || 0), 0))}<small>crates</small></div><div class="tile-sub">${nf(rows.reduce((a, q) => a + (q.openCrates || 0), 0), 1)} crates needed by open POs</div></div>
+      <div class="tile"><div class="tile-label">Running short</div><div class="tile-value">${rows.filter((q) => q.perDay > 0 && q.daysAfter != null && q.daysAfter < replCfg().lead + D.repl.truckDays).length}<small>products</small></div><div class="tile-sub">Will not last until the next truck</div></div></div>
+    <div class="dg" style="--cols:minmax(0,2fr) 76px 84px 76px 92px 84px 96px 70px;--cols-sm:minmax(0,1fr) 84px"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">QC stock</span><span class="r c-hide">On open POs</span><span class="r c-hide">Sells / day</span><span class="r c-hide">Days after POs</span><span class="r c-hide">Suggested</span><span class="r">Your crates</span><span class="r c-hide">Final</span></div>
+    ${rows.map((q) => { const short = q.perDay > 0 && q.daysAfter != null && q.daysAfter < replCfg().lead + D.repl.truckDays; return `<div class="dg-row"><span><div class="strong clip">${esc(shortName(q.name))}</div><div class="row-sub clip">${short ? `<span style="color:var(--bad);font-weight:600">Short before the next truck</span> · ` : ""}${q.ppc || "–"} pcs / crate${q.onOrder ? ` · ${nf(q.onOrder, 1)} on order` : ""}</div></span><span class="r c-hide">${nf(q.crates || 0, 1)}</span><span class="r c-hide">${q.openCrates ? nf(q.openCrates, 1) : `<span class="dim">–</span>`}</span><span class="r c-hide">${q.perDay ? nf(q.perDay, 2) : `<span class="dim">–</span>`}</span><span class="r c-hide" ${short ? 'style="color:var(--bad);font-weight:600"' : ""}>${q.daysAfter == null ? "–" : q.daysAfter < 0 ? "0" : nf(q.daysAfter, 1)}</span><span class="r c-hide">${nf(q.suggested || 0)}</span><span class="r"><input class="input sm num-in" style="width:72px" type="number" min="0" value="${q.yours != null && q.yours !== "" ? q.yours : ""}" placeholder="${nf(q.suggested || 0)}" data-in="qcYours" data-repl="1" data-sap="${esc(q.sap)}" aria-label="Your QC crates for ${esc(shortName(q.name))}"></span><span class="r strong c-hide" id="qf-${esc(q.sap)}">${nf(q.final || 0)}</span></div>`; }).join("")}
+    <div class="dg-row" style="font-weight:700"><span>Total</span><span class="r c-hide">${nf(rows.reduce((a, q) => a + (q.crates || 0), 0))}</span><span class="r c-hide">${nf(rows.reduce((a, q) => a + (q.openCrates || 0), 0), 1)}</span><span class="r c-hide">${nf(D.repl.qcPerDay, 2)}</span><span class="c-hide"></span><span class="r c-hide">${nf(rows.reduce((a, q) => a + (q.suggested || 0), 0))}</span><span></span><span class="r c-hide" id="qf-total">${nf(tot)}</span></div></div>`;
+}
+IN.qcYours = (el) => { const q = qcBySap[el.dataset.sap]; q.yours = el.value === "" ? null : Math.max(0, Math.round(+el.value)); recomputeRepl(); const f = $("#qf-" + q.sap); if (f) f.textContent = nf(q.final); const tt = $("#qf-total"); if (tt) tt.textContent = nf(D.qcStock.reduce((a, x) => a + (x.final || 0), 0)); };
 ACT.poSheet = (el) => {
   const lines = D.hpoLog.filter((l) => l.po === el.dataset.po), g = lines[0];
   openSheet(esc(g.po), `<div class="card card-pad"><div class="kv"><div><div class="k">Placed</div><div class="v">${fmtDT(g.placed)}</div></div><div><div class="k">Stock pool</div><div class="v">${esc(g.pool)}</div></div><div><div class="k">Crates</div><div class="v num">${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))}</div></div><div><div class="k">Value at SS rate</div><div class="v num">${rs(lines.reduce((a, l) => a + (l.value || 0), 0))}</div></div></div></div>
