@@ -1404,13 +1404,14 @@ VIEWS.replenish = () => {
   recomputeRepl();
   const R = D.repl, dec = R.decision, cls = dec.includes("NOW") ? "bad" : dec.includes("SOON") ? "warn" : "good", word = dec.includes("NOW") ? "Order now" : dec.includes("SOON") ? "Order soon" : "Hold";
   const count = (f) => D.repl.rows.filter((r) => (f === "On this truck" ? r.final > 0 : f === "Below reorder" ? r.belowRop : r.cls === f)).length;
-  const plan = `<div class="grid-2"><div class="decision ${cls}"><div class="tile-label" style="color:inherit;opacity:.75">The engine says</div><div class="decision-word">${word}</div><div style="font-size:14.5px;max-width:60ch">${esc(R.why)}</div><div class="kv" style="margin-top:10px"><div><div class="k">${dec === "HOLD" ? "Next truck around" : "Order on"}</div><div class="v">${!R.orderBy ? "Not in 60 days" : R.orderBy <= ymd(NOW()) ? "Today" : R.orderBy === addDays(ymd(NOW()), 1) ? "Tomorrow" : fmtDate(R.orderBy)}</div></div><div><div class="k">Run out before the truck</div><div class="v" ${R.runOut ? 'style="color:var(--bad)"' : ""}>${R.runOut} Hero / Core</div></div><div><div class="k">Own sales</div><div class="v num">${nf(R.perDay, 1)} crates / day</div></div><div><div class="k">One truck lasts</div><div class="v num">${R.truckDays} days</div></div></div></div>
+  const ovc = overrideCounts(), ovn = ovc.yours + ovc.adj + ovc.qcYours + ovc.qcTotal + ovc.minmax;
+  const plan = `${ovn ? `<div class="banner warn" style="align-items:center">${ic("pencil", "sm")}<span class="grow"><b>${ovn} value${ovn > 1 ? "s" : ""} typed over the engine's numbers.</b> ${[ovc.yours ? ovc.yours + " Your crates" : "", ovc.qcYours ? ovc.qcYours + " Swiggy/Zepto crates" : "", ovc.qcTotal ? "QC total" : "", ovc.adj ? ovc.adj + " Adjust" : "", ovc.minmax ? ovc.minmax + " Min/Max" : ""].filter(Boolean).join(" · ")}</span><button class="btn btn-sm btn-secondary" data-act="clearAsk">${ic("undo", "sm")} Clear</button></div>` : ""}<div class="grid-2"><div class="decision ${cls}"><div class="tile-label" style="color:inherit;opacity:.75">The engine says</div><div class="decision-word">${word}</div><div style="font-size:14.5px;max-width:60ch">${esc(R.why)}</div><div class="kv" style="margin-top:10px"><div><div class="k">${dec === "HOLD" ? "Next truck around" : "Order on"}</div><div class="v">${!R.orderBy ? "Not in 60 days" : R.orderBy <= ymd(NOW()) ? "Today" : R.orderBy === addDays(ymd(NOW()), 1) ? "Tomorrow" : fmtDate(R.orderBy)}</div></div><div><div class="k">Run out before the truck</div><div class="v" ${R.runOut ? 'style="color:var(--bad)"' : ""}>${R.runOut} Hero / Core</div></div><div><div class="k">Own sales</div><div class="v num">${nf(R.perDay, 1)} crates / day</div></div><div><div class="k">One truck lasts</div><div class="v num">${R.truckDays} days</div></div></div></div>
       <div class="card card-pad"><div id="truck">${truckHtml()}</div>${dec !== "ORDER NOW" ? `<div class="row-sub" style="margin-top:8px">This is what would go if you ordered today. Hangyo needs ${nf(R.truck)} crates to send a truck.</div>` : ""}<div class="divider" style="margin:16px 0"></div><div class="hstack between gap-12"><div><div class="row-title">Quick commerce crates on this truck</div><div class="row-sub">Hangyo decides this. Leave it empty to use the QC plan of ${nf(R.qcPlan)} crates (<button class="btn-plain" style="height:auto;padding:0;font-size:inherit;font-weight:600;color:var(--tint)" data-act="seg" data-name="replTab" data-value="qc">see Swiggy &amp; Zepto</button>).</div></div><input class="input num-in" style="width:96px" type="number" min="0" id="rp-qc" value="${R.qcCrates != null ? R.qcCrates : ""}" placeholder="${nf(R.qcPlan)}" data-in="replQC" data-repl="1" aria-label="QC crates"></div><div class="row-sub" style="margin-top:12px">Worked out live from today's stock, orders, missed sales and open Hangyo POs · ${fmtTime(REPL_AT)}</div></div></div>
     <div class="sec-head"><div><div class="section-title">What goes on the truck</div><div class="section-sub">Type your own crates to override a suggestion. Tap a row to see why and set rules.</div></div></div>
     <div class="chips">${["All", "On this truck", "Below reorder", "Hero", "Core", "Tail", "Push", "Don't order"].map((f) => `<button class="chip" data-act="replFilter" data-f="${esc(f)}" aria-pressed="${S.replFilter === f}">${esc(f)}${f !== "All" ? ` <span style="opacity:.6">${count(f)}</span>` : ""}</button>`).join("")}</div>
     <div id="repl-grid">${replGrid()}</div>`;
   return `<div class="page">
-    <div class="page-head"><div><h1 class="title">Replenishment</h1><div class="subtitle">What to order from Hangyo and when, worked out from your sales, missed sales and stock.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="planTruck">${ic("cycle", "sm")} Plan the truck</button><button class="btn btn-primary" data-act="makePO">${ic("doc", "sm")} Make Hangyo PO</button></div></div>
+    <div class="page-head"><div><h1 class="title">Replenishment</h1><div class="subtitle">What to order from Hangyo and when, worked out from your sales, missed sales and stock.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="clearAsk">${ic("undo", "sm")} Clear my changes</button><button class="btn btn-secondary" data-act="planTruck">${ic("cycle", "sm")} Plan the truck</button><button class="btn btn-primary" data-act="makePO">${ic("doc", "sm")} Make Hangyo PO</button></div></div>
     ${seg("replTab", S.replTab, [["plan", "Truck plan"], ["qc", "Swiggy & Zepto"], ["orders", "Hangyo POs"], ["rules", "Rules"]])}
     ${S.replTab === "plan" ? plan : S.replTab === "qc" ? qcReplHtml() : S.replTab === "orders" ? poLogHtml() : rulesHtml()}</div>`;
 };
@@ -1436,6 +1437,31 @@ document.addEventListener("change", (e) => {
   /* redraw after the click that moved focus has finished, never in the middle of another redraw */
   clearTimeout(replRedraw); replRedraw = setTimeout(() => { if (S.route === "replenish") render(); }, 0);
 });
+/* what you typed over the engine's own numbers (order rules like Don't order are kept) */
+function overrideCounts() {
+  const set = (v) => v != null && v !== "";
+  return { yours: D.repl.rows.filter((r) => set(r.yours)).length, adj: D.repl.rows.filter((r) => set(r.adj) && +r.adj !== 0).length, qcYours: D.qcStock.filter((q) => set(q.yours)).length, qcTotal: set(D.repl.qcCrates) ? 1 : 0, minmax: D.repl.rows.filter((r) => set(r.min) || set(r.max)).length };
+}
+function clearOverrides(w) {
+  if (w.yours) D.repl.rows.forEach((r) => { r.yours = null; });
+  if (w.adj) D.repl.rows.forEach((r) => { r.adj = null; });
+  if (w.qcYours) D.qcStock.forEach((q) => { q.yours = null; });
+  if (w.qcTotal) D.repl.qcCrates = null;
+  if (w.minmax) D.repl.rows.forEach((r) => { r.min = null; r.max = null; });
+}
+const OV_ITEMS = [["yours", "Your crates", "crates you typed for own stock"], ["qcYours", "Your Swiggy / Zepto crates", "crates you typed on the Swiggy & Zepto tab"], ["qcTotal", "Quick commerce total on the truck", "the total you typed for Hangyo's QC crates"], ["adj", "Adjust + / −", "one-off additions or cuts on a product"], ["minmax", "Min and max crates", "standing limits per product (off unless you tick it)"]];
+ACT.clearAsk = () => {
+  const c = overrideCounts(), any = OV_ITEMS.some(([k]) => c[k]);
+  openSheet("Clear my changes", `<div class="banner info">${ic("info", "sm")}<span>Puts the plan back on the engine's own numbers. Order rules (Hero, Core, Tail, Push, Don't order) and their notes are kept. Placing a Hangyo PO clears the first four by itself.</span></div>
+    <div class="group">${OV_ITEMS.map(([k, label, sub]) => `<label class="row" style="cursor:${c[k] ? "pointer" : "default"};opacity:${c[k] ? 1 : 0.5}"><input type="checkbox" id="ov-${k}" ${c[k] && k !== "minmax" ? "checked" : ""} ${c[k] ? "" : "disabled"} style="width:20px;height:20px;accent-color:var(--tint)"><span class="grow"><div class="row-title">${esc(label)}</div><div class="row-sub">${esc(sub)}</div></span><span class="row-end"><span class="pill plain ${c[k] ? "warn" : ""}">${c[k]} set</span></span></label>`).join("")}</div>`,
+    `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="clearDo" ${any ? "" : "disabled"}>${ic("undo", "sm")} Clear selected</button>`);
+};
+ACT.clearDo = () => {
+  const w = {}, c = overrideCounts(); let n = 0; OV_ITEMS.forEach(([k]) => { const el = $("#ov-" + k); if (el && el.checked) { w[k] = true; n += c[k]; } });
+  if (!n) { closeSheet(); return; }
+  clearOverrides(w); logActivity("Replenishment changes cleared", "", OV_ITEMS.filter(([k]) => w[k]).map(([, l]) => l).join(", "));
+  closeSheet(); render(); toast(`${n} change${n > 1 ? "s" : ""} cleared, back on the engine's numbers`, "undo");
+};
 ACT.planTruck = () => { recomputeRepl(); render(); toast(`Plan worked out again: ${D.repl.decision.toLowerCase()}`, "cycle"); };
 const qcPOLines = () => D.qcStock.filter((q) => q.final > 0).sort((a, b) => a.name.localeCompare(b.name));
 ACT.makePO = () => {
@@ -1458,13 +1484,14 @@ ACT.placePO = () => {
   if (!own.length && !qc.length) { toast("Nothing on the plan to order", "info"); return; }
   own.forEach((r) => push(r, "Own stock")); qc.forEach((q) => push(q, "QC stock"));
   logActivity("Hangyo PO placed", po, `Own ${nf(own.reduce((a, r) => a + r.final, 0))} crates, QC ${nf(qc.reduce((a, q) => a + q.final, 0))} crates`);
-  D.repl.rows.forEach((r) => { r.yours = null; }); D.qcStock.forEach((q) => { q.yours = null; }); D.repl.qcCrates = null;
+  clearOverrides({ yours: true, qcYours: true, qcTotal: true, adj: true });
   closeSheet(); S.replTab = "orders"; render(); toast("PO marked as placed");
 };
 function qcReplHtml() {
   const rows = D.qcStock.slice().sort((a, b) => (b.final || 0) - (a.final || 0) || (b.perDay || 0) - (a.perDay || 0)), tot = rows.reduce((a, q) => a + (q.final || 0), 0);
   const typed = D.repl.qcCrates != null && D.repl.qcCrates !== "";
-  return `<div class="banner info">${ic("info", "sm")}<span><b>Stock for Swiggy and Zepto, kept apart from your own stock.</b> Suggested crates = what Swiggy and Zepto ordered per day over the last 28 days × (${replCfg().lead} days lead time + ${D.repl.truckDays} days one truck lasts + ${replCfg().qcSafety} extra days), plus what open POs still need, minus QC stock and crates already on order. Type your own number to override.</span></div>
+  const qov = D.qcStock.filter((q) => q.yours != null && q.yours !== "").length + (typed ? 1 : 0);
+  return `${qov ? `<div class="banner warn" style="align-items:center">${ic("pencil", "sm")}<span class="grow"><b>${qov} value${qov > 1 ? "s" : ""} typed over the QC plan.</b></span><button class="btn btn-sm btn-secondary" data-act="clearAsk">${ic("undo", "sm")} Clear</button></div>` : ""}<div class="banner info">${ic("info", "sm")}<span><b>Stock for Swiggy and Zepto, kept apart from your own stock.</b> Suggested crates = what Swiggy and Zepto ordered per day over the last 28 days × (${replCfg().lead} days lead time + ${D.repl.truckDays} days one truck lasts + ${replCfg().qcSafety} extra days), plus what open POs still need, minus QC stock and crates already on order. Type your own number to override.</span></div>
     <div class="tiles tiles-4"><div class="tile"><div class="tile-label">On this truck</div><div class="tile-value" id="qc-total">${nf(typed ? +D.repl.qcCrates : tot)}<small>crates</small></div><div class="tile-sub">${typed ? `You typed the total on the Truck plan tab; products add up to ${nf(tot)}` : "Sum of the final crates below"}</div></div>
       <div class="tile"><div class="tile-label">QC sales</div><div class="tile-value">${nf(D.repl.qcPerDay, 1)}<small>crates / day</small></div><div class="tile-sub">From Swiggy and Zepto POs, last 28 days</div></div>
       <div class="tile"><div class="tile-label">QC stock now</div><div class="tile-value">${nf(rows.reduce((a, q) => a + (q.crates || 0), 0))}<small>crates</small></div><div class="tile-sub">${nf(rows.reduce((a, q) => a + (q.openCrates || 0), 0), 1)} crates needed by open POs</div></div>
