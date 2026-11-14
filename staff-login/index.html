@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/staff-login/app.css?v=4f3763917d">
+<link rel="stylesheet" href="/staff-login/app.css?v=b4015591d8">
 <style>
 /* Sign-in screen. Everything behind it (the tool and its data) only arrives after sign-in. */
 .app[hidden], .tabbar[hidden] { display: none !important; }
@@ -136,7 +136,7 @@
     var text = await res.text(), json = null;
     try { json = text ? JSON.parse(text) : null; } catch (e) {}
     if (!res.ok) {
-      var er = new Error((json && (json.msg || json.message || json.error_description)) || "Something went wrong. Please try again.");
+      var er = new Error((json && (json.msg || json.message || json.error_description || json.error)) || "Something went wrong. Please try again.");
       er.status = res.status; er.code = json && (json.error_code || json.code); throw er;
     }
     return json;
@@ -190,6 +190,7 @@
       latest: function () { return authed("/rest/v1/rpc/staff_workspace_version", {}); }, xlsxSrc: "/staff-login/vendor/xlsx-0.18.5.full.min.js",
       signOut: function () { signOut(false); },
       invite: function () { return authed("/rest/v1/rpc/staff_invite_create", {}); },
+      sendEmail: function (m) { return authed("/functions/v1/send-email", m); },
       team: function () { return authed("/rest/v1/staff?select=name,role&active=is.true&order=created_at", null, "GET"); },
       uploadWorkspace: async function (file) {
         var obj;
@@ -200,7 +201,7 @@
     };
     /* the screens' code comes from this site (it holds no business data); the data came from the database above */
     await new Promise(function (ok, bad) {
-      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=4f3763917d";
+      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=b4015591d8";
       s.onload = function () { $("gate").remove(); $("app").hidden = false; $("tabbar").hidden = false; ok(); };
       s.onerror = function () { bad(new Error("Could not load the tool. Check your internet connection and try again.")); };
       document.body.appendChild(s);

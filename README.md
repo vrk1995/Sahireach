@@ -21,6 +21,12 @@ The "Staff Login" link in the site header opens `staff-login/index.html`: a sign
 - The screens' code (`staff-login/app.js`, no business data) is served from this site; the data comes from the database after sign-in.
 - Database objects: `public.staff`, `private.staff_invites`, `private.staff_workspace`, `private.staff_workspace_history`, and the functions `public.staff_claim`, `public.staff_bootstrap`, `public.staff_invite_create`, `public.staff_workspace_get`, `public.staff_workspace_put`, `public.staff_workspace_save`, `public.staff_workspace_version`.
 
+### Emails from the staff tool
+
+Staff send emails from the tool only when they press Send (sales order, "on its way", back in stock, pick lists to Tropicana). The browser calls the Supabase Edge Function `send-email`, which checks the sender is active staff, sends through Resend and records every attempt in `public.email_log` (300 emails per person per day at most).
+
+Edge Function secrets (Supabase → Edge Functions → Secrets): `RESEND_API_KEY` (required), `EMAIL_FROM` (default `SahiReach <orders@sahireach.com>`; the domain must be verified in Resend), `EMAIL_REPLY_TO` (default `hello@sahireach.com`), `EMAIL_BCC` (optional).
+
 ## Deployment
 
 Pushes to `main` deploy automatically to GitHub Pages via `.github/workflows/deploy-pages.yml`.

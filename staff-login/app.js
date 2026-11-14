@@ -637,6 +637,8 @@ function attention(facts) {
   if (low.length) out.push({ ic: "box", cls: "bad", title: `${low.length} product${low.length > 1 ? "s" : ""} below reorder point`, sub: low.slice(0, 2).map((r) => shortName(r.name).split("(")[0].trim()).join(", ") + (low.length > 2 ? " and more" : ""), go: "replenish" });
   const quiet = quietDistributors(facts);
   if (quiet.length) out.push({ ic: "people", cls: "warn", title: `${quiet.length} distributor${quiet.length > 1 ? "s" : ""} gone quiet`, sub: quiet.slice(0, 2).map((q) => shortOf(q.name)).join(", ") + (quiet.length > 2 ? " and more" : "") + ` · nothing dispatched for ${quiet[0].days}+ days`, go: "setup" });
+  const bis = typeof backInStock === "function" ? backInStock() : [];
+  if (bis.length) out.push({ ic: "box", cls: "good", act: "backInStock", title: `${bis.length} distributor${bis.length > 1 ? "s" : ""} waiting for stock that is back`, sub: [...new Set(bis.flatMap((g) => g.items.map((i) => shortName(i.name).split("(")[0].trim())))].slice(0, 2).join(", ") + " · tap to let them know" });
   const todDue = D.tod.lines.filter((l) => l.status !== "Received").reduce((a, l) => a + (l.amount || 0), 0) || D.tod.total;
   out.push({ ic: "rupee", cls: "info", title: `${rs(todDue)} TOD due from Hangyo`, sub: "Not yet received, all months", go: "tod" });
   return out;
@@ -715,7 +717,7 @@ VIEWS.home = () => {
     <div class="page-head"><div><div class="eyebrow">${esc(dateStr)}</div><h1 class="title">${greeting()}, ${esc(FIRST)}</h1></div>
       <div class="head-actions"><button class="btn btn-secondary desk-only" data-act="cmd">${ic("search", "sm")} Search <span class="dim" style="font-weight:500">⌘K</span></button><button class="btn btn-primary" data-act="newOrder">${ic("plus", "sm")} New order</button></div></div>
     ${dataUpdateBanner()}
-    <div><div class="group-label"><span>Needs attention today</span></div><div class="attn">${attention(facts).map((a) => `<button class="attn-card" data-act="nav" data-to="${a.go}"><span class="attn-ic ${a.cls}">${ic(a.ic)}</span><span class="grow"><div class="attn-title">${esc(a.title)}</div><div class="attn-sub">${esc(a.sub)}</div></span>${ic("chevR", "sm dim")}</button>`).join("")}</div></div>
+    <div><div class="group-label"><span>Needs attention today</span></div><div class="attn">${attention(facts).map((a) => `<button class="attn-card" data-act="${a.act || "nav"}" data-to="${a.go || ""}"><span class="attn-ic ${a.cls}">${ic(a.ic)}</span><span class="grow"><div class="attn-title">${esc(a.title)}</div><div class="attn-sub">${esc(a.sub)}</div></span>${ic("chevR", "sm dim")}</button>`).join("")}</div></div>
     <div class="sec-head"><div><div class="section-title">Sales</div><div class="section-sub">Excluding GST · distributors when dispatched, Swiggy and Zepto when delivered</div></div></div>
     ${filterBar(R)}
     <div class="card hero"><div class="hero-left"><div class="tile-label">Net sales · ${esc(R.label)}${filterNote ? " · " + esc(filterNote) : ""}</div><div class="hero-figure">₹${lakh(cur.net)}<small>lakh</small></div>${deltaChip(chgTxt(cur.net, prev.net, cmp))}<div class="tile-sub" style="margin-top:6px">${R.pFrom ? `${esc(cmp.replace(/^the /, "The "))}: ₹${lakh(prev.net)} L` : `Since ${fmtDate(R.from)} ${R.from.slice(0, 4)}`}${pace}</div></div>
@@ -827,7 +829,7 @@ function showOrder(id, confirmCancel) {
     <div><div class="group-label"><span>Timeline</span></div><div class="card card-pad"><div class="timeline">${tl.join("")}</div></div></div>
     ${lines.length ? `<div><div class="group-label"><span>${lines.length} line${lines.length > 1 ? "s" : ""}</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crate${l.crates === 1 ? "" : "s"} · ${nf(l.ea)} boxes × ${rs2(l.billed)}${l.tod ? ` · TOD ${rs2(l.tod)}` : ""}</div></span><span class="row-end"><span class="row-value">${rs2(l.value)}</span></span></div>`).join("")}</div></div>` : ""}
     ${missed.length ? `<div><div class="group-label"><span>Not supplied in full</span></div><div class="group">${missed.map((m) => `<div class="row"><span class="attn-ic warn" style="width:28px;height:28px">${ic("alert", "sm")}</span><span class="grow"><div class="row-title clip">${esc(shortName(m.product))}</div><div class="row-sub">${esc(m.reason)}</div></span>${typeof m.missed === "number" ? `<span class="row-end"><span class="pill warn plain">${m.missed} missed</span></span>` : ""}</div>`).join("")}</div></div>` : ""}`;
-  const foot = `<button class="btn btn-secondary" data-act="soPreview" data-id="${id}">${ic("doc", "sm")} Sales order</button>${o.status === "Pending" ? `<button class="btn btn-danger" data-act="cancelOrderAsk" data-id="${id}">Cancel order</button><button class="btn btn-primary" data-act="editOrder" data-id="${id}">${ic("pencil", "sm")} Edit order</button>` : ""}`;
+  const foot = `<button class="btn btn-secondary" data-act="soPreview" data-id="${id}">${ic("doc", "sm")} Sales order</button>${o.status !== "Cancelled" && lines.length ? `<button class="btn btn-secondary" data-act="${o.status === "Dispatched" ? "emailDispatch" : "emailSO"}" data-id="${id}">${ic("arrowR", "sm")} ${o.status === "Dispatched" ? "Email: on its way" : "Email sales order"}</button>` : ""}${o.status === "Pending" ? `<button class="btn btn-danger" data-act="cancelOrderAsk" data-id="${id}">Cancel order</button><button class="btn btn-primary" data-act="editOrder" data-id="${id}">${ic("pencil", "sm")} Edit order</button>` : ""}`;
   openSheet("Order", body, lines.length || o.status === "Pending" ? foot : "");
 }
 ACT.cancelOrderAsk = (el) => showOrder(el.dataset.id, true);
@@ -1042,7 +1044,7 @@ ACT.saveOrder = () => {
   const wasEdit = !!dr.editId; S.draft = newDraft(); S.ordersTab = "Pending"; S.picked[o.id] = true;
   go("orders");
   openSheet(wasEdit ? "Order updated" : "Order saved", `<div class="success"><div class="tick">${ic("check")}</div><div class="section-title">${wasEdit ? "Order updated" : "Order saved"}</div><div class="muted">${esc(o.dist)} · ${nf(o.crates, 2)} crates · ${rs2(o.valueGst)} incl. GST</div><div class="mono dim">${esc(o.id)}</div>${C.short ? `<div class="banner warn" style="margin-top:10px;text-align:left">${ic("alert", "sm")}<span>${C.short} line${C.short > 1 ? "s were" : " was"} short or not stocked. Logged under missed sales.</span></div>` : ""}</div>
-    <div class="group"><button class="row" data-act="soPreview" data-id="${o.id}"><span class="attn-ic tint">${ic("doc")}</span><span class="grow"><div class="row-title">View the sales order</div><div class="row-sub">With your logo and company details</div></span>${ic("chevR", "sm chev")}</button><button class="row" data-act="nav2" data-to="dispatch"><span class="attn-ic info">${ic("truck")}</span><span class="grow"><div class="row-title">Go to dispatch</div><div class="row-sub">Add it to the next pick list</div></span>${ic("chevR", "sm chev")}</button><button class="row" data-act="newOrder"><span class="attn-ic tint">${ic("plus")}</span><span class="grow"><div class="row-title">Take another order</div></span>${ic("chevR", "sm chev")}</button></div>`);
+    <div class="group"><button class="row" data-act="emailSO" data-id="${o.id}"><span class="attn-ic tint">${ic("arrowR")}</span><span class="grow"><div class="row-title">Email the sales order</div><div class="row-sub">${(distByKey[key(o.dist)] || {}).email ? "To " + esc((distByKey[key(o.dist)] || {}).email) : "No email saved for this distributor yet"}</div></span>${ic("chevR", "sm chev")}</button><button class="row" data-act="soPreview" data-id="${o.id}"><span class="attn-ic tint">${ic("doc")}</span><span class="grow"><div class="row-title">View the sales order</div><div class="row-sub">With your logo and company details</div></span>${ic("chevR", "sm chev")}</button><button class="row" data-act="nav2" data-to="dispatch"><span class="attn-ic info">${ic("truck")}</span><span class="grow"><div class="row-title">Go to dispatch</div><div class="row-sub">Add it to the next pick list</div></span>${ic("chevR", "sm chev")}</button><button class="row" data-act="newOrder"><span class="attn-ic tint">${ic("plus")}</span><span class="grow"><div class="row-title">Take another order</div></span>${ic("chevR", "sm chev")}</button></div>`);
 };
 ACT.nav2 = (el) => { closeSheet(); go(el.dataset.to); };
 
@@ -1087,7 +1089,7 @@ function showPick(editing) {
   const note = editing ? `<div class="banner warn">${ic("pencil", "sm")}<span><b>Change the crates Tropicana should pick.</b> Saving updates those orders, their values and stock. Set a cell to 0 to take that product off the order. To add a new product, edit the order itself.</span></div>` : `<div class="row-sub">Products down the side, distributors across, the way Tropicana picks today.</div>`;
   const foot = editing
     ? `<button class="btn btn-secondary" data-act="pickEditCancel">Cancel</button><button class="btn btn-primary" data-act="pickEditSave">${ic("check", "sm")} Save changes</button>`
-    : `<button class="btn btn-secondary" data-act="pickEdit">${ic("pencil", "sm")} Edit</button><button class="btn btn-secondary" data-act="pickExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="copyPick">${ic("copy", "sm")} WhatsApp</button><button class="btn btn-primary" data-act="dispatchNow">${ic("truck", "sm")} Mark dispatched</button>`;
+    : `<button class="btn btn-secondary" data-act="pickEdit">${ic("pencil", "sm")} Edit</button><button class="btn btn-secondary" data-act="pickExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="emailPick">${ic("arrowR", "sm")} Email</button><button class="btn btn-secondary" data-act="copyPick">${ic("copy", "sm")} WhatsApp</button><button class="btn btn-primary" data-act="dispatchNow">${ic("truck", "sm")} Mark dispatched</button>`;
   openSheet(editing ? "Edit pick list" : "Pick list for Tropicana", head + (editing ? note : "") + pickTable(P, editing) + (editing ? "" : note), foot, true);
 }
 ACT.makePick = () => {
@@ -1148,8 +1150,7 @@ async function downloadXlsx(el, aoa, cols, file, sheet, merges) {
   if (el) el.disabled = false; return true;
 }
 const stampOf = (d) => `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)}-${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-ACT.pickExcel = async (el) => {
-  const P = S.pickList; if (!P) return;
+function pickAoa(P) {
   const stampTxt = stampOf(P.made || NOW()), names = P.orders.map((o) => shortOf(o.dist));
   const aoa = [
     ["PICK LIST FOR TROPICANA LOGISTICS, WILLINGDON ISLAND  (SahiReach LLP)"],
@@ -1161,7 +1162,12 @@ ACT.pickExcel = async (el) => {
   P.rows.forEach((r) => aoa.push([tropCode(r.sap), r.name].concat(P.orders.map((o, ci) => (r.cells[ci] ? +r.cells[ci].toFixed(2) : null)), [+r.total.toFixed(2)])));
   aoa.push(["", "TOTAL CRATES"].concat(P.orders.map((o) => +o.crates.toFixed(2)), [+P.total.toFixed(2)]));
   aoa.push([]); aoa.push(["Vehicle", (vehicleFor(P.total) || "").replace(/\s*\(.*\)/, "")]);
-  if (await downloadXlsx(el, aoa, [14, 46].concat(names.map((n) => Math.max(9, Math.min(22, n.length + 2))), [14]), `SahiReach pick list ${stampTxt.replace(":", "")}.xlsx`, "Pick List", [{ s: { r: 0, c: 0 }, e: { r: 0, c: Math.min(names.length + 3, 8) } }])) {
+  return { rows: aoa, cols: [14, 46].concat(names.map((n) => Math.max(9, Math.min(22, n.length + 2))), [14]), stampTxt, names };
+}
+ACT.pickExcel = async (el) => {
+  const P = S.pickList; if (!P) return;
+  const A = pickAoa(P);
+  if (await downloadXlsx(el, A.rows, A.cols, `SahiReach pick list ${A.stampTxt.replace(":", "")}.xlsx`, "Pick List", [{ s: { r: 0, c: 0 }, e: { r: 0, c: Math.min(A.names.length + 3, 8) } }])) {
     logActivity("Pick list downloaded", `${P.orders.length} order(s)`, "Excel"); toast("Excel pick list downloaded", "doc");
   }
 };
@@ -1177,6 +1183,7 @@ ACT.dispatchNow = () => {
   sel.forEach((o) => { o.status = "Dispatched"; o.dispatched = now; delete S.picked[o.id]; });
   logActivity("Orders dispatched", `${sel.length} order(s)`, sel.map((o) => shortOf(o.dist)).join(", "));
   closeSheet(); render(); toast(`${sel.length} order${sel.length > 1 ? "s" : ""} marked dispatched`, "truck");
+  setTimeout(() => openSheet("Let them know?", `<div class="success"><div class="tick">${ic("truck")}</div><div class="section-title">${sel.length} order${sel.length > 1 ? "s" : ""} on the way</div><div class="muted">Send each distributor a short “your order is on its way” email with the crates and the payment due date.</div></div><div class="group">${sel.map((o) => { const d = distByKey[key(o.dist)] || {}; return `<div class="row"><span class="grow"><div class="row-title">${esc(o.dist)}</div><div class="row-sub">${d.email ? esc(d.email) : `<span style="color:var(--warn)">No email saved</span>`}</div></span><span class="row-end">${nf(o.crates, 2)} crates</span></div>`; }).join("")}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Not now</button><button class="btn btn-primary" data-act="emailDispatch" data-ids="${sel.map((o) => o.id).join(",")}">${ic("arrowR", "sm")} Preview and send</button>`), 450);
 };
 
 /* ===== QUICK COMMERCE ===== */
@@ -1268,7 +1275,7 @@ function showQCPick(editing) {
   const note = editing ? `<div class="banner warn">${ic("pencil", "sm")}<span><b>Change the crates to send from each stock.</b> You cannot send more than is in stock. Pieces beyond the PO are not billed.</span></div>` : "";
   const foot = editing
     ? `<button class="btn btn-secondary" data-act="qcPickReset">Use the suggested crates</button><button class="btn btn-secondary" data-act="qcPick">Cancel</button><button class="btn btn-primary" data-act="qcPickSave">${ic("check", "sm")} Save changes</button>`
-    : `<button class="btn btn-secondary" data-act="qcPickEdit">${ic("pencil", "sm")} Edit</button><button class="btn btn-secondary" data-act="qcPickExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="qcPickCopy">${ic("copy", "sm")} WhatsApp</button><button class="btn btn-primary" data-act="qcDeliver" ${Dl.crates ? "" : "disabled"}>${ic("truck", "sm")} Mark delivered</button>`;
+    : `<button class="btn btn-secondary" data-act="qcPickEdit">${ic("pencil", "sm")} Edit</button><button class="btn btn-secondary" data-act="qcPickExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="emailQCPick">${ic("arrowR", "sm")} Email</button><button class="btn btn-secondary" data-act="qcPickCopy">${ic("copy", "sm")} WhatsApp</button><button class="btn btn-primary" data-act="qcDeliver" ${Dl.crates ? "" : "disabled"}>${ic("truck", "sm")} Mark delivered</button>`;
   openSheet(editing ? `Edit ${esc(S.qcPlatform)} pick list` : `${esc(S.qcPlatform)} pick list for Tropicana`, head + note + qcPickTable(Dl, editing), foot, true);
 }
 ACT.qcPick = () => { showQCPick(false); };
@@ -1286,8 +1293,8 @@ ACT.qcPickSave = () => {
   render(); showQCPick(false); if (n) toast(`${n} product${n > 1 ? "s" : ""} changed on the pick list`);
 };
 ACT.qcPickReset = () => { S.qcOverride[S.qcPlatform] = {}; render(); showQCPick(true); };
-ACT.qcPickExcel = async (el) => {
-  const Dl = qcDelivery(), now = NOW(), stampTxt = stampOf(now), to = S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo;
+function qcPickAoa(Dl) {
+  const now = NOW(), stampTxt = stampOf(now), to = S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo;
   const aoa = [
     ["PICK LIST FOR TROPICANA LOGISTICS - QC delivery (SahiReach LLP)"],
     ["Platform", S.qcPlatform, "", "Deliver to", to],
@@ -1298,7 +1305,11 @@ ACT.qcPickExcel = async (el) => {
   ];
   Dl.rows.forEach((r) => aoa.push([tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "", r.name, r.sap, r.pcs, r.ppc, r.fromQC, r.fromOwn, r.send, r.sendPcs, r.notSent, Math.round(r.sendValue * 100) / 100]));
   aoa.push(["", "TOTAL", "", Dl.rows.reduce((a, r) => a + r.pcs, 0), "", Dl.rows.reduce((a, r) => a + r.fromQC, 0), Dl.rows.reduce((a, r) => a + r.fromOwn, 0), Dl.crates, Dl.rows.reduce((a, r) => a + r.sendPcs, 0), Dl.rows.reduce((a, r) => a + r.notSent, 0), Math.round(Dl.value * 100) / 100]);
-  if (await downloadXlsx(el, aoa, [16, 44, 11, 10, 10, 14, 16, 10, 10, 10, 16], `SahiReach ${S.qcPlatform} pick list ${stampTxt.replace(":", "")}.xlsx`, "QC Pick List", [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }])) {
+  return { rows: aoa, cols: [16, 44, 11, 10, 10, 14, 16, 10, 10, 10, 16], stampTxt };
+}
+ACT.qcPickExcel = async (el) => {
+  const Dl = qcDelivery(), A = qcPickAoa(Dl);
+  if (await downloadXlsx(el, A.rows, A.cols, `SahiReach ${S.qcPlatform} pick list ${A.stampTxt.replace(":", "")}.xlsx`, "QC Pick List", [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }])) {
     logActivity("QC pick list downloaded", S.qcPlatform, `${Dl.pos.length} PO(s), ${Dl.crates} crates`); toast("Excel pick list downloaded", "doc");
   }
 };
@@ -1419,7 +1430,7 @@ ACT.recvSave = () => {
   const now = NOW(), id = "PUR-" + stamp(now);
   lines.forEach((l) => { const s = stockBySap[l.sap], rate = ssRate(l.sap) || s.cost || 0, ea = l.crates * l.upc; if (R.pool === "Own Stock") { s.ea += ea; s.crates = s.ea / s.upc; s.move = `${id}: +${nf(ea)} boxes`; } else if (qcBySap[l.sap]) { qcBySap[l.sap].crates += l.crates; } D.purchases.push({ time: iso(now), id, inv: R.inv, invDate: iso(now), supplier: "Hangyo", pool: R.pool, product: l.name, sap: l.sap, unit: "Crate", qty: l.crates, ea, crates: l.crates, batch: "", rate, value: ea * rate, isNew: "No" }); });
   lines.forEach((l) => { let left = l.crates * l.upc; D.hpoLog.filter((h) => h.sap === l.sap && (R.pool === "Own Stock" ? /own/i.test(h.pool) : /QC/i.test(h.pool)) && (h.status === "Open" || h.status === "Part received")).sort((a, b) => (a.placed > b.placed ? 1 : -1)).forEach((h) => { if (left <= 0) return; const want = Math.max(0, (h.boxes || h.crates * h.upc) - (h.received || 0)), take = Math.min(want, left); h.received = (h.received || 0) + take; left -= take; h.toCome = Math.max(0, h.crates - h.received / (h.upc || 1)); h.status = h.toCome > 1e-9 ? "Part received" : "Received"; h.changed = iso(now); h.receivedOn = iso(now); h.purchases = ((h.purchases ? h.purchases + ", " : "") + id); }); });
-  logActivity("Purchase saved", id, `${lines.length} lines into ${R.pool}`); closeSheet(); S.stockTab = "purchases"; render(); toast("Stock received and added");
+  logActivity("Purchase saved", id, `${lines.length} lines into ${R.pool}`); closeSheet(); S.stockTab = "purchases"; render(); toast("Stock received and added"); setTimeout(() => { if (backInStock().length) ACT.backInStock(); }, 450);
 };
 
 /* ===== REPLENISHMENT ===== */
@@ -1681,7 +1692,7 @@ ACT.distSheet = (el) => {
   if (perf) perf.status = perf.days > 14 ? "Dormant" : perf.prev ? (perf.now >= perf.prev ? "Growing" : "Declining") : perf.now ? "New" : "";
   const orders = D.orders.filter((o) => o.dist === d.name).sort((a, b) => (a.time < b.time ? 1 : -1)), buy = D.dash.buy.find((x) => key(x.name) === key(d.name));
   openSheet(esc(d.name), `<div class="card card-pad"><div class="hstack gap-12" style="align-items:flex-start"><span class="avatar lg soft">${esc(initials(d.name))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(d.name)}</div><div class="row-sub">${esc(d.district || "District not set")}${d.phone ? " · " + esc(d.phone) : ""}</div><div class="hstack gap-8 wrap" style="margin-top:8px">${d.special ? `<span class="pill plain tint">Special prices · TOD tracked</span>` : `<span class="pill plain">Normal rate</span>`}${perf && perf.status ? `<span class="pill plain ${perf.status === "Dormant" ? "bad" : /Growing|New/.test(perf.status) ? "good" : ""}">${esc(perf.status)}</span>` : ""}</div></div></div>
-      <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">Orders in</div><div class="v">${esc(UNIT_LABEL[d.uom] || "Not set")}</div></div><div><div class="k">Payment</div><div class="v">${esc(d.pay || "Not set")}</div></div><div><div class="k">Credit</div><div class="v">${d.credit != null ? d.credit + " days" : "Not set"}</div></div><div><div class="k">Security deposit</div><div class="v num">${d.deposit ? rs(d.deposit) : "–"}</div></div><div><div class="k">Freezer</div><div class="v">${esc(d.freezer || "Not set")}</div></div><div><div class="k">Pick list name</div><div class="v">${esc(d.short || "–")}</div></div></div></div>
+      <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">Orders in</div><div class="v">${esc(UNIT_LABEL[d.uom] || "Not set")}</div></div><div><div class="k">Payment</div><div class="v">${esc(d.pay || "Not set")}</div></div><div><div class="k">Credit</div><div class="v">${d.credit != null ? d.credit + " days" : "Not set"}</div></div><div><div class="k">Security deposit</div><div class="v num">${d.deposit ? rs(d.deposit) : "–"}</div></div><div><div class="k">Freezer</div><div class="v">${esc(d.freezer || "Not set")}</div></div><div><div class="k">Pick list name</div><div class="v">${esc(d.short || "–")}</div></div><div><div class="k">Email</div><div class="v" style="word-break:break-all">${esc(d.email || "Not set")}</div></div></div></div>
     ${perf ? `<div class="tiles" style="grid-template-columns:repeat(2,minmax(0,1fr))"><div class="tile"><div class="tile-label">${esc(R.label)}</div><div class="tile-value">${rs(perf.now)}</div><div>${perf.prev > 0 ? growthChip(perf.now / perf.prev - 1) : ""}</div><div class="tile-sub">${perf.orders} order${perf.orders === 1 ? "" : "s"} · ${nf(perf.crates, 0)} crates</div></div><div class="tile"><div class="tile-label">Last dispatch</div><div class="tile-value">${fmtDate(perf.last)}</div><div class="tile-sub">${perf.days} day${perf.days === 1 ? "" : "s"} ago</div></div></div>` : ""}
     ${buy ? `<div class="banner tint">${ic("info", "sm")}<span><b>Buys ${buy.skus} products.</b> Most of all ${esc(shortName(buy.top))} (${pct(buy.topShare, 0)} of sales). Premium share ${pct(buy.premium, 0)}, entry level ${pct(buy.entry, 0)}.</span></div>` : ""}
     ${orders.length ? `<div><div class="group-label"><span>Orders</span><span>${orders.length}</span></div><div class="group">${orders.slice(0, 8).map((o) => `<button class="row" data-act="orderSheet" data-id="${o.id}"><span class="grow"><div class="row-title">${fmtDate(o.time)} · ${nf(o.crates)} crates</div><div class="row-sub">${o.lines} lines</div></span><span class="row-end">${statusPill(o.status)}<span class="row-value">${rs(o.value)}</span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div></div>` : ""}`,
@@ -1783,6 +1794,9 @@ ACT.distEdit = (el) => {
       ${fld("df-name", "Name, as on invoices", x.name, { full: true, required: true, ph: "e.g. Supreme Traders Kerala LLP" })}
       ${fld("df-short", "Short name for pick lists", x.short, { ph: "e.g. Supreme" })}
       ${fld("df-phone", "Phone", x.phone, { type: "tel", ph: "10-digit mobile" })}
+      ${fld("df-contact", "Contact person (for emails)", x.contact, { ph: "e.g. Rajesh" })}
+      ${fld("df-email", "Email", x.email, { type: "email", ph: "orders@theirfirm.com" })}
+      ${fld("df-cc", "Also copy (optional)", x.cc, { ph: "Other emails, separated by commas", full: true })}
       ${fld("df-district", "District", x.district, { list: districts, ph: "e.g. Ernakulam" })}
       ${fld("df-uom", "Usually orders in", x.uom || "Crate", { options: [["Crate", "Crates"], ["EA (Box)", "Boxes"], ["Pieces", "Pieces"]] })}
       ${fld("df-pay", "Payment", x.pay || "", { options: [["", "Not set"], "Cheque", "Bank Transfer", "UPI", "Cash"] })}
@@ -1800,10 +1814,13 @@ ACT.distSave = (el) => {
   const clash = distByKey[key(name)]; if (clash && clash !== old) return formErr("A distributor with this name already exists.");
   const phone = val("df-phone").replace(/[^\d+]/g, ""); if (phone && phone.replace(/\D/g, "").length < 10) return formErr("The phone number looks too short.");
   const credit = numOrNull(val("df-credit")), deposit = numOrNull(val("df-deposit"));
+  const email = val("df-email"), ccRaw = val("df-cc");
+  if (email && !emails(email).length) return formErr("The email address does not look right.");
+  if (ccRaw && emails(ccRaw).length !== ccRaw.split(/[,;\s]+/).filter(Boolean).length) return formErr("One of the copy emails does not look right.");
   const d = old || { updated: null };
   const before = old ? JSON.stringify(old) : "";
   if (old && old.name !== name) renameDistributor(old.name, name);
-  Object.assign(d, { name, short: val("df-short") || null, phone: phone || null, district: val("df-district") || null, uom: val("df-uom"), pay: val("df-pay") || null, credit: credit != null ? Math.round(credit) : null, deposit: deposit != null ? Math.round(deposit) : null, freezer: val("df-freezer") || null, special: val("df-pricing") === "special", updated: iso(NOW()) });
+  Object.assign(d, { name, short: val("df-short") || null, phone: phone || null, district: val("df-district") || null, uom: val("df-uom"), pay: val("df-pay") || null, credit: credit != null ? Math.round(credit) : null, deposit: deposit != null ? Math.round(deposit) : null, freezer: val("df-freezer") || null, special: val("df-pricing") === "special", contact: val("df-contact") || null, email: email ? emails(email)[0] : null, cc: ccRaw ? emails(ccRaw).join(", ") : null, updated: iso(NOW()) });
   d.pricing = d.special ? "Special prices" : "Normal";
   if (!old) D.distributors.push(d);
   rebuildDistIndex();
@@ -1900,8 +1917,10 @@ function settingsHtml() {
       ${fld("cf-gstin", "GSTIN", C.gstin)}${fld("cf-fssai", "FSSAI licence", C.fssai)}
       ${fld("cf-phone", "Phone", C.phone)}${fld("cf-email", "Email", C.email)}
     </div><button class="btn btn-primary" style="margin-top:16px" data-act="companySave" ${CAN_PRICE ? "" : "disabled"}>${ic("check", "sm")} Save company details</button></div>
-    <div class="card card-pad"><div class="card-title">Swiggy and Zepto</div><div class="row-sub" style="margin:4px 0 14px">Where deliveries go and the smallest delivery worth sending.</div><div class="form-grid">
+    <div class="card card-pad"><div class="card-title">Tropicana, Swiggy and Zepto</div><div class="row-sub" style="margin:4px 0 14px">Where pick lists and deliveries go, and the smallest delivery worth sending.</div><div class="form-grid">
       ${fld("qf-swto", "Swiggy delivery point", Q.swiggyTo, { full: true })}${fld("qf-swmin", "Swiggy minimum per delivery (₹)", Q.minSwiggy, { type: "number", step: "1" })}
+      ${fld("qf-trop", "Tropicana Logistics email(s) for pick lists", Q.tropEmail, { full: true, ph: "Separate several with commas" })}
+      ${fld("qf-copy", "Send me a copy of every email", Q.copyTo, { full: true, ph: "Your email (optional)" })}
       ${fld("qf-zpto", "Zepto delivery point", Q.zeptoTo, { full: true })}${fld("qf-zpmin", "Zepto minimum per delivery (₹)", Q.minZepto, { type: "number", step: "1" })}
       ${fld("qf-pct", "Special price discount (%)", Math.round(D.special.pct * 1000) / 10, { type: "number", hint: "Used to suggest special prices for new products.", disabled: !CAN_PRICE })}
     </div><button class="btn btn-primary" style="margin-top:16px" data-act="qcSettingsSave">${ic("check", "sm")} Save</button></div></div>`;
@@ -1915,9 +1934,197 @@ ACT.companySave = () => {
 ACT.qcSettingsSave = () => {
   const Q = D.qcPick;
   Q.swiggyTo = val("qf-swto") || Q.swiggyTo; Q.zeptoTo = val("qf-zpto") || Q.zeptoTo;
+  const te = val("qf-trop"), cp = val("qf-copy");
+  if (te && !emails(te).length) { toast("The Tropicana email does not look right", "alert"); return; }
+  if (cp && !emails(cp).length) { toast("The copy email does not look right", "alert"); return; }
+  Q.tropEmail = te ? emails(te).join(", ") : null; Q.copyTo = cp ? emails(cp).join(", ") : null;
   Q.minSwiggy = Math.max(0, Math.round(+val("qf-swmin") || 0)); Q.minZepto = Math.max(0, Math.round(+val("qf-zpmin") || 0));
   if (CAN_PRICE) { const pc = +val("qf-pct"); if (pc >= 0 && pc < 100) D.special.pct = pc / 100; }
   logActivity("Quick commerce settings edited", "", `Swiggy minimum ${rs(Q.minSwiggy)}, Zepto minimum ${rs(Q.minZepto)}`); toast("Settings saved");
+};
+
+/* ===== EMAIL: short, branded emails to distributors and Tropicana, sent only when you press Send =====
+   Built here as email-safe HTML (tables, inline styles), sent by the send-email function through Resend. */
+const SITE = "https://sahireach.com";
+const EM = { teal: "#0b7a70", ink: "#1d2939", ink2: "#475467", ink3: "#98a2b3", line: "#eaecf0", bg: "#f2f4f7", soft: "#eef7f6", warn: "#b54708", warnBg: "#fff6ed" };
+const escE = (s) => esc(s);
+const moneyE = (n) => "₹" + new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
+const dateLong = (s) => { const d = toDate(s); return d.getDate() + " " + MONTH_LONG[d.getMonth()] + " " + d.getFullYear(); };
+function greetName(d) { return (d && (d.contact || d.short || d.name)) || "there"; }
+function emailShell({ preheader, heading, paras, blocks, signoff }) {
+  const C = CO, foot = [C.address, C.gstin ? "GSTIN " + C.gstin : "", C.fssai ? "FSSAI " + C.fssai : ""].filter(Boolean).join(" · ");
+  const contact = [C.phone, C.email || "hello@sahireach.com"].filter(Boolean).join(" · ");
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${escE(heading)}</title></head>
+<body style="margin:0;padding:0;background:${EM.bg};-webkit-text-size-adjust:100%">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0">${escE(preheader || "")}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${EM.bg}"><tr><td align="center" style="padding:28px 12px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid ${EM.line}">
+<tr><td style="background:${EM.soft};padding:22px 32px;border-bottom:1px solid ${EM.line}"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="vertical-align:middle"><img src="${SITE}/logo.png" width="40" height="40" alt="SahiReach" style="display:block;border:0;border-radius:8px"></td><td style="vertical-align:middle;padding-left:12px;font:700 19px/1 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink};letter-spacing:-0.2px">Sahi<span style="color:${EM.teal}">Reach</span></td></tr></table></td></tr>
+<tr><td style="padding:30px 32px 8px;font:400 15px/1.6 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink2}">
+<h1 style="margin:0 0 14px;font:700 22px/1.3 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink};letter-spacing:-0.3px">${escE(heading)}</h1>
+${(paras || []).map((p) => `<p style="margin:0 0 14px">${p}</p>`).join("")}
+${(blocks || []).join("")}
+<p style="margin:22px 0 4px">${signoff || "Warm regards,"}</p><p style="margin:0 0 24px;font-weight:700;color:${EM.ink}">Team SahiReach</p>
+</td></tr>
+<tr><td style="padding:18px 32px 24px;border-top:1px solid ${EM.line};font:400 12px/1.6 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink3}">
+<b style="color:${EM.ink2}">${escE(C.name || "SahiReach LLP")}</b> · Super stockist for Hangyo Ice Creams, South Kerala<br>${escE(foot)}<br>${escE(contact)} · <a href="${SITE}" style="color:${EM.teal};text-decoration:none">sahireach.com</a><br>Reply to this email to reach us.</td></tr>
+</table></td></tr></table></body></html>`;
+}
+const factsE = (rows) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 18px;background:${EM.soft};border-radius:12px"><tr>${rows.map(([k, v]) => `<td style="padding:14px 16px;vertical-align:top"><div style="font:600 11px/1.4 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink3};text-transform:uppercase;letter-spacing:0.6px">${escE(k)}</div><div style="font:700 16px/1.4 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink};margin-top:2px">${v}</div></td>`).join("")}</tr></table>`;
+const tableE = (head, rows, foot) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 16px;border-collapse:collapse;font:400 13.5px/1.45 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<tr>${head.map((h, i) => `<th align="${i ? "right" : "left"}" style="padding:8px 6px;border-bottom:2px solid ${EM.ink};font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:${EM.ink3}">${escE(h)}</th>`).join("")}</tr>
+${rows.map((r) => `<tr>${r.map((c, i) => `<td align="${i ? "right" : "left"}" style="padding:8px 6px;border-bottom:1px solid ${EM.line};color:${i ? EM.ink : EM.ink};${i ? "white-space:nowrap" : ""}">${c}</td>`).join("")}</tr>`).join("")}
+${foot ? `<tr>${foot.map((c, i) => `<td align="${i ? "right" : "left"}" style="padding:10px 6px;font-weight:700;color:${EM.ink}">${c}</td>`).join("")}</tr>` : ""}</table>`;
+const noteE = (html, warn) => `<div style="margin:0 0 16px;padding:12px 14px;border-radius:10px;background:${warn ? EM.warnBg : EM.soft};color:${warn ? EM.warn : EM.ink2};font-size:14px;line-height:1.5">${html}</div>`;
+const textOf = (lines) => lines.filter((x) => x != null).join("\n");
+
+/* ---------- 1. sales order ---------- */
+function soEmail(o) {
+  const d = distByKey[key(o.dist)] || {}, lines = linesByOrder[o.id] || [], so = o.id.replace("ORD", "SO"), missed = D.oos.filter((x) => x.id === o.id);
+  const due = d.credit != null ? addDays(o.time.slice(0, 10), d.credit) : null, gst = Math.round(o.value * 5) / 100, total = o.value + gst, upd = (o.timesEdited || 0) > 0;
+  const html = emailShell({
+    preheader: `${so} · ${nf(o.crates, 2)} crates · ${moneyE(total)} incl. GST`,
+    heading: upd ? "Your sales order has been updated" : "Thank you for your order",
+    paras: [`Hi ${escE(greetName(d))},`, upd ? `Here is the updated sales order for your order of ${dateLong(o.time)}.` : `We have your order of ${dateLong(o.time)} and it is being prepared. Here is your sales order.`],
+    blocks: [
+      factsE([["Sales order", escE(so)], ["Crates", nf(o.crates, 2)], ["Total incl. GST", moneyE(total)]]),
+      tableE(["Product", "Crates", "Boxes", "Rate / box", "Amount"], lines.map((l) => [escE(l.product), nf(l.crates, 2), nf(l.ea), moneyE(l.billed), moneyE(l.value)]), ["Value excl. GST", "", "", "", moneyE(o.value)]),
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:-8px 0 16px;font:400 13.5px/1.6 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink2}"><tr><td align="right">GST 5%: ${moneyE(gst)}<br><b style="color:${EM.ink};font-size:15px">Total: ${moneyE(total)}</b>${due ? `<br>Payment${d.pay ? " by " + escE(d.pay.toLowerCase()) : ""} due ${dateLong(due)}` : ""}</td></tr></table>`,
+      missed.length ? noteE(`<b>Not available this time:</b> ${missed.map((m) => escE(shortName(m.product))).join(", ")}. We will email you as soon as ${missed.length > 1 ? "they are" : "it is"} back in stock.`, true) : "",
+      noteE("We will let you know when it leaves our warehouse. Anything to change? Just reply to this email."),
+    ],
+  });
+  const text = textOf([`Hi ${greetName(d)},`, "", upd ? `Updated sales order ${so} for your order of ${dateLong(o.time)}.` : `Thank you for your order of ${dateLong(o.time)}. Sales order ${so}:`, "", ...lines.map((l) => `- ${l.product}: ${nf(l.crates, 2)} crates (${nf(l.ea)} boxes) x ${moneyE(l.billed)} = ${moneyE(l.value)}`), "", `Value excl. GST ${moneyE(o.value)} · GST ${moneyE(gst)} · Total ${moneyE(total)}`, due ? `Payment due ${dateLong(due)}` : null, missed.length ? `Not available this time: ${missed.map((m) => shortName(m.product)).join(", ")}. We will email you when back in stock.` : null, "", "Team SahiReach"]);
+  return { kind: "sales_order", ref: o.id, to: emails(d.email), cc: emails(d.cc), subject: `${upd ? "Updated sales order" : "Sales order"} ${so} · ${nf(o.crates, 2)} crates · ${moneyE(total)}`, html, text, who: d.name, d };
+}
+/* ---------- 2. dispatch ---------- */
+function dispatchEmail(o) {
+  const d = distByKey[key(o.dist)] || {}, lines = linesByOrder[o.id] || [], so = o.id.replace("ORD", "SO"), total = o.value * 1.05, due = d.credit != null ? addDays((o.dispatched || o.time).slice(0, 10), d.credit) : null;
+  const html = emailShell({
+    preheader: `${nf(o.crates, 2)} crates left our warehouse today`,
+    heading: "Your order is on its way",
+    paras: [`Hi ${escE(greetName(d))},`, `Your order ${escE(so)} left Tropicana Logistics on ${dateLong(o.dispatched || NOW())}${o.dispatched ? " at " + fmtTime(o.dispatched) : ""}.`],
+    blocks: [factsE([["Crates", nf(o.crates, 2)], ["Products", nf(lines.length)], ["Invoice value", moneyE(total)]]), due ? noteE(`Payment${d.pay ? " by " + escE(d.pay.toLowerCase()) : ""} is due on <b>${dateLong(due)}</b>.`) : "", noteE("Please check the crates when they arrive and reply to this email if anything is short or damaged.")],
+  });
+  return { kind: "dispatch", ref: o.id, to: emails(d.email), cc: emails(d.cc), subject: `On its way: ${so} · ${nf(o.crates, 2)} crates`, html, text: textOf([`Hi ${greetName(d)},`, "", `Your order ${so} (${nf(o.crates, 2)} crates, ${moneyE(total)}) left Tropicana Logistics on ${dateLong(o.dispatched || NOW())}.`, due ? `Payment due ${dateLong(due)}.` : null, "Reply to this email if anything is short or damaged.", "", "Team SahiReach"]), who: d.name, d };
+}
+/* ---------- 3. back in stock ---------- */
+function backInStock() {
+  const since = addDays(ymd(NOW()), -30), out = {};
+  D.oos.forEach((o) => {
+    if ((o.time || "").slice(0, 10) < since || o.notified) return;
+    const st = stockBySap[o.sap]; if (!st || !st.upc || st.ea / st.upc < 1) return;
+    const d = distByKey[key(o.dist)]; if (!d) return;
+    const reordered = D.orders.some((x) => x.dist === d.name && x.status !== "Cancelled" && x.time > o.time && (linesByOrder[x.id] || []).some((l) => l.sap === o.sap)); if (reordered) return;
+    const g = (out[d.name] = out[d.name] || { d, items: {}, oos: [] }); g.oos.push(o);
+    g.items[o.sap] = g.items[o.sap] || { sap: o.sap, name: st.name, asked: o.time };
+  });
+  return Object.values(out).map((g) => ({ ...g, items: Object.values(g.items) })).sort((a, b) => b.items.length - a.items.length);
+}
+function bisEmail(g) {
+  const d = g.d, rate = (sap) => { const sp = d.special && D.special.prices[sap] != null ? D.special.prices[sap] : price(sap); return sp != null ? moneyE(sp) + " / box" : ""; };
+  const names = g.items.map((i) => shortName(i.name));
+  const html = emailShell({
+    preheader: `${names.slice(0, 2).join(", ")}${names.length > 2 ? " and more" : ""} ${names.length > 1 ? "are" : "is"} back in stock`,
+    heading: names.length > 1 ? "Good news: they're back in stock" : "Good news: it's back in stock",
+    paras: [`Hi ${escE(greetName(d))},`, `You asked for ${names.length > 1 ? "these" : "this"} recently when we were out. ${names.length > 1 ? "They are" : "It is"} back in our warehouse now.`],
+    blocks: [tableE(["Product", "Your rate"], g.items.map((i) => [escE(i.name), rate(i.sap)])), noteE("Stock moves fast. Reply to this email or call us and we will add it to your next order.")],
+    signoff: "Happy selling,",
+  });
+  return { kind: "back_in_stock", ref: d.name, to: emails(d.email), cc: emails(d.cc), subject: names.length > 1 ? `Back in stock: ${names[0]} and ${names.length - 1} more` : `Back in stock: ${names[0]}`, html, text: textOf([`Hi ${greetName(d)},`, "", "Back in stock now:", ...g.items.map((i) => `- ${i.name} ${rate(i.sap)}`), "", "Reply or call us to add it to your next order.", "", "Team SahiReach"]), who: d.name, d, g };
+}
+/* ---------- 4. pick lists to Tropicana ---------- */
+const pickKey = (P) => P.orders.map((o) => o.id).sort().join("|");
+const pickHash = (P) => JSON.stringify(P.rows.map((r) => [r.sap, Object.values(r.cells).map((c) => +c.toFixed(2))]));
+function pickEmail(P, xlsxB64) {
+  D.pickSent = D.pickSent || {};
+  const prev = D.pickSent[pickKey(P)], revised = !!prev && prev.hash !== pickHash(P), made = P.made || NOW();
+  const html = emailShell({
+    preheader: `${P.orders.length} orders · ${nf(P.total, 2)} crates · ${(vehicleFor(P.total) || "").split(" (")[0]}`,
+    heading: revised ? "Revised pick list" : "Pick list for dispatch",
+    paras: ["Hi Tropicana team,", revised ? `<b>This replaces the pick list we sent on ${fmtDT(prev.at)}.</b> Please pick from this one.` : `Please pick the following for dispatch. The Excel sheet is attached.`],
+    blocks: [factsE([["Orders", nf(P.orders.length)], ["Crates", nf(P.total, 2)], ["Vehicle", escE((vehicleFor(P.total) || "–").split(" (")[0])]]),
+      ...P.orders.map((o, ci) => `<div style="margin:0 0 6px;font:700 14px/1.4 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink}">${escE(shortOf(o.dist))} <span style="font-weight:400;color:${EM.ink3}">· ${nf(o.crates, 2)} crates</span></div>` + tableE(["Product", "Code", "Crates"], P.rows.filter((r) => r.cells[ci]).map((r) => [escE(shortName(r.name)), escE(tropCode(r.sap) || "–"), `<b>${nf(r.cells[ci], 2)}</b>`])))],
+    signoff: "Thank you,",
+  });
+  return { kind: "pick_list", ref: pickKey(P).slice(0, 120), to: emails(D.qcPick.tropEmail), cc: [], subject: `${revised ? "REVISED · " : ""}SahiReach pick list ${pad2(made.getDate())}-${pad2(made.getMonth() + 1)} · ${P.orders.length} orders · ${nf(P.total, 2)} crates`, html, text: textOf(["Hi Tropicana team,", "", revised ? "REVISED pick list, replaces the earlier one." : "Pick list for dispatch (Excel attached):", "", ...P.orders.map((o, ci) => `${shortOf(o.dist)} (${nf(o.crates, 2)} crates)\n` + P.rows.filter((r) => r.cells[ci]).map((r) => `  ${nf(r.cells[ci], 2)} x ${shortName(r.name)} ${tropCode(r.sap) ? "(" + tropCode(r.sap) + ")" : ""}`).join("\n")), "", "Team SahiReach"]), attachments: xlsxB64 ? [{ filename: `SahiReach pick list ${stampOf(made).replace(":", "")}.xlsx`, content: xlsxB64 }] : [], revised, onSent: () => { D.pickSent[pickKey(P)] = { at: iso(NOW()), hash: pickHash(P) }; } };
+}
+function qcPickEmail(Dl, xlsxB64) {
+  const to = S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo, now = NOW();
+  const html = emailShell({
+    preheader: `${S.qcPlatform} delivery · ${nf(Dl.crates)} crates`,
+    heading: `${S.qcPlatform} delivery pick list`,
+    paras: ["Hi Tropicana team,", `Please pick the following for the ${escE(S.qcPlatform)} delivery to <b>${escE(to)}</b>. The Excel sheet is attached.`],
+    blocks: [factsE([["POs", escE(Dl.pos.map((p) => p.po).join(", "))], ["Crates", nf(Dl.crates)]]), tableE(["Product", "Code", "From QC stock", "From own stock", "Crates"], Dl.rows.filter((r) => r.send).map((r) => [escE(shortName(r.name)), escE(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "–"), nf(r.fromQC), nf(r.fromOwn), `<b>${nf(r.send)}</b>`]), ["Total", "", nf(Dl.rows.reduce((a, r) => a + r.fromQC, 0)), nf(Dl.rows.reduce((a, r) => a + r.fromOwn, 0)), nf(Dl.crates)])],
+    signoff: "Thank you,",
+  });
+  return { kind: "qc_pick_list", ref: S.qcPlatform + " " + Dl.pos.map((p) => p.po).join(","), to: emails(D.qcPick.tropEmail), cc: [], subject: `SahiReach ${S.qcPlatform} pick list ${pad2(now.getDate())}-${pad2(now.getMonth() + 1)} · ${nf(Dl.crates)} crates`, html, text: textOf(["Hi Tropicana team,", "", `${S.qcPlatform} delivery to ${to}. POs ${Dl.pos.map((p) => p.po).join(", ")}.`, "", ...Dl.rows.filter((r) => r.send).map((r) => `  ${r.send} x ${shortName(r.name)}`), "", "Team SahiReach"]), attachments: xlsxB64 ? [{ filename: `SahiReach ${S.qcPlatform} pick list ${stampOf(now).replace(":", "")}.xlsx`, content: xlsxB64 }] : [] };
+}
+
+/* ---------- preview and send ---------- */
+function emails(v) { return String(v || "").split(/[,;\s]+/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)); }
+function bccList() { return emails(D.qcPick.copyTo).slice(0, 3); }
+let MAIL = [];
+function mailSheet(list, title) {
+  MAIL = list; S.mailI = 0;
+  const m = list[0], many = list.length > 1;
+  openSheet(esc(title || "Email preview"), `<div id="mail-form">${mailFormHtml()}</div><div class="mail-frame"><iframe id="mail-iframe" title="Email preview" sandbox="" srcdoc="${esc(m.html)}"></iframe></div>${HOST ? "" : `<div class="row-sub">This preview cannot send emails. Use the staff login on sahireach.com.</div>`}`,
+    `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="mailSend" ${HOST ? "" : "disabled"}>${ic("arrowR", "sm")} ${many ? `Send ${list.length} emails` : "Send email"}</button>`, true);
+}
+function mailFormHtml() {
+  const m = MAIL[S.mailI], many = MAIL.length > 1;
+  return `${many ? `<div class="hstack gap-8 wrap" style="margin-bottom:10px">${MAIL.map((x, i) => `<button class="chip" data-act="mailPick" data-i="${i}" aria-pressed="${i === S.mailI}">${esc(shortOf(x.who || "Email " + (i + 1)))}${x.to.length ? "" : " ⚠"}</button>`).join("")}</div>` : ""}
+  <div class="card card-pad"><div class="form-grid"><div class="field full"><label class="label" for="mail-to">To</label><input class="input" id="mail-to" value="${esc(m.to.join(", "))}" placeholder="${m.kind.includes("pick") ? "Tropicana email (save it in Setup → Company & QC)" : "Distributor email (save it in their details)"}" data-in="mailTo"></div>
+  <div class="field full"><label class="label" for="mail-subj">Subject</label><input class="input" id="mail-subj" value="${esc(m.subject)}" data-in="mailSubj"></div></div>
+  <div class="row-sub" style="margin-top:8px">From SahiReach · replies come to hello@sahireach.com${m.cc && m.cc.length ? " · copy to " + esc(m.cc.join(", ")) : ""}${bccList().length ? " · a copy goes to " + esc(bccList().join(", ")) : ""}${m.attachments && m.attachments.length ? " · attached: " + esc(m.attachments.map((a) => a.filename).join(", ")) : ""}</div></div>`;
+}
+ACT.mailPick = (el) => { S.mailI = +el.dataset.i; part("mail-form", mailFormHtml()); const f = $("#mail-iframe"); if (f) f.srcdoc = MAIL[S.mailI].html; };
+IN.mailTo = (el) => { MAIL[S.mailI].to = emails(el.value); MAIL[S.mailI].toTyped = el.value; };
+IN.mailSubj = (el) => { MAIL[S.mailI].subject = el.value; };
+ACT.mailSend = async (el) => {
+  if (!HOST || !HOST.sendEmail) return;
+  const todo = MAIL.filter((m) => !m.sent);
+  const missing = todo.filter((m) => !m.to.length);
+  if (missing.length === todo.length) { toast("Add an email address first", "alert"); return; }
+  el.disabled = true; let ok = 0, fail = 0, lastErr = "";
+  for (const m of todo) {
+    if (!m.to.length) continue;
+    try { await HOST.sendEmail({ kind: m.kind, ref: m.ref, to: m.to, cc: m.cc, bcc: bccList(), subject: m.subject, html: m.html, text: m.text, attachments: m.attachments }); m.sent = true; ok++; if (m.onSent) m.onSent(); logActivity("Email sent", m.ref || m.kind, `${m.subject} → ${m.to.join(", ")}`); }
+    catch (e) { fail++; lastErr = (e && e.message) || "Could not send"; }
+  }
+  el.disabled = false;
+  if (/not switched on/i.test(lastErr)) { toast("Email isn't switched on yet: the Resend key still needs adding", "alert"); return; }
+  if (fail) { toast(`${ok} sent, ${fail} not sent: ${lastErr}`, "alert"); part("mail-form", mailFormHtml()); return; }
+  closeSheet(); render(); toast(`${ok} email${ok > 1 ? "s" : ""} sent${missing.length ? ` · ${missing.length} skipped (no email address)` : ""}`, "check");
+};
+
+/* ---------- entry points ---------- */
+ACT.emailSO = (el) => { const o = orderById(el.dataset.id); if (!o) return; const m = soEmail(o); mailSheet([m], "Email sales order"); if (!m.to.length) toast(`No email saved for ${m.who}. Type one, or add it in their details.`, "info"); };
+ACT.emailDispatch = (el) => { const ids = (el.dataset.ids || el.dataset.id || "").split(",").filter(Boolean); const list = ids.map((id) => orderById(id)).filter(Boolean).map(dispatchEmail); if (list.length) mailSheet(list, "Tell distributors it's on the way"); };
+ACT.backInStock = () => {
+  const groups = backInStock();
+  if (!groups.length) { toast("Nobody is waiting for a product that is back in stock", "info"); return; }
+  openSheet("Back in stock", `<div class="banner info">${ic("info", "sm")}<span>These distributors asked for products in the last 30 days when you were out, and the products are back now. Send them a short note, or mark them as told if you called them.</span></div>
+    <div class="group">${groups.map((g, i) => `<label class="row" style="align-items:flex-start;cursor:pointer"><input type="checkbox" class="bis-pick" data-i="${i}" ${g.d.email ? "checked" : ""} style="width:20px;height:20px;margin-top:2px;accent-color:var(--tint)"><span class="grow"><div class="row-title">${esc(g.d.name)}</div><div class="row-sub">${g.items.map((x) => esc(shortName(x.name))).join(", ")}</div>${g.d.email ? `<div class="row-sub">${esc(g.d.email)}</div>` : `<div class="row-sub" style="color:var(--warn)">No email saved · <button class="btn-plain" style="height:auto;padding:0;font-size:inherit;font-weight:600;color:var(--tint)" data-act="distEdit" data-name="${esc(g.d.name)}">add one</button></div>`}</span></label>`).join("")}</div>`,
+    `<button class="btn btn-secondary" data-act="bisTold">Mark ticked as told</button><button class="btn btn-primary" data-act="bisPreview">${ic("arrowR", "sm")} Preview and send</button>`, true);
+};
+const bisPicked = () => { const groups = backInStock(); return $$(".bis-pick").filter((x) => x.checked).map((x) => groups[+x.dataset.i]).filter(Boolean); };
+ACT.bisTold = () => { const gs = bisPicked(), now = iso(NOW()); gs.forEach((g) => g.oos.forEach((o) => { o.notified = now; })); logActivity("Back in stock: told", "", gs.map((g) => g.d.name).join(", ")); closeSheet(); render(); toast(`${gs.length} marked as told`); };
+ACT.bisPreview = () => { const gs = bisPicked(); if (!gs.length) { toast("Tick at least one distributor", "info"); return; } mailSheet(gs.map((g) => { const m = bisEmail(g); m.onSent = () => { const now = iso(NOW()); g.oos.forEach((o) => { o.notified = now; }); }; return m; }), "Back in stock emails"); };
+async function xlsxBase64(aoa, cols, sheet) {
+  try { await loadScriptOnce(XLSX_SRC, () => !!window.XLSX); } catch (e) { return null; }
+  const X = window.XLSX, ws = X.utils.aoa_to_sheet(aoa); ws["!cols"] = cols.map((w) => ({ wch: w }));
+  const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, sheet); return X.write(wb, { type: "base64", bookType: "xlsx", compression: true });
+}
+ACT.emailPick = async () => {
+  const P = S.pickList; if (!P) return;
+  const aoa = pickAoa(P), b64 = await xlsxBase64(aoa.rows, aoa.cols, "Pick List");
+  mailSheet([pickEmail(P, b64)], "Email pick list to Tropicana");
+};
+ACT.emailQCPick = async () => {
+  const Dl = qcDelivery(); if (!Dl.rows.length) return;
+  const aoa = qcPickAoa(Dl), b64 = await xlsxBase64(aoa.rows, aoa.cols, "QC Pick List");
+  mailSheet([qcPickEmail(Dl, b64)], `Email ${S.qcPlatform} pick list to Tropicana`);
 };
 
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
