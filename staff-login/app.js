@@ -718,7 +718,7 @@ VIEWS.home = () => {
       <div class="head-actions"><button class="btn btn-secondary desk-only" data-act="cmd">${ic("search", "sm")} Search <span class="dim" style="font-weight:500">⌘K</span></button><button class="btn btn-primary" data-act="newOrder">${ic("plus", "sm")} New order</button></div></div>
     ${dataUpdateBanner()}
     <div><div class="group-label"><span>Needs attention today</span></div><div class="attn">${attention(facts).map((a) => `<button class="attn-card" data-act="${a.act || "nav"}" data-to="${a.go || ""}"><span class="attn-ic ${a.cls}">${ic(a.ic)}</span><span class="grow"><div class="attn-title">${esc(a.title)}</div><div class="attn-sub">${esc(a.sub)}</div></span>${ic("chevR", "sm dim")}</button>`).join("")}</div></div>
-    <div class="sec-head"><div><div class="section-title">Sales</div><div class="section-sub">Excluding GST · distributors when dispatched, Swiggy and Zepto when delivered</div></div></div>
+    <div class="sec-head"><div><div class="section-title">Sales</div><div class="section-sub">Excluding GST · distributor orders count on their dispatch date (orders not yet dispatched are left out), Swiggy and Zepto on their delivery date</div></div></div>
     ${filterBar(R)}
     <div class="card hero"><div class="hero-left"><div class="tile-label">Net sales · ${esc(R.label)}${filterNote ? " · " + esc(filterNote) : ""}</div><div class="hero-figure">₹${lakh(cur.net)}<small>lakh</small></div>${deltaChip(chgTxt(cur.net, prev.net, cmp))}<div class="tile-sub" style="margin-top:6px">${R.pFrom ? `${esc(cmp.replace(/^the /, "The "))}: ₹${lakh(prev.net)} L` : `Since ${fmtDate(R.from)} ${R.from.slice(0, 4)}`}${pace}</div></div>
       <div class="hero-right">${n > 1 ? `<div class="legend" style="margin:4px 0 6px 34px"><span><i class="kl" style="background:var(--s-gt)"></i>${esc(R.label)}</span>${R.pFrom ? `<span><i class="kl" style="background:var(--s-prev)"></i>${esc(cmp.replace(/^the /, ""))}</span>` : ""}<span class="dim">Cumulative ₹ lakh</span></div>${S.chartMode.line === "table" ? `<div style="overflow:auto;max-height:240px">${lineTable}</div>` : lineChart(lineData)}` : `<div class="legend" style="margin:8px 0 10px">Today so far, by channel</div>${bars(barRows)}`}</div></div>
@@ -795,11 +795,12 @@ const orderById = (id) => D.orders.find((o) => o.id === id);
 
 function ordersList() {
   const q = key(S.ordersQ), tab = S.ordersTab;
-  const list = D.orders.filter((o) => (tab === "All" || o.status === tab) && (!q || key(o.dist).includes(q) || key(o.id).includes(q))).slice().sort((a, b) => (a.time < b.time ? 1 : -1));
+  const byDisp = tab === "Dispatched", when = (o) => (byDisp && o.dispatched ? o.dispatched : o.time);
+  const list = D.orders.filter((o) => (tab === "All" || o.status === tab) && (!q || key(o.dist).includes(q) || key(o.id).includes(q))).slice().sort((a, b) => (when(a) < when(b) ? 1 : -1));
   if (!list.length) return `<div class="group"><div class="empty"><div class="big">${tab === "Pending" ? "Nothing waiting" : "No orders found"}</div>${tab === "Pending" ? "Every order has been dispatched. New orders show up here until the truck leaves." : "Try another name or order number."}</div></div>`;
   const groups = []; let cur = null;
-  list.forEach((o) => { const k = dayKey(toDate(o.time)); if (!cur || cur.k !== k) { cur = { k, label: dayLabel(o.time), items: [] }; groups.push(cur); } cur.items.push(o); });
-  return groups.map((g) => `<div><div class="group-label"><span>${esc(g.label)}</span><span class="num">${g.items.length} order${g.items.length > 1 ? "s" : ""} · ${rs(g.items.reduce((a, o) => a + (o.status === "Cancelled" ? 0 : o.value), 0))}</span></div><div class="group">${g.items.map((o) => `<button class="row" data-act="orderSheet" data-id="${o.id}"><span class="avatar soft">${esc(initials(o.dist))}</span><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub clip">${fmtTime(o.time)} · ${o.lines} line${o.lines === 1 ? "" : "s"} · ${nf(o.crates)} crates${o.timesEdited ? " · edited" : ""}</div></span><span class="row-end"><span class="c-hide">${statusPill(o.status)}</span><span class="row-value">${rs(o.value)}</span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div></div>`).join("");
+  list.forEach((o) => { const k = dayKey(toDate(when(o))); if (!cur || cur.k !== k) { cur = { k, label: (byDisp ? "Dispatched " : "") + dayLabel(when(o)).replace(/^(Today|Yesterday)$/, (m) => (byDisp ? m.toLowerCase() : m)), items: [] }; groups.push(cur); } cur.items.push(o); });
+  return groups.map((g) => `<div><div class="group-label"><span>${esc(g.label)}</span><span class="num">${g.items.length} order${g.items.length > 1 ? "s" : ""} · ${rs(g.items.reduce((a, o) => a + (o.status === "Cancelled" ? 0 : o.value), 0))}</span></div><div class="group">${g.items.map((o) => `<button class="row" data-act="orderSheet" data-id="${o.id}"><span class="avatar soft">${esc(initials(o.dist))}</span><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub clip">${byDisp ? "Ordered " + fmtDT(o.time) : fmtTime(o.time)}${!byDisp && o.status === "Dispatched" && o.dispatched ? " · dispatched " + fmtDT(o.dispatched) : ""} · ${o.lines} line${o.lines === 1 ? "" : "s"} · ${nf(o.crates)} crates${o.timesEdited ? " · edited" : ""}</div></span><span class="row-end"><span class="c-hide">${statusPill(o.status)}</span><span class="row-value">${rs(o.value)}</span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div></div>`).join("");
 }
 VIEWS.orders = () => {
   const count = (s) => D.orders.filter((o) => o.status === s).length;
@@ -823,7 +824,7 @@ function showOrder(id, confirmCancel) {
   const body = `
     <div class="card card-pad"><div class="hstack gap-12" style="align-items:flex-start"><span class="avatar lg soft">${esc(initials(o.dist))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(o.dist)}</div><div class="row-sub">${esc(d.district || "")}${d.pay ? " · " + esc(d.pay) : ""}${d.credit != null ? " · " + d.credit + " days credit" : ""}</div><div style="margin-top:8px" class="hstack gap-8 wrap">${statusPill(o.status)}<span class="mono dim">${esc(o.id)}</span></div></div></div>
       <div class="divider" style="margin:16px 0"></div>
-      <div class="kv"><div><div class="k">Crates</div><div class="v num">${nf(o.crates)}</div></div><div><div class="k">Value excl. GST</div><div class="v num">${rs2(o.value)}</div></div><div><div class="k">GST 5%</div><div class="v num">${rs2(o.value * 0.05)}</div></div><div><div class="k">Total incl. GST</div><div class="v num">${rs2(o.value * 1.05)}</div></div>${o.tod ? `<div><div class="k">TOD to claim</div><div class="v num">${rs2(o.tod)}</div></div>` : ""}</div></div>
+      <div class="kv"><div><div class="k">Ordered</div><div class="v">${fmtDT(o.time)}</div></div><div><div class="k">Dispatched</div><div class="v">${o.status === "Dispatched" && o.dispatched ? fmtDT(o.dispatched) : o.status === "Cancelled" ? "Cancelled" : "Not yet"}</div></div><div><div class="k">Crates</div><div class="v num">${nf(o.crates)}</div></div><div><div class="k">Value excl. GST</div><div class="v num">${rs2(o.value)}</div></div><div><div class="k">GST 5%</div><div class="v num">${rs2(o.value * 0.05)}</div></div><div><div class="k">Total incl. GST</div><div class="v num">${rs2(o.value * 1.05)}</div></div>${o.tod ? `<div><div class="k">TOD to claim</div><div class="v num">${rs2(o.tod)}</div></div>` : ""}</div></div>
     ${confirmCancel ? `<div class="confirm"><span><b>Cancel this order?</b> ${nf(o.crates)} crates go back into stock. This cannot be undone.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="orderSheet" data-id="${id}">Keep order</button><button class="btn btn-sm btn-danger" data-act="cancelOrderYes" data-id="${id}">Cancel order</button></span></div>` : ""}
     ${o.notes ? `<div class="banner info">${ic("info", "sm")}<span>${esc(o.notes)}</span></div>` : ""}
     <div><div class="group-label"><span>Timeline</span></div><div class="card card-pad"><div class="timeline">${tl.join("")}</div></div></div>
@@ -852,7 +853,7 @@ ACT.soPreview = (el) => {
   const due = d.credit != null ? new Date(toDate(o.time).getTime() + d.credit * 864e5) : null;
   const paper = `<div class="paper-scroll"><div class="paper paper-min">
     <div style="display:flex;justify-content:space-between;gap:20px;align-items:flex-start"><div style="display:flex;gap:12px;align-items:center"><img src="${LOGO}" alt="SahiReach logo" style="width:54px;height:54px;object-fit:contain"><div><div style="font-size:19px;font-weight:700;letter-spacing:-0.02em">${esc(CO.name)}</div><div style="color:#6e6e73">${esc(CO.address)}<br>GSTIN ${esc(CO.gstin)} · FSSAI ${esc(CO.fssai)}</div></div></div>
-      <div style="text-align:right"><h2>SALES ORDER</h2><div class="mono">${esc(o.id.replace("ORD", "SO"))}</div><div>${fmtDate(o.time)} ${toDate(o.time).getFullYear()}</div></div></div>
+      <div style="text-align:right"><h2>SALES ORDER</h2><div class="mono">${esc(o.id.replace("ORD", "SO"))}</div><div>Order date ${fmtDate(o.time)} ${toDate(o.time).getFullYear()}</div>${o.status === "Dispatched" && o.dispatched ? `<div>Dispatched ${fmtDate(o.dispatched)} ${toDate(o.dispatched).getFullYear()}</div>` : ""}</div></div>
     <div style="display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:18px;margin-top:22px"><div><div class="lab">Bill to</div><b>${esc(o.dist)}</b><br>${esc(d.district || "")}, Kerala${d.phone ? "<br>Phone " + esc(d.phone) : ""}</div><div><div class="lab">Payment</div>${esc(d.pay || "–")}<br>${d.credit != null ? d.credit + " days credit" : ""}${due ? "<br>Due " + fmtDate(due) : ""}</div><div><div class="lab">Dispatch from</div>Tropicana Logistics cold store<br>${nf(o.crates)} crates · ${esc((vehicleFor(o.crates) || "").split(" (")[0])}</div></div>
     <table><thead><tr><th>#</th><th>Product</th><th>HSN</th><th class="r">Crates</th><th class="r">Boxes</th><th class="r">Rate / box</th><th class="r">Amount</th></tr></thead><tbody>${lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.product)}</td><td>${esc((stockBySap[l.sap] || {}).hsn || "21050000")}</td><td class="r">${nf(l.crates, 2)}</td><td class="r">${nf(l.ea)}</td><td class="r">${inr2.format(l.billed || 0)}</td><td class="r">${inr2.format(l.value || 0)}</td></tr>`).join("")}</tbody></table>
     <div class="tot"><div><span>Value excl. GST</span><span class="r">${inr2.format(o.value)}</span></div><div><span>GST @ 5%</span><span class="r">${inr2.format(o.value * 0.05)}</span></div><div class="g"><span>Total (₹)</span><span class="r">${inr2.format(o.value * 1.05)}</span></div></div>
@@ -1167,6 +1168,7 @@ function pickAoa(P, opt) {
   const aoa = [
     ["PICK LIST FOR TROPICANA LOGISTICS, WILLINGDON ISLAND  (SahiReach LLP)"],
     ["Orders in this pick list", `${P.orders.length} order(s): ${P.orders.map((o) => o.id).join(", ")}   |   generated ${stampTxt}`],
+    ["Dispatch date", `${pad2((P.made || NOW()).getDate())}-${pad2((P.made || NOW()).getMonth() + 1)}-${(P.made || NOW()).getFullYear()}`],
     [],
     ["Tropicana Code", "SKU"].concat(names, ["TOTAL CRATES"]),
     ["", "Order date/time"].concat(P.orders.map((o) => { const d = toDate(o.time); return `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }), [""]),
@@ -1311,6 +1313,7 @@ function qcPickAoa(Dl) {
     ["PICK LIST FOR TROPICANA LOGISTICS - QC delivery (SahiReach LLP)"],
     ["Platform", S.qcPlatform, "", "Deliver to", to],
     ["POs", Dl.pos.map((p) => p.po).join(", ")],
+    ["Dispatch date", stampTxt.slice(0, 10)],
     ["Generated", stampTxt],
     [],
     ["Tropicana Code", "Product", "SAP Code", "Pieces Ordered", "Pieces per Crate", "From QC Stock (crates)", "From SahiReach Stock (crates)", "Crates to Send", "Pieces to Send", "Not Sent (pieces)", "Value to Send excl. GST (Rs)"],
@@ -1993,17 +1996,18 @@ const textOf = (lines) => lines.filter((x) => x != null).join("\n");
 /* ---------- 1. sales order ---------- */
 function soEmail(o) {
   const d = distByKey[key(o.dist)] || {}, lines = linesByOrder[o.id] || [], so = o.id.replace("ORD", "SO"), missed = D.oos.filter((x) => x.id === o.id);
-  const due = d.credit != null ? addDays(o.time.slice(0, 10), d.credit) : null, gst = Math.round(o.value * 5) / 100, total = o.value + gst, upd = (o.timesEdited || 0) > 0;
+  const disp = o.status === "Dispatched" && o.dispatched ? o.dispatched : null;
+  const due = d.credit != null ? addDays((disp || o.time).slice(0, 10), d.credit) : null, gst = Math.round(o.value * 5) / 100, total = o.value + gst, upd = (o.timesEdited || 0) > 0;
   const html = emailShell({
     preheader: `${so} · ${nf(o.crates, 2)} crates · ${moneyE(total)} incl. GST`,
     heading: upd ? "Your sales order has been updated" : "Thank you for your order",
     paras: [`Hi ${escE(greetName(d))},`, upd ? `Here is the updated sales order for your order of ${dateLong(o.time)}.` : `We have your order of ${dateLong(o.time)} and it is being prepared. Here is your sales order.`],
     blocks: [
-      factsE([["Sales order", escE(so)], ["Crates", nf(o.crates, 2)], ["Total incl. GST", moneyE(total)]]),
+      factsE([["Sales order", escE(so)], ["Order date", escE(fmtDate(o.time))], disp ? ["Dispatched", escE(fmtDate(disp))] : ["Crates", nf(o.crates, 2)], ["Total incl. GST", moneyE(total)]]),
       tableE(["Product", "Crates", "Boxes", "Rate / box", "Amount"], lines.map((l) => [escE(l.product), nf(l.crates, 2), nf(l.ea), moneyE(l.billed), moneyE(l.value)]), ["Value excl. GST", "", "", "", moneyE(o.value)]),
       `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:-8px 0 16px;font:400 13.5px/1.6 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink2}"><tr><td align="right">GST 5%: ${moneyE(gst)}<br><b style="color:${EM.ink};font-size:15px">Total: ${moneyE(total)}</b>${due ? `<br>Payment${d.pay ? " by " + escE(d.pay.toLowerCase()) : ""} due ${dateLong(due)}` : ""}</td></tr></table>`,
       missed.length ? noteE(`<b>Not available this time:</b> ${missed.map((m) => escE(shortName(m.product))).join(", ")}. We will email you as soon as ${missed.length > 1 ? "they are" : "it is"} back in stock.`, true) : "",
-      noteE("We will let you know when it leaves our warehouse. Anything to change? Just reply to this email."),
+      noteE(disp ? `Dispatched from Tropicana Logistics on ${dateLong(disp)}. Anything not right? Just reply to this email.` : "We will let you know when it leaves our warehouse. Anything to change? Just reply to this email."),
     ],
   });
   const text = textOf([`Hi ${greetName(d)},`, "", upd ? `Updated sales order ${so} for your order of ${dateLong(o.time)}.` : `Thank you for your order of ${dateLong(o.time)}. Sales order ${so}:`, "", ...lines.map((l) => `- ${l.product}: ${nf(l.crates, 2)} crates (${nf(l.ea)} boxes) x ${moneyE(l.billed)} = ${moneyE(l.value)}`), "", `Value excl. GST ${moneyE(o.value)} · GST ${moneyE(gst)} · Total ${moneyE(total)}`, due ? `Payment due ${dateLong(due)}` : null, missed.length ? `Not available this time: ${missed.map((m) => shortName(m.product)).join(", ")}. We will email you when back in stock.` : null, "", "Team SahiReach"]);
@@ -2016,7 +2020,7 @@ function dispatchEmail(o) {
     preheader: `${nf(o.crates, 2)} crates left our warehouse today`,
     heading: "Your order is on its way",
     paras: [`Hi ${escE(greetName(d))},`, `Your order ${escE(so)} left Tropicana Logistics on ${dateLong(o.dispatched || NOW())}${o.dispatched ? " at " + fmtTime(o.dispatched) : ""}.`],
-    blocks: [factsE([["Crates", nf(o.crates, 2)], ["Products", nf(lines.length)], ["Invoice value", moneyE(total)]]), due ? noteE(`Payment${d.pay ? " by " + escE(d.pay.toLowerCase()) : ""} is due on <b>${dateLong(due)}</b>.`) : "", noteE("Please check the crates when they arrive and reply to this email if anything is short or damaged.")],
+    blocks: [factsE([["Dispatched", escE(fmtDate(o.dispatched || iso(NOW())))], ["Crates", nf(o.crates, 2)], ["Invoice value", moneyE(total)]]), due ? noteE(`Payment${d.pay ? " by " + escE(d.pay.toLowerCase()) : ""} is due on <b>${dateLong(due)}</b>.`) : "", noteE("Please check the crates when they arrive and reply to this email if anything is short or damaged.")],
   });
   return { kind: "dispatch", ref: o.id, to: emails(d.email), cc: emails(d.cc), subject: `On its way: ${so} · ${nf(o.crates, 2)} crates`, html, text: textOf([`Hi ${greetName(d)},`, "", `Your order ${so} (${nf(o.crates, 2)} crates, ${moneyE(total)}) left Tropicana Logistics on ${dateLong(o.dispatched || NOW())}.`, due ? `Payment due ${dateLong(due)}.` : null, "Reply to this email if anything is short or damaged.", "", "Team SahiReach"]), who: d.name, d };
 }
@@ -2055,7 +2059,7 @@ function pickEmail(P, xlsxB64) {
     preheader: `${P.orders.length} orders · ${nf(P.total, 2)} crates`,
     heading: revised ? "Revised pick list" : "Pick list for dispatch",
     paras: ["Hi Tropicana team,", revised ? `<b>This replaces the pick list we sent on ${fmtDT(prev.at)}.</b> Please pick from this one.` : `Please pick the following for dispatch. The Excel sheet is attached.`],
-    blocks: [factsE([["Orders", nf(P.orders.length)], ["Crates", nf(P.total, 2)]]),
+    blocks: [factsE([["Dispatch date", escE(dateLong(made))], ["Orders", nf(P.orders.length)], ["Crates", nf(P.total, 2)]]),
       ...P.orders.map((o, ci) => `<div style="margin:0 0 6px;font:700 14px/1.4 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink}">${escE(shortOf(o.dist))} <span style="font-weight:400;color:${EM.ink3}">· ${nf(o.crates, 2)} crates</span></div>` + tableE(["Product", "Code", "Crates"], P.rows.filter((r) => r.cells[ci]).map((r) => [escE(shortName(r.name)), escE(tropCode(r.sap) || "–"), `<b>${nf(r.cells[ci], 2)}</b>`])))],
     signoff: "Thank you,",
   });
@@ -2067,7 +2071,7 @@ function qcPickEmail(Dl, xlsxB64) {
     preheader: `${S.qcPlatform} delivery · ${nf(Dl.crates)} crates`,
     heading: `${S.qcPlatform} delivery pick list`,
     paras: ["Hi Tropicana team,", `Please pick the following for the ${escE(S.qcPlatform)} delivery to <b>${escE(to)}</b>. The Excel sheet is attached.`],
-    blocks: [factsE([["POs", escE(Dl.pos.map((p) => p.po).join(", "))], ["Crates", nf(Dl.crates)]]), tableE(["Product", "Code", "From QC stock", "From own stock", "Crates"], Dl.rows.filter((r) => r.send).map((r) => [escE(shortName(r.name)), escE(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "–"), nf(r.fromQC), nf(r.fromOwn), `<b>${nf(r.send)}</b>`]), ["Total", "", nf(Dl.rows.reduce((a, r) => a + r.fromQC, 0)), nf(Dl.rows.reduce((a, r) => a + r.fromOwn, 0)), nf(Dl.crates)])],
+    blocks: [factsE([["Dispatch date", escE(dateLong(now))], ["POs", escE(Dl.pos.map((p) => p.po).join(", "))], ["Crates", nf(Dl.crates)]]), tableE(["Product", "Code", "From QC stock", "From own stock", "Crates"], Dl.rows.filter((r) => r.send).map((r) => [escE(shortName(r.name)), escE(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "–"), nf(r.fromQC), nf(r.fromOwn), `<b>${nf(r.send)}</b>`]), ["Total", "", nf(Dl.rows.reduce((a, r) => a + r.fromQC, 0)), nf(Dl.rows.reduce((a, r) => a + r.fromOwn, 0)), nf(Dl.crates)])],
     signoff: "Thank you,",
   });
   return { kind: "qc_pick_list", ref: S.qcPlatform + " " + Dl.pos.map((p) => p.po).join(","), to: emails(D.qcPick.tropEmail), cc: [], subject: `SahiReach ${S.qcPlatform} pick list ${pad2(now.getDate())}-${pad2(now.getMonth() + 1)} · ${nf(Dl.crates)} crates`, html, text: textOf(["Hi Tropicana team,", "", `${S.qcPlatform} delivery to ${to}. POs ${Dl.pos.map((p) => p.po).join(", ")}.`, "", ...Dl.rows.filter((r) => r.send).map((r) => `  ${r.send} x ${shortName(r.name)}`), "", "Team SahiReach"]), attachments: xlsxB64 ? [{ filename: `SahiReach ${S.qcPlatform} pick list ${stampOf(now).replace(":", "")}.xlsx`, content: xlsxB64 }] : [] };
