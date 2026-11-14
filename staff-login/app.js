@@ -903,24 +903,64 @@ function productResults() {
   const q = S.draft.q; if (!q || q.length < 2) return "";
   const list = searchProducts(q, 12);
   if (!list.length) return `<div class="results"><div class="empty" style="padding:22px">Nothing matches “${esc(q)}”.</div></div>`;
-  return `<div class="results">${list.map((x) => `<button class="res" data-act="addLine" data-sap="${x.c.sap}"><span class="stock-badge ${x.crates == null ? "none" : x.crates <= 0 ? "zero" : ""}">${x.crates == null ? "–" : nf(Math.floor(x.crates))}</span><span class="grow"><div class="row-title clip">${esc(x.c.name)}</div><div class="row-sub">${esc(x.c.cat || "")} · ${x.crates == null ? "not stocked, logged as demand" : x.crates <= 0 ? "out of stock" : "crates in stock"}${price(x.c.sap) != null ? " · " + rs2(price(x.c.sap)) + " / box" : " · no list price"}</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div>`;
+  S.draft.sel = Math.min(S.draft.sel || 0, list.length - 1);
+  return `<div class="results" role="listbox">${list.map((x, i) => `<button class="res" role="option" aria-selected="${i === S.draft.sel}" data-act="addLine" data-sap="${x.c.sap}"><span class="stock-badge ${x.crates == null ? "none" : x.crates <= 0 ? "zero" : ""}">${x.crates == null ? "–" : nf(Math.floor(x.crates))}</span><span class="grow"><div class="row-title">${esc(x.c.name)}</div><div class="row-sub">${esc(x.c.cat || "")} · ${x.crates == null ? "not stocked, logged as demand" : x.crates <= 0 ? "out of stock" : "crates in stock"}${price(x.c.sap) != null ? " · " + rs2(price(x.c.sap)) + " / box" : " · no list price"}</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div><div class="row-sub" style="padding:6px 4px 0">↑ ↓ to choose · Enter to add · the cursor stays here for the next product</div>`;
 }
 function lineCalcHtml(r, i) {
   let msg = "";
-  if (r.status === "notstocked") msg = `<div class="line-msg warn">${ic("info", "sm")} Not in your range. It will be logged as demand, nothing is supplied.</div>`;
-  else if (r.status === "out") msg = `<div class="line-msg bad">${ic("alert", "sm")} Out of stock. The ${r.req} crate${r.req > 1 ? "s" : ""} will be logged as a missed sale.</div>`;
-  else if (r.status === "short") msg = `<div class="line-msg warn">${ic("alert", "sm")} Only ${nf(r.avail, 2)} crate${r.avail === 1 ? "" : "s"} in stock. ${nf(r.req - r.avail, 2)} will be logged as missed.</div>`;
+  if (r.status === "notstocked") msg = `<div class="line-msg warn">${ic("info", "sm")} Not in your range: logged as demand, nothing supplied.</div>`;
+  else if (r.status === "out") msg = `<div class="line-msg bad">${ic("alert", "sm")} Out of stock: ${r.req} crate${r.req > 1 ? "s" : ""} logged as missed.</div>`;
+  else if (r.status === "short") msg = `<div class="line-msg warn">${ic("alert", "sm")} Only ${nf(r.avail, 2)} crate${r.avail === 1 ? "" : "s"} in stock: ${nf(r.req - r.avail, 2)} logged as missed.</div>`;
   if (r.needPrice) msg += `<div class="line-msg bad">${ic("tag", "sm")} No price in the South Kerala list. Price per box: <input class="input sm num-in" style="width:110px" id="mp-${i}" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="${r.ln.manual || ""}" data-in="manualPrice" data-i="${i}"></div>`;
-  return `<div class="line-val"><div class="row-value">${r.value != null && r.qty && r.supply > 0 ? rs2(r.value) : "–"}</div><div class="row-sub">${r.stocked && r.qty ? `${nf(r.supply, 2)} crate${r.supply === 1 ? "" : "s"} · ${nf(r.ea)} boxes` : ""}</div></div>${msg}`;
+  return `<div class="line-val"><div class="row-value">${r.value != null && r.qty && r.supply > 0 ? rs2(r.value) : "–"}</div><div class="row-sub nowrap">${r.stocked && r.qty ? `${nf(r.supply, 2)} cr · ${nf(r.ea)} bx` : ""}</div></div>${msg}`;
 }
 function linesHtml(C) {
   if (!C.rows.length) return `<div class="empty"><div class="big">No products yet</div>Search above to add the first one. Products in stock come first.</div>`;
-  return C.rows.map((r, i) => `<div class="line"><div class="grow" style="min-width:0"><div class="row-title clip">${esc(r.c.name || r.ln.name)}</div><div class="row-sub">${r.stocked ? `${r.upc} boxes per crate · ${nf(Math.floor(r.avail + (0)), 0)} crates available` : "Not stocked"}${r.special != null ? ` · <span style="text-decoration:line-through">${rs2(r.normal)}</span> ${rs2(r.special)} / box` : r.billed != null ? ` · ${rs2(r.billed)} / box` : ""}</div></div>
-    <div class="line-qty"><div class="stepper"><button data-act="step" data-i="${i}" data-d="-1" aria-label="Less">${ic("minus", "sm")}</button><input id="qty-${i}" type="number" inputmode="numeric" min="0" value="${r.ln.qty}" data-in="qty" data-i="${i}" aria-label="Quantity"><button data-act="step" data-i="${i}" data-d="1" aria-label="More">${ic("plus", "sm")}</button></div>
-      <select class="select sm" style="width:104px" id="unit-${i}" data-in="unit" data-i="${i}" aria-label="Unit">${Object.keys(UNIT_LABEL).map((u) => `<option value="${u}" ${u === r.ln.unit ? "selected" : ""}>${UNIT_LABEL[u]}</option>`).join("")}</select>
-      <button class="icon-btn" data-act="rmLine" data-i="${i}" aria-label="Remove line">${ic("trash", "sm")}</button></div>
-    <div id="calc-${i}" style="display:contents">${lineCalcHtml(r, i)}</div></div>`).join("");
+  return C.rows.map((r, i) => `<div class="line ${S.draft.flash === i ? "flash" : ""}" id="line-${i}"><span class="line-no">${i + 1}</span>
+    <div class="line-name"><span class="line-title">${esc(r.c.name || r.ln.name)}</span>${r.special != null ? ` <span class="pill plain tint" style="height:20px;font-size:11.5px">special</span>` : ""}</div>
+    <button class="info-btn" data-act="lineInfo" data-i="${i}" data-info="${i}" aria-label="Stock and price details for ${esc(r.c.name || r.ln.name)}">i</button>
+    <div class="line-qty"><div class="stepper sm"><button data-act="step" data-i="${i}" data-d="-1" aria-label="Less">${ic("minus", "sm")}</button><input id="qty-${i}" type="number" inputmode="numeric" min="0" value="${r.ln.qty}" data-in="qty" data-i="${i}" aria-label="Quantity"><button data-act="step" data-i="${i}" data-d="1" aria-label="More">${ic("plus", "sm")}</button></div>
+      <select class="select sm unit-sel" id="unit-${i}" data-in="unit" data-i="${i}" aria-label="Unit">${Object.keys(UNIT_LABEL).map((u) => `<option value="${u}" ${u === r.ln.unit ? "selected" : ""}>${UNIT_LABEL[u]}</option>`).join("")}</select></div>
+    <div id="calc-${i}" style="display:contents">${lineCalcHtml(r, i)}</div>
+    <button class="icon-btn line-rm" data-act="rmLine" data-i="${i}" aria-label="Remove line">${ic("trash", "sm")}</button></div>`).join("");
 }
+/* the i button: stock position, prices and history for one line, on hover (mouse) or tap */
+function lineInfoHtml(i) {
+  const C = calcDraft(), r = C.rows[i]; if (!r) return "";
+  const st = r.st, rp = replBySap[r.ln.sap] || {}, q = qcBySap[r.ln.sap], d = C.d;
+  const lastL = d ? D.orders.filter((o) => o.dist === d.name && o.status !== "Cancelled" && o.id !== S.draft.editId).sort((a, b) => (a.time < b.time ? 1 : -1)).map((o) => ({ o, l: (linesByOrder[o.id] || []).find((l) => l.sap === r.ln.sap) })).find((x) => x.l) : null;
+  const row = (k, v) => `<div class="pop-row"><span>${k}</span><b>${v}</b></div>`;
+  return `<div class="pop-title">${esc(r.c.name || r.ln.name)}</div><div class="row-sub" style="margin-bottom:8px">SAP ${esc(r.ln.sap)}${st && st.trop ? " · " + esc(st.trop) : ""}${r.c.cat ? " · " + esc(r.c.cat) : ""}</div>
+    ${st ? row("In stock", `${nf(st.ea / st.upc, 2)} crates · ${nf(st.ea)} boxes`) + row("Available for this order", `${nf(r.avail, 2)} crates`) + row("Pack", `${st.upc} boxes / crate · ${st.ppe || 1} pcs / box`) : row("Stock", "Not stocked")}
+    ${rp.perDay ? row("Sells", `${nf(rp.perDay, 2)} crates / day`) + row("Days of stock", rp.days != null ? nf(rp.days, 1) : "–") : ""}
+    ${rp.onOrder ? row("On order from Hangyo", `${nf(rp.onOrder, 1)} crates`) : ""}
+    ${q ? row("Quick commerce stock", `${nf(q.crates || 0)} crates`) : ""}
+    <div class="divider" style="margin:8px 0"></div>
+    ${row("Distributor rate", r.normal != null ? rs2(r.normal) + " / box" : "No list price")}
+    ${r.special != null ? row("Special price", rs2(r.special) + " / box") + row("TOD per box", rs2(r.todEA)) : ""}
+    ${r.c.mrp ? row("MRP", rs2(r.c.mrp) + " / box") : ""}
+    ${ssRate(r.ln.sap) != null && r.billed != null && CAN_PRICE ? row("Margin", `${rs2(r.billed - ssRate(r.ln.sap))} / box`) : ""}
+    ${lastL ? `<div class="divider" style="margin:8px 0"></div>` + row("Last ordered", `${fmtDate(lastL.o.time)} · ${nf(lastL.l.qty)} ${((UNIT_LABEL[lastL.l.unit] || "Crates").toLowerCase()).replace(/s$/, +lastL.l.qty === 1 ? "" : "s")}`) : ""}
+    ${rp.cls ? `<div style="margin-top:8px">${classPill(rp.cls)}</div>` : ""}`;
+}
+let popFor = null;
+function closePop() { const p = $("#pop"); if (p) p.remove(); popFor = null; }
+function openPop(btn) {
+  const i = +btn.dataset.i; if (popFor === btn) return;
+  closePop(); popFor = btn;
+  const p = document.createElement("div"); p.id = "pop"; p.className = "pop"; p.setAttribute("role", "dialog"); p.innerHTML = lineInfoHtml(i); document.body.appendChild(p);
+  const b = btn.getBoundingClientRect(), w = Math.min(300, window.innerWidth - 24), h = p.offsetHeight;
+  p.style.width = w + "px";
+  let left = Math.min(window.innerWidth - w - 12, Math.max(12, b.left + b.width / 2 - w / 2)), top = b.bottom + 8;
+  if (top + h > window.innerHeight - 12) top = Math.max(12, b.top - h - 8);
+  p.style.left = left + "px"; p.style.top = top + "px";
+}
+ACT.lineInfo = (el, e) => { if (popFor === el) closePop(); else openPop(el); };
+document.addEventListener("mouseover", (e) => { if (!window.matchMedia("(hover: hover)").matches) return; const b = e.target.closest && e.target.closest("[data-info]"); if (b) openPop(b); });
+document.addEventListener("mouseout", (e) => { if (!window.matchMedia("(hover: hover)").matches || !popFor) return; const to = e.relatedTarget; if (to && (to.closest("[data-info]") === popFor || to.closest("#pop"))) return; if (e.target.closest && (e.target.closest("[data-info]") || e.target.closest("#pop"))) closePop(); });
+document.addEventListener("click", (e) => { if (popFor && !e.target.closest("[data-info]") && !e.target.closest("#pop")) closePop(); }, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePop(); });
+document.addEventListener("scroll", () => closePop(), true);
 function summaryHtml(C) {
   const veh = vehicleFor(C.crates);
   return `<div class="card-title">Order summary</div>
@@ -941,7 +981,7 @@ VIEWS["new-order"] = () => {
         <div><div class="group-label"><span>1 · Who is it for</span></div>
           ${d ? `<div class="card card-pad">${distCard(d)}</div>` : `<div class="stack gap-10"><div class="search">${ic("search", "sm")}<input class="input" id="dist-q" type="search" placeholder="Search distributors" value="${esc(dr.dq)}" data-in="distQ" autocomplete="off"></div><div id="dist-results">${distResults()}</div></div>`}</div>
         ${d ? `<div><div class="group-label"><span>2 · What are they ordering</span>${last && !dr.lines.length ? `<button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="repeatLast" data-id="${last.id}">${ic("repeat", "sm")} Repeat order of ${fmtDate(last.time)}</button>` : ""}</div>
-          <div class="stack gap-10"><div class="search">${ic("search", "sm")}<input class="input" id="prod-q" type="search" placeholder="Add a product. Try mango, or van cone" value="${esc(dr.q)}" data-in="prodQ" autocomplete="off"></div><div id="prod-results">${productResults()}</div>
+          <div class="stack gap-10"><div class="prod-search"><div class="search">${ic("search", "sm")}<input class="input" id="prod-q" type="search" placeholder="Add a product. Try mango, or van cone" value="${esc(dr.q)}" data-in="prodQ" autocomplete="off" enterkeyhint="done"></div><div id="prod-results" class="prod-results">${productResults()}</div></div>
           <div class="group" id="order-lines">${linesHtml(C)}</div></div></div>` : ""}
       </div>
       <div class="sticky"><div class="card card-pad" id="order-summary">${summaryHtml(C)}</div></div>
@@ -950,7 +990,13 @@ VIEWS["new-order"] = () => {
 function refreshOrderCalc() { const C = calcDraft(); C.rows.forEach((r, i) => part("calc-" + i, lineCalcHtml(r, i))); part("order-summary", summaryHtml(C)); }
 function refreshOrderLines() { const C = calcDraft(); part("order-lines", linesHtml(C)); part("order-summary", summaryHtml(C)); }
 IN.distQ = (el) => { S.draft.dq = el.value; part("dist-results", distResults()); };
-IN.prodQ = (el) => { S.draft.q = el.value; part("prod-results", productResults()); };
+IN.prodQ = (el) => { S.draft.q = el.value; S.draft.sel = 0; part("prod-results", productResults()); };
+document.addEventListener("keydown", (e) => {
+  if (!e.target || e.target.id !== "prod-q") return;
+  const items = $$("#prod-results .res"); if (!items.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); S.draft.sel = Math.max(0, Math.min(items.length - 1, (S.draft.sel || 0) + (e.key === "ArrowDown" ? 1 : -1))); items.forEach((x, i) => x.setAttribute("aria-selected", i === S.draft.sel)); items[S.draft.sel].scrollIntoView({ block: "nearest" }); }
+  else if (e.key === "Enter") { e.preventDefault(); const it = items[S.draft.sel || 0]; if (it) ACT.addLine(it); }
+});
 IN.qty = (el) => { S.draft.lines[+el.dataset.i].qty = el.value === "" ? "" : Math.max(0, +el.value); refreshOrderCalc(); };
 IN.unit = (el) => { S.draft.lines[+el.dataset.i].unit = el.value; refreshOrderLines(); };
 IN.manualPrice = (el) => { S.draft.lines[+el.dataset.i].manual = +el.value || 0; const C = calcDraft(); part("order-summary", summaryHtml(C)); const r = C.rows[+el.dataset.i], cell = $("#calc-" + el.dataset.i + " .line-val .row-value"); if (cell) cell.textContent = r.value != null ? rs2(r.value) : "–"; };
@@ -960,8 +1006,11 @@ ACT.addLine = (el) => {
   const sap = el.dataset.sap, c = catBySap[sap], d = distByKey[key(S.draft.dist)] || {};
   const ex = S.draft.lines.find((l) => l.sap === sap);
   if (ex) ex.qty = (+ex.qty || 0) + 1; else S.draft.lines.push({ sap, name: c.name, qty: 1, unit: d.uom || "Crate", manual: 0 });
-  S.draft.q = ""; const inp = $("#prod-q"); if (inp) inp.value = ""; part("prod-results", ""); refreshOrderLines();
-  const i = ex ? S.draft.lines.indexOf(ex) : S.draft.lines.length - 1, q = $("#qty-" + i); if (q && window.matchMedia("(min-width: 961px)").matches) { q.focus(); q.select(); }
+  const i = ex ? S.draft.lines.indexOf(ex) : S.draft.lines.length - 1;
+  S.draft.q = ""; S.draft.sel = 0; S.draft.flash = i; const inp = $("#prod-q"); if (inp) inp.value = ""; part("prod-results", ""); refreshOrderLines(); S.draft.flash = null;
+  const ln = $("#line-" + i); if (ln) ln.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  if (ex) toast(`${shortName(c.name)} was already on the order. Now ${ex.qty} ${(UNIT_LABEL[ex.unit] || "crates").toLowerCase().replace(/s$/, ex.qty === 1 ? "" : "s")}`, "plus");
+  if (inp) inp.focus({ preventScroll: true }); /* the cursor stays in the search for the next product */
 };
 ACT.step = (el) => { const l = S.draft.lines[+el.dataset.i]; l.qty = Math.max(0, (+l.qty || 0) + +el.dataset.d); const q = $("#qty-" + el.dataset.i); if (q) q.value = l.qty; refreshOrderCalc(); };
 ACT.rmLine = (el) => { S.draft.lines.splice(+el.dataset.i, 1); refreshOrderLines(); };
