@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/staff-login/app.css?v=b4015591d8">
+<link rel="stylesheet" href="/staff-login/app.css?v=52e663cf73">
 <style>
 /* Sign-in screen. Everything behind it (the tool and its data) only arrives after sign-in. */
 .app[hidden], .tabbar[hidden] { display: none !important; }
@@ -201,7 +201,7 @@
     };
     /* the screens' code comes from this site (it holds no business data); the data came from the database above */
     await new Promise(function (ok, bad) {
-      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=b4015591d8";
+      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=52e663cf73";
       s.onload = function () { $("gate").remove(); $("app").hidden = false; $("tabbar").hidden = false; ok(); };
       s.onerror = function () { bad(new Error("Could not load the tool. Check your internet connection and try again.")); };
       document.body.appendChild(s);

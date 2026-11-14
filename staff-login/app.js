@@ -1017,10 +1017,22 @@ ACT.addLine = (el) => {
 ACT.step = (el) => { const l = S.draft.lines[+el.dataset.i]; l.qty = Math.max(0, (+l.qty || 0) + +el.dataset.d); const q = $("#qty-" + el.dataset.i); if (q) q.value = l.qty; refreshOrderCalc(); };
 ACT.rmLine = (el) => { S.draft.lines.splice(+el.dataset.i, 1); refreshOrderLines(); };
 ACT.clearDraft = () => { const was = S.draft.editId; S.draft = newDraft(); if (was) go("orders"); else render(); };
-ACT.repeatLast = (el) => { const d = distByKey[key(S.draft.dist)] || {}; S.draft.lines = (linesByOrder[el.dataset.id] || []).map((l) => ({ sap: l.sap, name: l.product, qty: l.qty, unit: l.unit || d.uom || "Crate", manual: 0 })); refreshOrderLines(); toast("Last order copied in. Change anything you like"); };
+/* everything the distributor asked for on an order: the supplied lines plus the products that were out of
+   stock or not stocked (those live only in the missed-sales log, so they have to be put back) */
+function requestedLines(o) {
+  const d = distByKey[key(o.dist)] || {}, out = [], seen = new Set();
+  (linesByOrder[o.id] || []).forEach((l) => { out.push({ sap: l.sap, name: l.product, qty: l.qty, unit: l.unit || d.uom || "Crate", manual: /manual/i.test(l.src || "") ? l.billed : 0 }); seen.add(l.sap); });
+  D.oos.filter((x) => x.id === o.id && x.sap && !seen.has(x.sap)).forEach((x) => {
+    const m = /requested\s+([\d.]+)\s+(Crate|EA \(Box\)|Pieces)/i.exec(x.reason || "");
+    const qty = x.askQty != null ? x.askQty : m ? +m[1] : typeof x.req === "number" ? x.req : 1, unit = x.askUnit || (m ? m[2] : "Crate");
+    out.push({ sap: x.sap, name: x.product, qty, unit, manual: 0 }); seen.add(x.sap);
+  });
+  return out;
+}
+ACT.repeatLast = (el) => { const o = orderById(el.dataset.id); S.draft.lines = o ? requestedLines(o) : []; refreshOrderLines(); toast("Last order copied in, including anything that was out of stock. Change anything you like"); };
 ACT.editOrder = (el) => {
   const o = orderById(el.dataset.id), lines = linesByOrder[o.id] || [];
-  S.draft = { dist: o.dist, editId: o.id, orig: lines.map((l) => ({ ...l })), q: "", dq: "", lines: lines.map((l) => ({ sap: l.sap, name: l.product, qty: l.qty, unit: l.unit || "Crate", manual: /manual/i.test(l.src || "") ? l.billed : 0 })) };
+  S.draft = { dist: o.dist, editId: o.id, orig: lines.map((l) => ({ ...l })), q: "", dq: "", lines: requestedLines(o) };
   closeSheet(); go("new-order");
 };
 ACT.saveOrder = () => {
@@ -1036,7 +1048,7 @@ ACT.saveOrder = () => {
       r.st.ea -= r.ea; r.st.crates = r.st.ea / r.upc; r.st.pcs = r.st.ea * r.ppe; r.st.move = `${o.id} (${C.d.name}): -${nf(r.supply, 2)} crates`;
       if (r.tod > 0) D.tod.lines.push({ time: iso(now), id: o.id, month: "", dist: C.d.name, product: r.c.name, sap: r.ln.sap, crates: r.supply, ea: r.ea, normal: r.normal, special: r.special, perEA: r.todEA, amount: r.tod, status: "Expected", received: null });
     }
-    if (r.status !== "ok") D.oos.push({ time: iso(now), id: o.id, dist: C.d.name, product: r.c.name, sap: r.ln.sap, req: r.req == null ? "N/A" : r.req, avail: r.stocked ? r.avail : "N/A", missed: r.stocked ? r.req - r.supply : "N/A", value: r.stocked && r.billed != null ? (r.req - r.supply) * r.upc * r.billed : "N/A", reason: r.status === "notstocked" ? `Not in current range - requested ${r.qty} ${r.ln.unit}` : r.status === "out" ? "Fully out of stock" : `Partial - ${nf(r.req - r.supply, 2)} of ${r.req} crates short` });
+    if (r.status !== "ok") D.oos.push({ time: iso(now), id: o.id, dist: C.d.name, product: r.c.name, sap: r.ln.sap, askQty: r.qty, askUnit: r.ln.unit, req: r.req == null ? "N/A" : r.req, avail: r.stocked ? r.avail : "N/A", missed: r.stocked ? r.req - r.supply : "N/A", value: r.stocked && r.billed != null ? (r.req - r.supply) * r.upc * r.billed : "N/A", reason: r.status === "notstocked" ? `Not in current range - requested ${r.qty} ${r.ln.unit}` : r.status === "out" ? "Fully out of stock" : `Partial - ${nf(r.req - r.supply, 2)} of ${r.req} crates short` });
   });
   linesByOrder[o.id] = lines;
   Object.assign(o, { lines: lines.length, crates: C.crates, value: C.net, valueGst: C.net + C.gst, tod: C.tod });
