@@ -1162,7 +1162,7 @@ async function downloadXlsx(el, aoa, cols, file, sheet, merges) {
   if (el) el.disabled = false; return true;
 }
 const stampOf = (d) => `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)}-${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-function pickAoa(P) {
+function pickAoa(P, opt) {
   const stampTxt = stampOf(P.made || NOW()), names = P.orders.map((o) => shortOf(o.dist));
   const aoa = [
     ["PICK LIST FOR TROPICANA LOGISTICS, WILLINGDON ISLAND  (SahiReach LLP)"],
@@ -1173,7 +1173,7 @@ function pickAoa(P) {
   ];
   P.rows.forEach((r) => aoa.push([tropCode(r.sap), r.name].concat(P.orders.map((o, ci) => (r.cells[ci] ? +r.cells[ci].toFixed(2) : null)), [+r.total.toFixed(2)])));
   aoa.push(["", "TOTAL CRATES"].concat(P.orders.map((o) => +o.crates.toFixed(2)), [+P.total.toFixed(2)]));
-  aoa.push([]); aoa.push(["Vehicle", (vehicleFor(P.total) || "").replace(/\s*\(.*\)/, "")]);
+  if (!(opt && opt.noVehicle)) { aoa.push([]); aoa.push(["Vehicle", (vehicleFor(P.total) || "").replace(/\s*\(.*\)/, "")]); }
   return { rows: aoa, cols: [14, 46].concat(names.map((n) => Math.max(9, Math.min(22, n.length + 2))), [14]), stampTxt, names };
 }
 ACT.pickExcel = async (el) => {
@@ -2052,10 +2052,10 @@ function pickEmail(P, xlsxB64) {
   D.pickSent = D.pickSent || {};
   const prev = D.pickSent[pickKey(P)], revised = !!prev && prev.hash !== pickHash(P), made = P.made || NOW();
   const html = emailShell({
-    preheader: `${P.orders.length} orders · ${nf(P.total, 2)} crates · ${(vehicleFor(P.total) || "").split(" (")[0]}`,
+    preheader: `${P.orders.length} orders · ${nf(P.total, 2)} crates`,
     heading: revised ? "Revised pick list" : "Pick list for dispatch",
     paras: ["Hi Tropicana team,", revised ? `<b>This replaces the pick list we sent on ${fmtDT(prev.at)}.</b> Please pick from this one.` : `Please pick the following for dispatch. The Excel sheet is attached.`],
-    blocks: [factsE([["Orders", nf(P.orders.length)], ["Crates", nf(P.total, 2)], ["Vehicle", escE((vehicleFor(P.total) || "–").split(" (")[0])]]),
+    blocks: [factsE([["Orders", nf(P.orders.length)], ["Crates", nf(P.total, 2)]]),
       ...P.orders.map((o, ci) => `<div style="margin:0 0 6px;font:700 14px/1.4 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink}">${escE(shortOf(o.dist))} <span style="font-weight:400;color:${EM.ink3}">· ${nf(o.crates, 2)} crates</span></div>` + tableE(["Product", "Code", "Crates"], P.rows.filter((r) => r.cells[ci]).map((r) => [escE(shortName(r.name)), escE(tropCode(r.sap) || "–"), `<b>${nf(r.cells[ci], 2)}</b>`])))],
     signoff: "Thank you,",
   });
@@ -2130,7 +2130,7 @@ async function xlsxBase64(aoa, cols, sheet) {
 }
 ACT.emailPick = async () => {
   const P = S.pickList; if (!P) return;
-  const aoa = pickAoa(P), b64 = await xlsxBase64(aoa.rows, aoa.cols, "Pick List");
+  const aoa = pickAoa(P, { noVehicle: true }), b64 = await xlsxBase64(aoa.rows, aoa.cols, "Pick List");
   mailSheet([pickEmail(P, b64)], "Email pick list to Tropicana");
 };
 ACT.emailQCPick = async () => {
