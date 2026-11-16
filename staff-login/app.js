@@ -652,6 +652,8 @@ function attention(facts) {
   if (low.length) out.push({ ic: "box", cls: "bad", title: `${low.length} product${low.length > 1 ? "s" : ""} below reorder point`, sub: low.slice(0, 2).map((r) => shortName(r.name).split("(")[0].trim()).join(", ") + (low.length > 2 ? " and more" : ""), go: "replenish" });
   const quiet = quietDistributors(facts);
   if (quiet.length) out.push({ ic: "people", cls: "warn", title: `${quiet.length} distributor${quiet.length > 1 ? "s" : ""} gone quiet`, sub: quiet.slice(0, 2).map((q) => shortOf(q.name)).join(", ") + (quiet.length > 2 ? " and more" : "") + ` · nothing dispatched for ${quiet[0].days}+ days`, go: "setup" });
+  const slow = slowSum(slowRows());
+  if (slow.n) out.push({ ic: "box", cls: "warn", act: "slowList", title: `${slow.n} slow-moving product${slow.n > 1 ? "s" : ""} to push`, sub: `${nf(slow.crates, 0)} crates above normal sales · ₹${lakh(slow.value)} L tied up` });
   const bis = typeof backInStock === "function" ? backInStock() : [];
   if (bis.length) out.push({ ic: "box", cls: "good", act: "backInStock", title: `${bis.length} distributor${bis.length > 1 ? "s" : ""} waiting for stock that is back`, sub: [...new Set(bis.flatMap((g) => g.items.map((i) => shortName(i.name).split("(")[0].trim())))].slice(0, 2).join(", ") + " · tap to let them know" });
   const todDue = D.tod.lines.filter((l) => l.status !== "Received").reduce((a, l) => a + (l.amount || 0), 0) || D.tod.total;
@@ -999,7 +1001,7 @@ VIEWS["new-order"] = () => {
         <div><div class="group-label"><span>1 · Who is it for</span></div>
           ${d ? `<div class="card card-pad">${distCard(d)}</div>` : `<div class="stack gap-10"><div class="search">${ic("search", "sm")}<input class="input" id="dist-q" type="search" placeholder="Search distributors" value="${esc(dr.dq)}" data-in="distQ" autocomplete="off"></div><div id="dist-results">${distResults()}</div></div>`}</div>
         ${d ? `<div><div class="group-label"><span>2 · What are they ordering</span>${last && !dr.lines.length ? `<button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="repeatLast" data-id="${last.id}">${ic("repeat", "sm")} Repeat order of ${fmtDate(last.time)}</button>` : ""}</div>
-          <div class="stack gap-10"><div class="prod-search"><div class="search">${ic("search", "sm")}<input class="input" id="prod-q" type="search" placeholder="Add a product. Try mango, or van cone" value="${esc(dr.q)}" data-in="prodQ" autocomplete="off" enterkeyhint="done"></div><div id="prod-results" class="prod-results">${productResults()}</div></div>
+          <div class="stack gap-10"><div class="prod-search"><div class="search">${ic("search", "sm")}<input class="input" id="prod-q" type="search" placeholder="Add a product. Try mango, or van cone" value="${esc(dr.q)}" data-in="prodQ" autocomplete="off" enterkeyhint="done"></div><div id="prod-results" class="prod-results">${productResults()}</div></div>${dr.editId ? "" : slowOffer(d.name)}
           <div class="group" id="order-lines">${linesHtml(C)}</div></div></div>` : ""}
       </div>
       <div class="sticky"><div class="card card-pad" id="order-summary">${summaryHtml(C)}</div></div>
@@ -1416,11 +1418,12 @@ VIEWS.stock = () => {
   const body = tab === "own" ? `<div class="hstack gap-12 wrap"><div class="search">${ic("search", "sm")}<input class="input" id="stock-q" type="search" placeholder="Search by name, SAP or Tropicana code" value="${esc(S.stockQ)}" data-in="stockQ" autocomplete="off"></div></div><div class="chips">${cats.map((c) => `<button class="chip" data-act="stockCat" data-cat="${esc(c)}" aria-pressed="${S.stockCat === c}">${esc(c)}</button>`).join("")}</div><div id="stock-grid">${ownStockGrid()}</div>`
     : tab === "qc" ? `<div class="banner info">${ic("info", "sm")}<span>One stock shared by Swiggy and Zepto, in crates. Deliveries take it down, QC purchases add to it.</span></div>${qcStockGrid()}`
     : tab === "damaged" ? `<div class="group"><div class="empty"><div class="big">No damaged stock</div>Returns marked Damaged wait here until you send them back to Hangyo or claim them.</div></div>`
+    : tab === "slow" ? slowHtml()
     : tab === "purchases" ? purchasesHtml() : missedHtml();
   return `<div class="page">
     <div class="page-head"><div><h1 class="title">Stock</h1><div class="subtitle">What is in Tropicana right now, what came in, and what you ran out of.</div></div><div class="head-actions"><button class="btn btn-primary" data-act="receiveSheet">${ic("plus", "sm")} Receive stock</button></div></div>
-    <div class="tiles"><div class="tile"><div class="tile-label">Own stock</div><div class="tile-value">${nf(crates, 0)}<small>crates</small></div><div class="tile-sub">${inStock} of ${own.length} products in stock</div></div><div class="tile"><div class="tile-label">Own stock at cost</div><div class="tile-value">₹${lakh(cost)}<small>L</small></div><div class="tile-sub">At the super stockist rate</div></div><div class="tile"><div class="tile-label">Quick commerce stock</div><div class="tile-value">${nf(qcCr, 0)}<small>crates</small></div><div class="tile-sub">Shared by Swiggy and Zepto</div></div><button class="tile" data-act="stockLow"><div class="tile-label"><span>Below reorder point</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--bad)">${low}</div><div class="tile-sub">Hero and Core products to reorder</div></button></div>
-    ${seg("stockTab", tab, [["own", "Own stock"], ["qc", "Quick commerce"], ["damaged", "Damaged"], ["purchases", "Purchases"], ["missed", "Missed sales"]])}
+    <div class="tiles"><div class="tile"><div class="tile-label">Own stock</div><div class="tile-value">${nf(crates, 0)}<small>crates</small></div><div class="tile-sub">${inStock} of ${own.length} products in stock</div></div><div class="tile"><div class="tile-label">Own stock at cost</div><div class="tile-value">₹${lakh(cost)}<small>L</small></div><div class="tile-sub">At the super stockist rate</div></div><div class="tile"><div class="tile-label">Quick commerce stock</div><div class="tile-value">${nf(qcCr, 0)}<small>crates</small></div><div class="tile-sub">Shared by Swiggy and Zepto</div></div><button class="tile" data-act="stockLow"><div class="tile-label"><span>Below reorder point</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--bad)">${low}</div><div class="tile-sub">Hero and Core products to reorder</div></button>${(() => { const T = slowSum(slowRows()); return `<button class="tile tile-wide-sm" data-act="slowList"><div class="tile-label"><span>Slow moving</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--warn)">${T.n}</div><div class="tile-sub">₹${lakh(T.value)} L tied up · ${nf(T.crates, 0)} crates to push</div></button>`; })()}</div>
+    ${seg("stockTab", tab, [["own", "Own stock"], ["slow", "Slow moving"], ["qc", "Quick commerce"], ["damaged", "Damaged"], ["purchases", "Purchases"], ["missed", "Missed sales"]])}
     ${body}</div>`;
 };
 IN.stockQ = (el) => { S.stockQ = el.value; part("stock-grid", ownStockGrid()); };
@@ -1434,6 +1437,7 @@ ACT.productSheet = (el) => {
       <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">In stock</div><div class="v num" ${cr <= 0 ? 'style="color:var(--bad)"' : ""}>${nf(cr, 2)} crates</div></div><div><div class="k">Boxes</div><div class="v num">${nf(s.ea)}</div></div><div><div class="k">Pieces</div><div class="v num">${nf(s.ea * (s.ppe || 1))}</div></div><div><div class="k">Pack</div><div class="v">${s.upc} boxes / crate · ${s.ppe} pcs / box</div></div></div></div>
     <div><div class="group-label"><span>Price per box</span></div><div class="card card-pad"><div class="kv"><div><div class="k">MRP</div><div class="v num">${rs2(s.mrp)}</div></div><div><div class="k">Your cost (SS rate)</div><div class="v num">${rs2(s.cost)}</div></div><div><div class="k">Selling price</div><div class="v num">${rs2(s.price)}</div></div><div><div class="k">Margin</div><div class="v num">${rs2(s.margin)}${s.price ? ` <span class="muted" style="font-weight:500">(${pct(s.margin / s.price, 1)})</span>` : ""}</div></div></div></div></div>
     ${r.sap ? `<div><div class="group-label"><span>Replenishment</span></div><div class="card card-pad"><div class="kv"><div><div class="k">Sells per day</div><div class="v num">${nf(r.perDay, 2)} crates</div></div><div><div class="k">Days of stock</div><div class="v num">${r.perDay > 0 ? (cr / r.perDay).toFixed(1) : "–"}</div></div><div><div class="k">Reorder point</div><div class="v num">${nf(r.rop, 1)} crates</div></div><div><div class="k">Target stock</div><div class="v num">${nf(r.target, 1)} crates</div></div><div><div class="k">On order</div><div class="v num">${nf(r.onOrder, 1)} crates</div></div><div><div class="k">Missed, 28 days</div><div class="v num">${nf(r.missed, 1)} crates</div></div></div></div></div>` : ""}
+    ${(() => { const w = slowRows().find((x) => x.sap === sap); return w ? `<button class="banner warn" style="text-align:left;width:100%" data-act="slowSheet" data-sap="${esc(sap)}">${ic("info", "sm")}<span><b>Slow moving.</b> ${w.still ? "No sales in the last 4 weeks." : "Stock lasts " + coverTxt(w) + " at the current pace."} Push about ${nf(w.push, 1)} crates. Tap to see who bought it before.</span></button>` : ""; })()}
     ${s.move ? `<div class="banner info">${ic("clock", "sm")}<span><b>Last movement.</b> ${esc(s.move)}</span></div>` : ""}
     ${recent.length ? `<div><div class="group-label"><span>Latest orders with it</span></div><div class="group">${recent.map((l) => { const o = orderById(l.id) || {}; return `<div class="row"><span class="grow"><div class="row-title clip">${esc(o.dist || "")}</div><div class="row-sub">${fmtDate(o.time)}</div></span><span class="row-end"><span class="row-value">${nf(l.crates, 2)} crates</span></span></div>`; }).join("")}</div></div>` : ""}`, `<button class="btn btn-secondary" data-act="productEdit" data-sap="${esc(sap)}">${ic("pencil", "sm")} Edit product and prices</button>`);
 };
@@ -1674,6 +1678,80 @@ ACT.poSheet = (el) => {
   openSheet(esc(g.po), `<div class="card card-pad"><div class="kv"><div><div class="k">Placed</div><div class="v">${fmtDT(g.placed)}</div></div><div><div class="k">Stock pool</div><div class="v">${esc(g.pool)}</div></div><div><div class="k">Crates</div><div class="v num">${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))}</div></div><div><div class="k">Value at SS rate</div><div class="v num">${rs(lines.reduce((a, l) => a + (l.value || 0), 0))}</div></div></div></div>
     <div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates)} crates · ${nf(l.boxes)} boxes${l.received ? " · " + nf(l.received) + " boxes received" : ""}${l.notes ? " · " + esc(l.notes) : ""}</div></span><span class="row-end">${statusPill(l.status)}</span></div>`).join("")}</div>`);
 };
+
+/* ===== SLOW-MOVING STOCK (own stock to push) ===== */
+const SLOW_STEPS = [30, 45, 60, 90];
+const slowCfg = () => (D.slow = D.slow || { days: 45 });
+/* Every own-stock product that is sitting: no sales in 4 weeks, or more stock than sells in the chosen number of days. */
+function slowRows() {
+  const days = +slowCfg().days || 45, today = ymd(NOW()), d28 = ymd(new Date(NOW() - 27 * 864e5)), d90 = ymd(new Date(NOW() - 89 * 864e5));
+  const facts = salesFacts().filter((f) => f.ch === "gt" && f.sap && f.crates > 0 && (f.kind === "order" || f.kind === "vyapar") && f.date <= today);
+  const by = {};
+  facts.forEach((f) => {
+    const a = (by[f.sap] = by[f.sap] || { s28: 0, last: "", buyers: {} });
+    if (f.date >= d28) a.s28 += f.crates;
+    if (f.date > a.last) a.last = f.date;
+    if (f.date >= d90 && f.dist) { const b = (a.buyers[f.dist] = a.buyers[f.dist] || { name: f.dist, crates: 0, last: "" }); b.crates += f.crates; if (f.date > b.last) b.last = f.date; }
+  });
+  const recv = {}; D.purchases.forEach((p) => { if (p.pool === "Own Stock" && p.sap && (p.ea || 0) > 0) { const d = (p.invDate || p.time || "").slice(0, 10); if (d > (recv[p.sap] || "")) recv[p.sap] = d; } });
+  const out = [];
+  D.stock.forEach((s) => {
+    const cr = cratesOf(s); if (!(cr > 0)) return;
+    const a = by[s.sap] || { s28: 0, last: "", buyers: {} }, rate = a.s28 / 28, cover = rate > 0 ? cr / rate : null;
+    const still = !(a.s28 > 0);
+    if (!still && cover <= days) return;
+    const keep = rate * days, extra = Math.max(0, cr - keep), ea = s.ea || 0, cost = s.cost || 0;
+    out.push({
+      sap: s.sap, name: s.name, trop: s.trop, cat: s.cat, upc: s.upc, crates: cr, ea, value: ea * cost, s28: a.s28, rate, cover, still,
+      last: a.last || null, since: a.last ? daysBetween(a.last, today) : null, recv: recv[s.sap] || null,
+      push: still ? cr : extra, pushValue: (still ? ea : Math.round(extra * (s.upc || 0))) * cost,
+      buyers: Object.values(a.buyers).sort((x, y) => y.crates - x.crates),
+      cls: (replBySap[s.sap] || {}).cls, onTruck: (replBySap[s.sap] || {}).final || 0,
+    });
+  });
+  return out.sort((x, y) => (y.still - x.still) || y.pushValue - x.pushValue);
+}
+const slowSum = (rows) => ({ n: rows.length, crates: rows.reduce((a, r) => a + r.push, 0), value: rows.reduce((a, r) => a + r.value, 0), pushValue: rows.reduce((a, r) => a + r.pushValue, 0), still: rows.filter((r) => r.still).length });
+const coverTxt = (r) => (r.still ? "No sales" : r.cover >= 365 ? "1 year+" : nf(r.cover, 0) + " days");
+const lastTxt = (r) => (r.last ? (r.since === 0 ? "today" : r.since === 1 ? "yesterday" : r.since + " days ago") : "not since 1 Sep");
+function slowHtml() {
+  const rows = slowRows(), T = slowSum(rows), days = +slowCfg().days || 45;
+  const head = `<div class="banner info">${ic("info", "sm")}<span>Own stock that is sitting: products with <b>no sales in the last 4 weeks</b>, or more crates than you sell in <b>${days} days</b> at the last 4 weeks' pace. "To push" is the stock above ${days} days of sales. Tap a product to see who bought it before.</span></div>
+  <div class="hstack between wrap gap-12"><div class="hstack gap-8 wrap"><span class="row-sub">Slow means more than</span><div class="chips" style="margin:0">${SLOW_STEPS.map((d) => `<button class="chip" data-act="slowDays" data-d="${d}" aria-pressed="${days === d}">${d} days</button>`).join("")}</div></div>${rows.length ? `<button class="btn btn-sm btn-secondary" data-act="slowExcel">${ic("doc", "sm")} Download Excel</button>` : ""}</div>`;
+  if (!rows.length) return head + `<div class="group"><div class="empty"><div class="big">Nothing is sitting</div>Every product in stock sells through within ${days} days.</div></div>`;
+  const tiles = `<div class="tiles"><div class="tile"><div class="tile-label">Slow-moving products</div><div class="tile-value">${T.n}</div><div class="tile-sub">${T.still} with no sales in 4 weeks</div></div><div class="tile"><div class="tile-label">Crates to push</div><div class="tile-value">${nf(T.crates, 0)}<small>crates</small></div><div class="tile-sub">Above ${days} days of sales</div></div><div class="tile"><div class="tile-label">Money tied up</div><div class="tile-value">₹${lakh(T.value)}<small>L</small></div><div class="tile-sub">All their stock, at the SS rate</div></div><div class="tile"><div class="tile-label">Of which to push</div><div class="tile-value">₹${lakh(T.pushValue)}<small>L</small></div><div class="tile-sub">The extra stock, at the SS rate</div></div></div>`;
+  const grid = `<div class="dg" style="--cols:minmax(0,2fr) 80px 90px 100px 110px 90px 110px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r">In stock</span><span class="r c-hide">Sold, 4 wks</span><span class="r c-hide">Lasts</span><span class="c-hide">Last sold</span><span class="r">To push</span><span class="r c-hide">Tied up</span></div>
+  ${rows.map((r) => `<button class="dg-row" data-act="slowSheet" data-sap="${r.sap}"><span><div class="strong clip">${esc(shortName(r.name))}</div><div class="row-sub clip">${r.buyers.length ? "Bought by " + esc(r.buyers.slice(0, 2).map((b) => shortOf(b.name)).join(", ")) + (r.buyers.length > 2 ? ` +${r.buyers.length - 2}` : "") : "No one has bought it in 90 days"}${r.onTruck > 0 ? ` · <span style="color:var(--warn);font-weight:600">${nf(r.onTruck)} more on the next truck</span>` : ""}</div></span><span class="r num">${nf(r.crates, 1)}</span><span class="r c-hide num">${r.s28 ? nf(r.s28, 1) : `<span class="dim">0</span>`}</span><span class="r c-hide">${r.still ? `<span class="pill bad">No sales</span>` : `<span class="num" style="color:${r.cover > days * 2 ? "var(--bad)" : "var(--warn)"};font-weight:600">${coverTxt(r)}</span>`}</span><span class="c-hide row-sub">${lastTxt(r)}</span><span class="r strong num">${nf(r.push, 1)}</span><span class="r c-hide num">${rs(r.value)}</span></button>`).join("")}</div>`;
+  return head + tiles + grid;
+}
+ACT.slowDays = (el) => { slowCfg().days = +el.dataset.d; render(); };
+ACT.slowList = () => { S.stockTab = "slow"; go("stock"); };
+ACT.slowSheet = (el) => {
+  const r = slowRows().find((x) => x.sap === el.dataset.sap); if (!r) return ACT.productSheet(el);
+  const days = +slowCfg().days || 45;
+  openSheet(esc(shortName(r.name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(r.name)}</div><div class="row-sub">${esc(r.cat || "")} · ${esc(r.trop || "No Tropicana code")}</div>
+      <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">In stock</div><div class="v num">${nf(r.crates, 1)} crates · ${nf(r.ea)} boxes</div></div><div><div class="k">Sold, last 4 weeks</div><div class="v num">${nf(r.s28, 1)} crates</div></div><div><div class="k">Stock lasts</div><div class="v">${coverTxt(r)}</div></div><div><div class="k">Last sold</div><div class="v">${r.last ? fmtDate(r.last) + " · " + lastTxt(r) : "Not since 1 Sep"}</div></div><div><div class="k">Last received</div><div class="v">${r.recv ? fmtDate(r.recv) : "–"}</div></div><div><div class="k">Tied up (SS rate)</div><div class="v num">${rs(r.value)}</div></div></div></div>
+    <div class="banner warn">${ic("info", "sm")}<span><b>Push about ${nf(r.push, 1)} crates</b> (${rs(r.pushValue)}). ${r.still ? "Nothing has sold in 4 weeks, so all of it is extra." : `That is the stock above ${days} days of sales at the current pace.`}${r.onTruck > 0 ? ` The truck plan still has ${nf(r.onTruck)} more crates of it. Set its order rule to "Don't order" in Replenishment if you want to stop.` : ""}</span></div>
+    <div><div class="group-label"><span>Who to offer it to</span><span>Last 90 days</span></div><div class="group">${r.buyers.length ? r.buyers.slice(0, 8).map((b) => { const d = distByKey[key(b.name)] || {}; return `<div class="row"><span class="avatar soft">${esc(initials(b.name))}</span><span class="grow"><div class="row-title clip">${esc(b.name)}</div><div class="row-sub">${esc(d.district || "")}${d.phone ? " · " + esc(d.phone) : ""} · last bought ${fmtDate(b.last)}</div></span><span class="row-end"><span class="row-value">${nf(b.crates, 1)} crate${b.crates === 1 ? "" : "s"}</span></span></div>`; }).join("") : `<div class="empty">No distributor bought it in the last 90 days. Try your biggest buyers in the same range.</div>`}</div></div>`,
+    `<button class="btn btn-secondary" data-act="productSheet" data-sap="${esc(r.sap)}">${ic("box", "sm")} Product details</button>`);
+};
+ACT.slowExcel = async (el) => {
+  const rows = slowRows(), days = +slowCfg().days || 45, now = NOW(), stamp = `${pad2(now.getDate())}-${pad2(now.getMonth() + 1)}-${now.getFullYear()}`;
+  const aoa = [[`SLOW-MOVING STOCK TO PUSH  (SahiReach LLP) · ${stamp}`], [`No sales in the last 4 weeks, or more than ${days} days of stock at the last 4 weeks' pace`], [],
+    ["Tropicana Code", "SKU", "Category", "Crates in stock", "Boxes", "Sold last 4 weeks (crates)", "Stock lasts (days)", "Last sold", "Crates to push", "Value tied up (SS rate)", "Value to push (SS rate)", "Bought in last 90 days by"]];
+  rows.forEach((r) => aoa.push([r.trop || "", r.name, r.cat || "", +r.crates.toFixed(2), r.ea, +r.s28.toFixed(2), r.still ? "No sales" : Math.round(r.cover), r.last ? fmtDate(r.last) : "Not since 1 Sep", +r.push.toFixed(2), Math.round(r.value), Math.round(r.pushValue), r.buyers.map((b) => `${shortOf(b.name)} (${nf(b.crates, 1)})`).join(", ")]));
+  const T = slowSum(rows); aoa.push(["", "TOTAL", "", +rows.reduce((a, r) => a + r.crates, 0).toFixed(2), "", "", "", "", +T.crates.toFixed(2), Math.round(T.value), Math.round(T.pushValue), ""]);
+  if (await downloadXlsx(el, aoa, [14, 46, 16, 10, 8, 12, 12, 13, 10, 14, 14, 60], `SahiReach slow-moving stock ${stamp}.xlsx`, "Slow moving", [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } }])) {
+    logActivity("Slow-moving list downloaded", `${rows.length} products`, "Excel"); toast("Slow-moving list downloaded", "doc");
+  }
+};
+/* order entry: slow movers worth offering to this distributor */
+function slowOffer(dist) {
+  if (!dist) return "";
+  const rows = slowRows(), k = key(dist), theirs = rows.filter((r) => r.buyers.some((b) => key(b.name) === k)), list = (theirs.length ? theirs : rows).slice(0, 5);
+  if (!list.length) return "";
+  return `<div class="offer"><span class="offer-k">${ic("bolt", "sm")} ${theirs.length ? "Offer them, they bought it before:" : "Slow stock to offer:"}</span>${list.map((r) => `<button class="chip" data-act="addLine" data-sap="${r.sap}" title="${esc(r.name)} · ${nf(r.crates, 1)} crates in stock, lasts ${coverTxt(r)}">${esc(shortName(r.name).split("(")[0].trim())} <span style="opacity:.6">${nf(r.crates, 0)}</span></button>`).join("")}</div>`;
+}
 
 /* ===== TOD & NOTES ===== */
 function todState() {

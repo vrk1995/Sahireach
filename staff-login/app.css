@@ -505,3 +505,7 @@ table.t th.sticky-col { background: var(--surface-2); z-index: 2; }
 .changes-grid ul { list-style: none; margin: 0; padding: 0; }
 .changes-grid li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 4px 0; border-top: 1px solid var(--hairline); font-size: 13.5px; }
 .changes-grid li:first-child { border-top: 0; }
+.offer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.offer-k { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--warn); margin-right: 2px; }
+.offer .chip { height: 30px; font-size: 13px; }
+@media (max-width: 960px) { .tiles .tile-wide-sm:nth-child(odd):last-child { grid-column: 1 / -1; } }
