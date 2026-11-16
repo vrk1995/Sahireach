@@ -152,7 +152,8 @@ function render() {
   });
   const pb = $("#badge-dispatch"); if (pb) { const n = pendingOrders().length; pb.textContent = n; pb.hidden = !n; }
   const qb = $("#badge-quick"); if (qb) { const n = openQC().length; qb.textContent = n; qb.hidden = !n; }
-  $("#view").innerHTML = VIEWS[S.route]();
+  const strip = typeof priceStrip === "function" ? priceStrip() : "", html = VIEWS[S.route]();
+  $("#view").innerHTML = strip ? html.replace(/<div class="page[^"]*">/, (m) => m + strip) : html;
   if (typeof afterRender === "function") afterRender();
 }
 function part(id, html) { const el = document.getElementById(id); if (el) el.innerHTML = html; }
@@ -659,7 +660,7 @@ function attention(facts) {
   if (slow.n) out.push({ ic: "box", cls: "warn", act: "slowList", title: `${slow.n} slow-moving product${slow.n > 1 ? "s" : ""} to push`, sub: `${nf(slow.crates, 0)} crates above normal sales · ₹${lakh(slow.value)} L tied up` });
   const bis = typeof backInStock === "function" ? backInStock() : [];
   if (bis.length) out.push({ ic: "box", cls: "good", act: "backInStock", title: `${bis.length} distributor${bis.length > 1 ? "s" : ""} waiting for stock that is back`, sub: [...new Set(bis.flatMap((g) => g.items.map((i) => shortName(i.name).split("(")[0].trim())))].slice(0, 2).join(", ") + " · tap to let them know" });
-  { const nc = periodStats(facts, addDays(ymd(NOW()), -89), ymd(NOW())); if (nc.noCost > 0) { const ps = Object.keys(nc.noCostP); out.push({ ic: "tag", cls: "warn", act: "noCostFix", title: `${ps.length} product${ps.length > 1 ? "s" : ""} sold without a cost price`, sub: `${ps.slice(0, 2).map((x) => shortName(x).split("(")[0].trim()).join(", ")} · ${rs(nc.noCost)} of sales · add the SS rate so the margin is right` }); } }
+  { const pb = pendingBack(); if (pb.length) out.push({ ic: "box", cls: "good", act: "pendingBackSheet", title: `${pb.length} pending order${pb.length > 1 ? "s" : ""} can get products that were out of stock`, sub: pb.slice(0, 2).map((g) => shortOf(g.o.dist)).join(", ") + " · tap to refresh the order" }); }
   const runs = typeof unloggedRuns === "function" ? unloggedRuns() : [];
   if (runs.length) out.push({ ic: "truck", cls: "warn", go: "logistics", title: `${runs.length} dispatch${runs.length > 1 ? "es" : ""} without a trip logged`, sub: runs.slice(0, 2).map((r) => fmtDate(r.date) + ": " + runLabel(r)).join(" · ") + " · add km and cost" });
   const todDue = D.tod.lines.filter((l) => l.status !== "Received").reduce((a, l) => a + (l.amount || 0), 0) || D.tod.total;
@@ -741,6 +742,7 @@ VIEWS.home = () => {
     <div class="page-head"><div><div class="eyebrow">${esc(dateStr)}</div><h1 class="title">${greeting()}, ${esc(FIRST)}</h1></div>
       <div class="head-actions"><button class="btn btn-secondary desk-only" data-act="cmd">${ic("search", "sm")} Search <span class="dim" style="font-weight:500">⌘K</span></button><button class="btn btn-primary" data-act="newOrder">${ic("plus", "sm")} New order</button></div></div>
     ${dataUpdateBanner()}
+    ${priceNudgeHome()}
     <div><div class="group-label"><span>Needs attention today</span></div><div class="attn">${attention(facts).map((a) => `<button class="attn-card" data-act="${a.act || "nav"}" data-to="${a.go || ""}"><span class="attn-ic ${a.cls}">${ic(a.ic)}</span><span class="grow"><div class="attn-title">${esc(a.title)}</div><div class="attn-sub">${esc(a.sub)}</div></span>${ic("chevR", "sm dim")}</button>`).join("")}</div></div>
     <div class="sec-head"><div><div class="section-title">Sales</div><div class="section-sub">Excluding GST · distributor orders count on their dispatch date (orders not yet dispatched are left out), Swiggy and Zepto on their delivery date</div></div></div>
     ${filterBar(R)}
@@ -865,7 +867,7 @@ function ordersList() {
   if (!list.length) return `<div class="group"><div class="empty"><div class="big">${tab === "Pending" ? "Nothing waiting" : "No orders found"}</div>${tab === "Pending" ? "Every order has been dispatched. New orders show up here until the truck leaves." : "Try another name or order number."}</div></div>`;
   const groups = []; let cur = null;
   list.forEach((o) => { const k = dayKey(toDate(when(o))); if (!cur || cur.k !== k) { cur = { k, label: (byDisp ? "Dispatched " : "") + dayLabel(when(o)).replace(/^(Today|Yesterday)$/, (m) => (byDisp ? m.toLowerCase() : m)), items: [] }; groups.push(cur); } cur.items.push(o); });
-  return groups.map((g) => `<div><div class="group-label"><span>${esc(g.label)}</span><span class="num">${g.items.length} order${g.items.length > 1 ? "s" : ""} · ${rs(g.items.reduce((a, o) => a + (o.status === "Cancelled" ? 0 : o.value), 0))}</span></div><div class="group">${g.items.map((o) => `<button class="row" data-act="orderSheet" data-id="${o.id}"><span class="avatar soft">${esc(initials(o.dist))}</span><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub clip">${byDisp ? "Ordered " + fmtDT(o.time) : fmtTime(o.time)}${!byDisp && o.status === "Dispatched" && o.dispatched ? " · dispatched " + fmtDT(o.dispatched) : ""} · ${o.lines} line${o.lines === 1 ? "" : "s"} · ${nf(o.crates)} crates${o.timesEdited ? " · edited" : ""}</div></span><span class="row-end"><span class="c-hide">${statusPill(o.status)}</span><span class="row-value">${rs(o.value)}</span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div></div>`).join("");
+  return groups.map((g) => `<div><div class="group-label"><span>${esc(g.label)}</span><span class="num">${g.items.length} order${g.items.length > 1 ? "s" : ""} · ${rs(g.items.reduce((a, o) => a + (o.status === "Cancelled" ? 0 : o.value), 0))}</span></div><div class="group">${g.items.map((o) => `<button class="row" data-act="orderSheet" data-id="${o.id}"><span class="avatar soft">${esc(initials(o.dist))}</span><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub clip">${backPill(o) ? backPill(o) + " " : ""}${byDisp ? "Ordered " + fmtDT(o.time) : fmtTime(o.time)}${!byDisp && o.status === "Dispatched" && o.dispatched ? " · dispatched " + fmtDT(o.dispatched) : ""} · ${o.lines} line${o.lines === 1 ? "" : "s"} · ${nf(o.crates)} crates${o.timesEdited ? " · edited" : ""}</div></span><span class="row-end"><span class="c-hide">${statusPill(o.status)}</span><span class="row-value">${rs(o.value)}</span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div></div>`).join("");
 }
 VIEWS.orders = () => {
   const count = (s) => D.orders.filter((o) => o.status === s).length;
@@ -887,6 +889,7 @@ function showOrder(id, confirmCancel) {
   if (o.status === "Cancelled") tl.push(`<div class="tl"><span class="tl-dot bad"></span><div><b>Cancelled</b><div class="row-sub">Stock went back on the shelf</div></div></div>`);
   if (o.status === "Pending") tl.push(`<div class="tl"><span class="tl-dot"></span><div class="muted">Waiting for dispatch</div></div>`);
   const body = `
+    ${backBanner(o)}
     <div class="card card-pad"><div class="hstack gap-12" style="align-items:flex-start"><span class="avatar lg soft">${esc(initials(o.dist))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(o.dist)}</div><div class="row-sub">${esc(d.district || "")}${d.pay ? " · " + esc(d.pay) : ""}${d.credit != null ? " · " + d.credit + " days credit" : ""}</div><div style="margin-top:8px" class="hstack gap-8 wrap">${statusPill(o.status)}<span class="mono dim">${esc(o.id)}</span></div></div></div>
       <div class="divider" style="margin:16px 0"></div>
       <div class="kv"><div><div class="k">Ordered</div><div class="v">${fmtDT(o.time)}</div></div><div><div class="k">Dispatched</div><div class="v">${o.status === "Dispatched" && o.dispatched ? fmtDT(o.dispatched) : o.status === "Cancelled" ? "Cancelled" : "Not yet"}</div></div><div><div class="k">Crates</div><div class="v num">${nf(o.crates)}</div></div><div><div class="k">Value excl. GST</div><div class="v num">${rs2(o.value)}</div></div><div><div class="k">GST 5%</div><div class="v num">${rs2(o.value * 0.05)}</div></div><div><div class="k">Total incl. GST</div><div class="v num">${rs2(o.value * 1.05)}</div></div>${o.tod ? `<div><div class="k">TOD to claim</div><div class="v num">${rs2(o.tod)}</div></div>` : ""}</div></div>
@@ -923,7 +926,7 @@ ACT.soPreview = (el) => {
     <table><thead><tr><th>#</th><th>Product</th><th>HSN</th><th class="r">Crates</th><th class="r">Boxes</th><th class="r">Rate / box</th><th class="r">Amount</th></tr></thead><tbody>${lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.product)}</td><td>${esc((stockBySap[l.sap] || {}).hsn || "21050000")}</td><td class="r">${nf(l.crates, 2)}</td><td class="r">${nf(l.ea)}</td><td class="r">${inr2.format(l.billed || 0)}</td><td class="r">${inr2.format(l.value || 0)}</td></tr>`).join("")}</tbody></table>
     <div class="tot"><div><span>Value excl. GST</span><span class="r">${inr2.format(o.value)}</span></div><div><span>GST @ 5%</span><span class="r">${inr2.format(o.value * 0.05)}</span></div><div class="g"><span>Total (₹)</span><span class="r">${inr2.format(o.value * 1.05)}</span></div></div>
     <div style="margin-top:26px;color:#6e6e73;font-size:11px">This is a sales order, not a tax invoice. Prices are the South Kerala distributor rate, excluding GST.</div></div></div>`;
-  openSheet("Sales order", `<div class="banner tint">${ic("info", "sm")}<span><b>Draft layout.</b> In the real build every saved order produces this as a PDF you can download or share. I will match it to your own sales order format once you send it.</span></div>${paper}`, `<button class="btn btn-secondary" data-act="orderSheet" data-id="${o.id}">${ic("chevL", "sm")} Back to order</button>`, true);
+  openSheet("Sales order", `${backBanner(o)}<div class="banner tint">${ic("info", "sm")}<span><b>Draft layout.</b> In the real build every saved order produces this as a PDF you can download or share. I will match it to your own sales order format once you send it.</span></div>${paper}`, `<button class="btn btn-secondary" data-act="orderSheet" data-id="${o.id}">${ic("chevL", "sm")} Back to order</button>`, true);
   fitPaper();
 };
 
@@ -1044,6 +1047,7 @@ VIEWS["new-order"] = () => {
   return `<div class="page">
     <div><button class="back" data-act="nav" data-to="orders">${ic("chevL", "sm")} Orders</button><h1 class="title" style="margin-top:6px">${dr.editId ? "Edit order" : "New order"}</h1></div>
     ${dr.editId ? `<div class="editing-bar">${ic("pencil", "sm")}<span>Editing <span class="mono">${esc(dr.editId)}</span>. Saving replaces the old lines and puts the stock right.</span></div>` : ""}
+    ${refreshNoteHtml()}
     ${dr.editId ? "" : importNoteHtml() || `<button class="imp-cta" data-act="importOrder"><span class="attn-ic tint">${ic("doc")}</span><span class="grow"><div class="row-title">Got the order as a message or an Excel file?</div><div class="row-sub">Paste it or upload it. The tool finds the products, you check, then save.</div></span><span class="btn btn-sm btn-secondary">Paste or upload order</span></button>`}
     <div class="split">
       <div class="stack gap-20">
@@ -1497,7 +1501,7 @@ VIEWS.dispatch = () => {
     <div class="page-head"><div><h1 class="title">Dispatch</h1><div class="subtitle">Tick the orders going on the next truck, send the pick list to Tropicana, then mark them dispatched once it has left.</div></div></div>
     ${pend.length ? `<div class="split s300">
       <div><div class="group-label"><span>${pend.length} order${pend.length > 1 ? "s" : ""} not dispatched yet</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="pickAll">${sel.length === pend.length ? "Untick all" : "Tick all"}</button></div>
-        <div class="group">${pend.map((o) => `<div class="row tap" role="checkbox" tabindex="0" aria-checked="${!!S.picked[o.id]}" data-act="togglePick" data-id="${o.id}" style="cursor:pointer"><span class="check" aria-checked="${!!S.picked[o.id]}">${ic("check")}</span><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub">${dayLabel(o.time)}, ${fmtTime(o.time)} · ${o.lines} lines${o.timesEdited ? " · edited" : ""}</div></span><span class="row-end"><span><div class="row-value">${nf(o.crates, 2)} crates</div><div class="row-sub num">${rs(o.value)}</div></span><button class="icon-btn" data-act="orderSheet" data-id="${o.id}" aria-label="Open order">${ic("chevR", "sm")}</button></span></div>`).join("")}</div></div>
+        <div class="group">${pend.map((o) => `<div class="row tap" role="checkbox" tabindex="0" aria-checked="${!!S.picked[o.id]}" data-act="togglePick" data-id="${o.id}" style="cursor:pointer"><span class="check" aria-checked="${!!S.picked[o.id]}">${ic("check")}</span><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub">${backPill(o) ? backPill(o) + " " : ""}${dayLabel(o.time)}, ${fmtTime(o.time)} · ${o.lines} lines${o.timesEdited ? " · edited" : ""}</div></span><span class="row-end"><span><div class="row-value">${nf(o.crates, 2)} crates</div><div class="row-sub num">${rs(o.value)}</div></span><button class="icon-btn" data-act="orderSheet" data-id="${o.id}" aria-label="Open order">${ic("chevR", "sm")}</button></span></div>`).join("")}</div></div>
       <div class="sticky"><div class="card card-pad"><div class="card-title">This truck</div>
         <div class="tile-value" style="margin-top:8px">${nf(crates, 2)}<small>crates</small></div><div class="row-sub">${sel.length} of ${pend.length} orders · ${rs(sel.reduce((a, o) => a + o.value, 0))}</div>
         ${veh ? `<div class="vehicle">${ic("truck")}<span><b>${esc(veh.split(" (")[0])}</b><div class="row-sub">${veh.includes("(") ? esc(veh.split("(")[1].replace(")", "")) : "Suggested vehicle"}</div></span></div>` : ""}
@@ -1979,23 +1983,25 @@ ACT.purchaseSheet = (el) => {
 };
 function receiveBody() {
   const R = S.recv, res = R.q && R.q.length > 1 ? searchProducts(R.q, 8).filter((x) => x.st) : [];
-  return `<div class="card card-pad"><div class="form-grid"><div class="field"><label class="label" for="rc-inv">Hangyo invoice number</label><input class="input" id="rc-inv" placeholder="SI0018712" value="${esc(R.inv)}" data-in="recvField" data-f="inv"></div><div class="field"><label class="label" for="rc-date">Invoice date</label><input class="input" id="rc-date" type="date" value="${iso(NOW()).slice(0, 10)}"></div><div class="field full"><label class="label">Add stock to</label>${`<div class="seg"><button data-act="recvPool" data-v="Own Stock" aria-pressed="${R.pool === "Own Stock"}">Own stock</button><button data-act="recvPool" data-v="QC Stock" aria-pressed="${R.pool === "QC Stock"}">Quick commerce stock</button></div>`}</div></div></div>
+  return `<div class="card card-pad"><div class="form-grid"><div class="field"><label class="label" for="rc-inv">Hangyo invoice number</label><input class="input" id="rc-inv" placeholder="SI0018712" value="${esc(R.inv)}" data-in="recvField" data-f="inv"></div><div class="field"><label class="label" for="rc-date">Invoice date</label><input class="input" id="rc-date" type="date" value="${esc(R.date || iso(NOW()).slice(0, 10))}" data-in="recvField" data-f="date"></div><div class="field full"><label class="label">Add stock to</label>${`<div class="seg"><button data-act="recvPool" data-v="Own Stock" aria-pressed="${R.pool === "Own Stock"}">Own stock</button><button data-act="recvPool" data-v="QC Stock" aria-pressed="${R.pool === "QC Stock"}">Quick commerce stock</button></div>`}</div></div></div>
+    <div class="recv-up"><span class="attn-ic tint">${ic("doc")}</span><span class="grow"><div class="row-title">Have the invoice as Excel?</div><div class="row-sub">Upload it and every line is added for you to check. Products are matched by SAP code first, then by name.</div></span><label class="btn btn-secondary" for="rc-file" style="cursor:pointer">${ic("doc", "sm")} Upload Excel</label><input id="rc-file" type="file" accept=".xlsx,.xls,.csv" hidden data-in="recvFile"></div>
+    <div id="rc-up-msg">${recvUpMsg()}</div>
     <div class="stack gap-10"><div class="search">${ic("search", "sm")}<input class="input" id="rc-q" type="search" placeholder="Add a product from the invoice" value="${esc(R.q)}" data-in="recvQ" autocomplete="off"></div><div id="rc-results">${res.length ? `<div class="results">${res.map((x) => `<button class="res" data-act="recvAdd" data-sap="${x.c.sap}"><span class="grow"><div class="row-title clip">${esc(x.c.name)}</div><div class="row-sub">${nf(x.crates, 1)} crates in stock now</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div>` : ""}</div>
-    <div class="group">${R.lines.length ? R.lines.map((l, i) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.name))}</div><div class="row-sub">${l.upc} boxes per crate · ${rs2(ssRate(l.sap) || (stockBySap[l.sap] || {}).cost)} per box</div></span><span class="row-end"><input class="input sm num-in" style="width:80px" type="number" min="0" value="${l.crates}" id="rc-c-${i}" data-in="recvCrates" data-i="${i}" aria-label="Crates"><span class="muted" style="font-size:13px">crates</span><button class="icon-btn" data-act="recvRm" data-i="${i}" aria-label="Remove">${ic("trash", "sm")}</button></span></div>`).join("") : `<div class="empty">Add the products on the invoice. Stock goes up when you save.</div>`}</div></div>`;
+    <div class="group">${R.lines.length ? R.lines.map((l, i) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.name))}</div><div class="row-sub">${l.raw ? `<span class="${l.conf === "check" ? "pill warn" : "dim"}" style="${l.conf === "check" ? "height:20px;font-size:11.5px" : ""}">${l.conf === "check" ? "Check: " : "From the file: "}${esc(l.raw)}</span> · ` : ""}${l.upc} boxes per crate · ${rs2(ssRate(l.sap) || (stockBySap[l.sap] || {}).cost)} per box${l.boxes != null ? ` · ${nf(l.boxes)} boxes` : ""}</div></span><span class="row-end"><input class="input sm num-in" style="width:80px" type="number" min="0" step="any" value="${l.crates}" id="rc-c-${i}" data-in="recvCrates" data-i="${i}" aria-label="Crates"><span class="muted" style="font-size:13px">crates</span><button class="icon-btn" data-act="recvRm" data-i="${i}" aria-label="Remove">${ic("trash", "sm")}</button></span></div>`).join("") : `<div class="empty">Add the products on the invoice. Stock goes up when you save.</div>`}</div></div>`;
 }
-ACT.receiveSheet = () => { S.recv = { inv: "", pool: "Own Stock", q: "", lines: [] }; openSheet("Receive stock", receiveBody(), `<button class="btn btn-primary" data-act="recvSave">Save purchase</button>`); };
+ACT.receiveSheet = () => { S.recv = { inv: "", pool: "Own Stock", q: "", lines: [], unmatched: [], file: null }; openSheet("Receive stock", receiveBody(), `<button class="btn btn-primary" data-act="recvSave">Save purchase</button>`); };
 IN.recvField = (el) => { S.recv[el.dataset.f] = el.value; };
 IN.recvQ = (el) => { S.recv.q = el.value; const res = el.value.length > 1 ? searchProducts(el.value, 8).filter((x) => x.st) : []; part("rc-results", res.length ? `<div class="results">${res.map((x) => `<button class="res" data-act="recvAdd" data-sap="${x.c.sap}"><span class="grow"><div class="row-title clip">${esc(x.c.name)}</div><div class="row-sub">${nf(x.crates, 1)} crates in stock now</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div>` : ""); };
-IN.recvCrates = (el) => { S.recv.lines[+el.dataset.i].crates = Math.max(0, +el.value || 0); };
+IN.recvCrates = (el) => { const l = S.recv.lines[+el.dataset.i]; l.crates = Math.max(0, +el.value || 0); l.boxes = null; };
 ACT.recvPool = (el) => { S.recv.pool = el.dataset.v; part("sheet-body", receiveBody()); };
 ACT.recvAdd = (el) => { const s = stockBySap[el.dataset.sap]; if (!S.recv.lines.find((l) => l.sap === s.sap)) S.recv.lines.push({ sap: s.sap, name: s.name, upc: s.upc, crates: 1 }); S.recv.q = ""; part("sheet-body", receiveBody()); };
 ACT.recvRm = (el) => { S.recv.lines.splice(+el.dataset.i, 1); part("sheet-body", receiveBody()); };
 ACT.recvSave = () => {
   const R = S.recv, lines = R.lines.filter((l) => l.crates > 0); if (!lines.length) { toast("Add at least one product", "info"); return; }
-  const now = NOW(), id = "PUR-" + stamp(now);
-  lines.forEach((l) => { const s = stockBySap[l.sap], rate = ssRate(l.sap) || s.cost || 0, ea = l.crates * l.upc; if (R.pool === "Own Stock") { s.ea += ea; s.crates = s.ea / s.upc; s.move = `${id}: +${nf(ea)} boxes`; } else if (qcBySap[l.sap]) { qcBySap[l.sap].crates += l.crates; } D.purchases.push({ time: iso(now), id, inv: R.inv, invDate: iso(now), supplier: "Hangyo", pool: R.pool, product: l.name, sap: l.sap, unit: "Crate", qty: l.crates, ea, crates: l.crates, batch: "", rate, value: ea * rate, isNew: "No" }); });
+  const now = NOW(), id = "PUR-" + stamp(now), invDate = R.date ? R.date + "T00:00" : iso(now);
+  lines.forEach((l) => { const s = stockBySap[l.sap], rate = ssRate(l.sap) || s.cost || 0, ea = l.boxes != null ? l.boxes : Math.round(l.crates * l.upc * 100) / 100; if (R.pool === "Own Stock") { s.ea += ea; s.crates = s.ea / s.upc; s.move = `${id}: +${nf(ea)} boxes`; } else if (qcBySap[l.sap]) { qcBySap[l.sap].crates += l.crates; } D.purchases.push({ time: iso(now), id, inv: R.inv, invDate, supplier: "Hangyo", pool: R.pool, product: l.name, sap: l.sap, unit: l.boxes != null ? "EA (Box)" : "Crate", qty: l.boxes != null ? l.boxes : l.crates, ea, crates: l.crates, batch: l.batch || "", rate, value: ea * rate, isNew: "No" }); });
   lines.forEach((l) => { let left = l.crates * l.upc; D.hpoLog.filter((h) => h.sap === l.sap && (R.pool === "Own Stock" ? /own/i.test(h.pool) : /QC/i.test(h.pool)) && (h.status === "Open" || h.status === "Part received")).sort((a, b) => (a.placed > b.placed ? 1 : -1)).forEach((h) => { if (left <= 0) return; const want = Math.max(0, (h.boxes || h.crates * h.upc) - (h.received || 0)), take = Math.min(want, left); h.received = (h.received || 0) + take; left -= take; h.toCome = Math.max(0, h.crates - h.received / (h.upc || 1)); h.status = h.toCome > 1e-9 ? "Part received" : "Received"; h.changed = iso(now); h.receivedOn = iso(now); h.purchases = ((h.purchases ? h.purchases + ", " : "") + id); }); });
-  logActivity("Purchase saved", id, `${lines.length} lines into ${R.pool}`); closeSheet(); S.stockTab = "purchases"; render(); toast("Stock received and added"); setTimeout(() => { if (backInStock().length) ACT.backInStock(); }, 450);
+  logActivity("Purchase saved", id, `${lines.length} lines into ${R.pool}`); closeSheet(); S.stockTab = "purchases"; render(); toast("Stock received and added"); setTimeout(() => { if (pendingBack().length) ACT.pendingBackSheet({ dataset: { next: 1 } }); else if (backInStock().length) ACT.backInStock(); }, 450);
 };
 
 /* ===== REPLENISHMENT ===== */
@@ -2335,6 +2341,94 @@ ACT.replExcel = async (el) => {
   const B = replBookSheets();
   if (await downloadBook(el, B.sheets, B.file)) { logActivity("Replenishment downloaded", `${B.poLines} PO lines`, "Excel"); toast("Replenishment downloaded as Excel", "doc"); }
 };
+
+/* ===== RECEIVE STOCK FROM AN EXCEL INVOICE =====
+   Finds the header row, the product (SAP/material code and/or name), quantity, unit, batch and rate columns,
+   matches every line (SAP code first, then the closest name) and puts it on the receive sheet to check. */
+const RCV_UNIT = (u) => { u = String(u || "").trim().toLowerCase().replace(/\.$/, ""); return /^(cs|case|cases|crt|crts|crate|crates|ctn|ctns|carton|cartons|cr)$/.test(u) ? "Crate" : /^(ea|each|box|boxes|bx|bxs|nos|no|pc|pcs|piece|pieces|unit|units|pkt|pack)$/.test(u) ? "EA (Box)" : null; };
+function recvFromRows(rows) {
+  rows = rows.map((r) => Array.from(r || [], (v) => (v == null ? "" : String(v).trim())));
+  let hr = -1;
+  for (let i = 0; i < Math.min(rows.length, 30) && hr < 0; i++) {
+    const cells = rows[i].map((c) => c.toLowerCase());
+    const hasName = cells.some((c) => /^(material\s*)?(description|desc)|product|item\s*(name|desc)|particulars|sku|material name/.test(c));
+    const hasQty = cells.some((c) => /qty|quantity|cases?|crates?|ctns?|^cs$|^ea$|boxes|billed/.test(c));
+    if (hasName && hasQty) hr = i;
+  }
+  if (hr < 0) return { error: "No header row with a product column and a quantity column was found in the first 30 rows." };
+  const H = rows[hr].map((h) => h.replace(/\s+/g, " ").trim().toLowerCase()), find = (re, not) => H.findIndex((h) => re.test(h) && !(not && not.test(h)));
+  const nameCol = find(/^(material\s*)?(description|desc)|product|item\s*(name|desc)|particulars|sku|material name/, /code|no\b|number|hsn/);
+  const sapCol = find(/sap|material(\s*(code|no|number))?$|item\s*code|product\s*code|^code$|art(icle)?\s*(no|code)/, /description|desc|hsn/);
+  const unitCol = find(/^(uom|unit|units|unit of measure|sales unit)$/);
+  const batchCol = find(/batch|lot/);
+  const rateCol = find(/rate|price/, /mrp|amount|value|total/);
+  const qtyCands = H.map((h, j) => ({ h, j })).filter((x) => x.j !== nameCol && x.j !== sapCol && x.j !== unitCol && /qty|quantity|cases?|crates?|ctns?|^cs$|^ea$|boxes|billed/.test(x.h) && !/free|rate|price|amount|value|mrp|per\s*(case|crate)|units?\s*\/|conv/.test(x.h))
+    .map((x) => ({ ...x, p: /billed|invoice|inv\b/.test(x.h) ? 3 : /case|crate|ctn|^cs$/.test(x.h) ? 2 : 1, unit: /case|crate|ctn|^cs$/.test(x.h) ? "Crate" : /\bea\b|box|pcs|nos/.test(x.h) ? "EA (Box)" : null }))
+    .sort((a, b) => b.p - a.p);
+  if (!qtyCands.length) return { error: "No quantity column was found." };
+  /* invoice number and date from the rows above the header */
+  let inv = "", date = "";
+  rows.slice(0, hr + 1).forEach((r) => r.forEach((c, j) => {
+    const m = /invoice\s*(no\.?|number|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/-]{4,})/i.exec(c); if (!inv && m && /\d/.test(m[2])) inv = m[2];
+    if (!inv && /^invoice\s*(no\.?|number|#)?\s*:?$/i.test(c) && r[j + 1] && /\d/.test(r[j + 1])) inv = r[j + 1].trim();
+    const d = /(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/.exec(c); if (!date && d && /date/i.test(c + " " + (r[j - 1] || ""))) { const y = d[3].length === 2 ? "20" + d[3] : d[3]; date = `${y}-${pad2(+d[2])}-${pad2(+d[1])}`; }
+  }));
+  const lines = [], skipped = [];
+  rows.slice(hr + 1).forEach((r) => {
+    const nm = nameCol >= 0 ? r[nameCol] || "" : "", code = sapCol >= 0 ? (r[sapCol] || "").replace(/\.0+$/, "").replace(/\s/g, "") : "";
+    if ((!nm && !code) || /^(sub\s*)?total|grand total|net amount|round/i.test(nm)) return;
+    let qty = null, unit = null;
+    for (const c of qtyCands) { const v = (r[c.j] || "").replace(/,/g, ""); const m = /^(\d+(?:\.\d+)?)\s*([a-z.]*)$/i.exec(v); if (m && +m[1] > 0) { qty = +m[1]; unit = RCV_UNIT(m[2]) || c.unit; break; } }
+    if (qty == null) return;
+    if (unitCol >= 0 && RCV_UNIT(r[unitCol])) unit = RCV_UNIT(r[unitCol]);
+    const rate = rateCol >= 0 ? +(r[rateCol] || "").replace(/,/g, "") || null : null;
+    lines.push({ name: nm, code, qty, unit, batch: batchCol >= 0 ? r[batchCol] || "" : "", rate });
+  });
+  return { lines, inv, date, unitKnown: lines.some((l) => l.unit) };
+}
+function recvMatch(x) {
+  const bySap = x.code && (stockBySap[x.code] || catBySap[x.code]) ? x.code : null;
+  if (bySap) return { sap: bySap, conf: "sure" };
+  const c = impMatch(x.name, {}), conf = impConf(c);
+  return { sap: conf === "none" ? null : c[0].sap, conf, cands: c.slice(0, 5).map((m) => m.sap) };
+}
+function recvUpMsg() {
+  const R = S.recv; if (!R || !R.file) return "";
+  const un = R.unmatched || [];
+  return `<div class="banner ${un.length ? "warn" : "good"}" style="align-items:flex-start">${ic(un.length ? "alert" : "check", "sm")}<span class="grow"><b>${esc(R.file.name)}:</b> ${R.file.added} line${R.file.added === 1 ? "" : "s"} added${R.file.check ? `, ${R.file.check} to check (marked below)` : ""}${R.file.unitGuess ? ". The file did not say crates or boxes, so quantities were read as <b>crates</b>. Change them if they were boxes" : ""}.${un.length ? ` <b>${un.length} could not be matched</b>, choose the product for each:` : " Check the crates, then save."}</span></div>
+    ${un.length ? `<div class="group">${un.map((u, i) => `<div class="row" style="flex-wrap:wrap;gap:8px"><span class="grow" style="min-width:180px"><div class="row-title clip">${esc(u.name || u.code)}</div><div class="row-sub">${u.code ? "Code " + esc(u.code) + " · " : ""}${nf(u.qty)} ${u.unit === "EA (Box)" ? "boxes" : "crates"}${u.why ? " · " + esc(u.why) : ""}</div></span><select class="select sm" style="width:auto;max-width:100%" data-in="recvPick" data-i="${i}"><option value="">Choose the product…</option>${(u.cands || []).filter((s) => stockBySap[s]).map((s) => `<option value="${esc(s)}">${esc(stockBySap[s].name)}</option>`).join("")}${D.stock.filter((s) => !(u.cands || []).includes(s.sap)).sort((a, b) => a.name.localeCompare(b.name)).map((s) => `<option value="${esc(s.sap)}">${esc(s.name)}</option>`).join("")}</select><button class="icon-btn" data-act="recvSkip" data-i="${i}" aria-label="Skip this line">${ic("trash", "sm")}</button></div>`).join("")}</div>` : ""}`;
+}
+function recvPush(sap, x, conf) {
+  const st = stockBySap[sap], boxes = x.unit === "EA (Box)" ? x.qty : null, crates = boxes != null ? Math.round((boxes / st.upc) * 100) / 100 : x.qty;
+  const ex = S.recv.lines.find((l) => l.sap === sap && (l.batch || "") === (x.batch || ""));
+  if (ex) { if (ex.boxes != null || boxes != null) ex.boxes = (ex.boxes != null ? ex.boxes : ex.crates * st.upc) + (boxes != null ? boxes : x.qty * st.upc); ex.crates = Math.round(((ex.boxes != null ? ex.boxes / st.upc : ex.crates + crates)) * 100) / 100; return; }
+  S.recv.lines.push({ sap, name: st.name, upc: st.upc, crates, boxes, batch: x.batch || "", raw: `${x.code ? x.code + " " : ""}${x.name}`.trim(), conf });
+}
+IN.recvFile = async (el) => {
+  const f = el.files && el.files[0]; if (!f) return; const R = S.recv, sig = [f.name, f.size, f.lastModified].join("|");
+  if (R.fileSig === sig) return; /* the same file can fire both input and change */
+  R.fileSig = sig; R.lines = R.lines.filter((l) => !l.raw); /* a new file replaces lines read from an earlier one */
+  try {
+    await loadScriptOnce(XLSX_SRC, () => !!window.XLSX);
+    const wb = window.XLSX.read(await f.arrayBuffer(), { type: "array" }), rows = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, blankrows: false });
+    const P = recvFromRows(rows);
+    if (P.error || !P.lines.length) { R.file = null; part("rc-up-msg", `<div class="banner bad">${ic("alert", "sm")}<span>${esc(P.error || "No lines with a quantity were found in that file.")}</span></div>`); return; }
+    if (P.inv && !R.inv) R.inv = P.inv; if (P.date) R.date = P.date;
+    let added = 0, check = 0; R.unmatched = [];
+    P.lines.forEach((x) => {
+      if (!x.unit) x.unit = "Crate";
+      const m = recvMatch(x);
+      if (!m.sap) { R.unmatched.push({ ...x, cands: m.cands || [] }); return; }
+      if (!stockBySap[m.sap]) { R.unmatched.push({ ...x, cands: m.cands || [], why: "not set up as a stocked product: add it in Setup, or choose" }); return; }
+      recvPush(m.sap, x, m.conf); added++; if (m.conf !== "sure") check++;
+    });
+    R.file = { name: f.name, added, check, unitGuess: !P.unitKnown };
+    logActivity("Invoice read", f.name, `${added} lines matched${R.unmatched.length ? ", " + R.unmatched.length + " to choose" : ""}`);
+    part("sheet-body", receiveBody());
+  } catch (e) { part("rc-up-msg", `<div class="banner bad">${ic("alert", "sm")}<span>That file could not be read. Save it as .xlsx and try again.</span></div>`); }
+};
+IN.recvPick = (el) => { const R = S.recv, u = R.unmatched[+el.dataset.i]; if (!el.value || !u) return; recvPush(el.value, u, "sure"); R.unmatched.splice(+el.dataset.i, 1); R.file.added++; D.orderAliases = D.orderAliases || {}; if (u.name) D.orderAliases[impAliasKey(u.name)] = el.value; part("sheet-body", receiveBody()); };
+ACT.recvSkip = (el) => { S.recv.unmatched.splice(+el.dataset.i, 1); part("sheet-body", receiveBody()); };
 
 /* ===== TOD & NOTES ===== */
 function todState() {
@@ -2727,6 +2821,7 @@ function backInStock() {
   const since = addDays(ymd(NOW()), -30), out = {};
   D.oos.forEach((o) => {
     if ((o.time || "").slice(0, 10) < since || o.notified) return;
+    const ord = orderById(o.id); if (ord && ord.status === "Pending") return; /* still pending: refresh the order instead */
     const st = stockBySap[o.sap]; if (!st || !st.upc || st.ea / st.upc < 1) return;
     const d = distByKey[key(o.dist)]; if (!d) return;
     const reordered = D.orders.some((x) => x.dist === d.name && x.status !== "Cancelled" && x.time > o.time && (linesByOrder[x.id] || []).some((l) => l.sap === o.sap)); if (reordered) return;
@@ -3044,7 +3139,8 @@ ACT.tripSave = () => {
   const L = logi(), T = S.trip; tripCalc(T);
   if (!T.date) { toast("Add the date", "alert"); return; }
   if (!T.sellers && !T.orders.length && !T.qc.length) { toast("Tick what went on the trip, or type the sellers", "alert"); return; }
-  const rec = { id: T.id || "TRIP-" + T.date.replace(/-/g, "") + "-" + stamp(NOW()).slice(-6), date: T.date, sellers: T.sellers || (tripAuto(T) || {}).sellers || "", type: T.type || "GT", crates: T.crates, km: T.km, odoStart: T.odoStart, odoEnd: T.odoEnd, revenue: T.revenue, cost: T.cost, rate: (transporterOf(T.transporter) || {}).mode === "km" ? transporterOf(T.transporter).rate : null, transporter: T.transporter || "", halting: T.halting, route: T.type === "QC" ? T.route || null : T.route || null, orders: T.orders.slice(), qc: T.qc.slice(), source: T.isNew ? "app" : T.source || "app", note: T.note || "" };
+  let nid = T.id; if (!nid) { const base = "TRIP-" + T.date.replace(/-/g, "") + "-" + stamp(NOW()).slice(-6); nid = base; let k = 1; while (L.trips.some((x) => x.id === nid)) nid = base + "-" + ++k; }
+  const rec = { id: nid, date: T.date, sellers: T.sellers || (tripAuto(T) || {}).sellers || "", type: T.type || "GT", crates: T.crates, km: T.km, odoStart: T.odoStart, odoEnd: T.odoEnd, revenue: T.revenue, cost: T.cost, rate: (transporterOf(T.transporter) || {}).mode === "km" ? transporterOf(T.transporter).rate : null, transporter: T.transporter || "", halting: T.halting, route: T.type === "QC" ? T.route || null : T.route || null, orders: T.orders.slice(), qc: T.qc.slice(), source: T.isNew ? "app" : T.source || "app", note: T.note || "" };
   const i = L.trips.findIndex((x) => x.id === rec.id); if (i >= 0) { rec.source = L.trips[i].source || rec.source; L.trips[i] = rec; } else L.trips.push(rec);
   logActivity(i >= 0 ? "Trip updated" : "Trip logged", fmtDate(rec.date), `${rec.sellers} · ${rec.cost != null ? rs(rec.cost) : "cost not added"}${tripPct(rec) != null ? " · " + pct(tripPct(rec), 1) : ""}`);
   S.trip = null; closeSheet(); if (S.route === "logistics") render(); else render();
@@ -3079,6 +3175,104 @@ ACT.logiExcel = async (el) => {
   const sheets = [{ name: "Data entry", aoa: data, cols: [12, 44, 6, 8, 10, 14, 12, 10, 18, 14, 8, 7, 11, 11, 24] }, { name: "Overall pivot", aoa: piv, cols: [14, 10, 22, 20, 16, 8] }, { name: "By month", aoa: mon, cols: [10, 7, 8, 12, 16, 14, 12, 12] }, { name: "By transporter", aoa: trs, cols: [20, 7, 12, 14, 9, 10, 12] }];
   L.transporters.filter((t) => t.mode === "km").forEach((t) => { const rows = logiByMonth(trips.filter((x) => key(x.transporter) === key(t.name))); if (rows.length) sheets.push({ name: t.name.slice(0, 28), aoa: [["Transporter", t.name], [], ["Month", "Trips", "Sum of KM (Both side)", `Amount at ₹${t.rate}/km`]].concat(rows.map((r) => [r.label, r.n, r.km, r.km * t.rate]), [["Grand Total", rows.reduce((a, r) => a + r.n, 0), rows.reduce((a, r) => a + r.km, 0), rows.reduce((a, r) => a + r.km, 0) * t.rate]]), cols: [14, 8, 20, 18] }); });
   if (await downloadBook(el, sheets, `SahiReach logistics ${R.label === "All time" ? "" : R.label + " "}${st}.xlsx`)) { logActivity("Logistics downloaded", R.label, `${trips.length} trips`); toast("Logistics downloaded as Excel", "doc"); }
+};
+
+/* ===== NUDGES: missing prices, and pending orders that can now get what was out of stock ===== */
+
+/* ---------- 1. products with no SS rate (cost price): profit cannot be worked out ---------- */
+let MP_CACHE = { t: 0, v: [] };
+function missingPrices(fresh) {
+  if (!fresh && Date.now() - MP_CACHE.t < 2500) return MP_CACHE.v;
+  const since = addDays(ymd(NOW()), -120), out = {};
+  const add = (sap, name, v) => { if (!sap || unitCost(sap) != null) return; const x = (out[sap] = out[sap] || { sap, name: (catBySap[sap] || stockBySap[sap] || {}).name || name || sap, sold: 0, last: null }); x.sold += v || 0; };
+  salesFacts().forEach((f) => { if (f.ch === "gt" && f.noCost && f.value > 0 && f.date >= since) add(f.sap, f.product, f.value); });
+  D.stock.forEach((s) => { if (s.ea > 0) add(s.sap, s.name, 0); });
+  pendingOrders().forEach((o) => (linesByOrder[o.id] || []).forEach((l) => add(l.sap, l.product, 0)));
+  Object.values(out).forEach((x) => {
+    const ls = D.orders.filter((o) => o.status !== "Cancelled").sort((a, b) => (a.time < b.time ? 1 : -1)).map((o) => (linesByOrder[o.id] || []).find((l) => l.sap === x.sap)).find(Boolean);
+    const vb = (D.salesBefore || []).filter((s) => s.sap === x.sap && s.ea > 0 && s.value > 0).slice(-1)[0];
+    x.last = price(x.sap) != null ? price(x.sap) : ls && ls.billed ? ls.billed : vb ? Math.round((vb.value / vb.ea) * 100) / 100 : null;
+    const st = stockBySap[x.sap]; x.crates = st && st.upc ? st.ea / st.upc : null;
+  });
+  MP_CACHE = { t: Date.now(), v: Object.values(out).sort((a, b) => b.sold - a.sold || a.name.localeCompare(b.name)) };
+  return MP_CACHE.v;
+}
+function priceRowsHtml(list) {
+  return list.map((x) => `<div class="nudge-row"><div class="grow" style="min-width:0"><div class="row-title clip">${esc(x.name)}</div><div class="row-sub">SAP ${esc(x.sap)}${x.sold ? ` · ${rs(x.sold)} sold in the last 4 months` : ""}${x.crates ? ` · ${nf(x.crates, 1)} crates in stock` : ""}</div></div>
+    ${CAN_PRICE ? `<label class="nudge-in"><span>SS rate / box</span><input class="input sm num-in" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Required" id="mp-ss-${esc(x.sap)}" aria-label="SS rate per box for ${esc(x.name)}"></label>
+    <label class="nudge-in"><span>Distributor rate / box</span><input class="input sm num-in" type="number" min="0" step="0.01" inputmode="decimal" value="${price(x.sap) != null ? price(x.sap) : x.last != null ? x.last : ""}" placeholder="0.00" id="mp-dist-${esc(x.sap)}" aria-label="Distributor rate per box for ${esc(x.name)}"></label>` : ""}</div>`).join("");
+}
+function priceNudgeHome() {
+  const list = missingPrices(); if (!list.length) return "";
+  const sold = list.reduce((a, x) => a + x.sold, 0);
+  return `<div class="nudge" id="price-nudge"><div class="nudge-head"><span class="attn-ic bad">${ic("alert")}</span><div class="grow"><div class="nudge-title">Add the SS rate for ${list.length} product${list.length > 1 ? "s" : ""}</div><div class="nudge-sub">${sold ? `${rs(sold)} of sales have no cost price, so your gross profit and margin are not right until you do. ` : "These products are in stock or on orders without a cost price. "}${CAN_PRICE ? "Type the rate from the Hangyo price list and save." : "Only the owner can add prices. Please ask them."}</div></div></div>
+    <div class="nudge-rows">${priceRowsHtml(list)}</div>
+    ${CAN_PRICE ? `<div class="hstack between wrap gap-12" style="margin-top:12px"><span class="row-sub" id="mp-msg">The distributor rate is filled in from the last order where there was one.</span><button class="btn btn-primary" data-act="mpSave">${ic("check", "sm")} Save prices</button></div>` : ""}</div>`;
+}
+function priceStrip() {
+  if (S.route === "home") return "";
+  const list = missingPrices(); if (!list.length) return "";
+  return `<button class="nudge-strip" data-act="priceNudge">${ic("alert", "sm")}<span class="grow"><b>${list.length} product${list.length > 1 ? "s have" : " has"} no SS rate.</b> Profit and margin figures are off until ${list.length > 1 ? "they are" : "it is"} added.</span><span class="nudge-strip-go">Add now ${ic("chevR", "sm")}</span></button>`;
+}
+ACT.priceNudge = () => {
+  const list = missingPrices(true); if (!list.length) { toast("All products have a cost price", "check"); render(); return; }
+  openSheet("Add the missing prices", `<div class="banner warn">${ic("alert", "sm")}<span>Without the SS rate the tool cannot work out the profit on these products. Type the rate per box from the Hangyo price list.</span></div><div class="card card-pad nudge-rows">${priceRowsHtml(list)}</div><div id="mp-msg"></div>`,
+    CAN_PRICE ? `<button class="btn btn-secondary" data-act="closeSheet">Later</button><button class="btn btn-primary" data-act="mpSave">Save prices</button>` : `<button class="btn btn-primary" data-act="closeSheet">OK</button>`);
+};
+ACT.noCostFix = ACT.priceNudge;
+ACT.mpSave = () => {
+  if (!CAN_PRICE) return;
+  const list = missingPrices(true), saved = [], bad = [];
+  list.forEach((x) => {
+    const ssEl = document.getElementById("mp-ss-" + x.sap), dEl = document.getElementById("mp-dist-" + x.sap); if (!ssEl) return;
+    const ss = ssEl.value === "" ? null : +ssEl.value, dist = dEl && dEl.value !== "" ? +dEl.value : null;
+    if (ss == null) return;
+    if (!(ss > 0) || (dist != null && !(dist > 0))) { bad.push(x.name); return; }
+    const p = (D.prices[x.sap] = D.prices[x.sap] || [null, null, null, null, null]); p[0] = Math.round(ss * 100) / 100; if (dist != null) p[1] = Math.round(dist * 100) / 100;
+    const st = stockBySap[x.sap]; if (st) Object.assign(st, { cost: p[0], price: p[1] != null ? p[1] : st.price, margin: p[1] != null ? Math.round((p[1] - p[0]) * 100) / 100 : st.margin });
+    saved.push(shortName(x.name));
+  });
+  if (bad.length) { part("mp-msg", `<span style="color:var(--bad);font-weight:600">Check the rates for ${esc(bad.join(", "))}.</span>`); return; }
+  if (!saved.length) { part("mp-msg", `<span style="color:var(--warn);font-weight:600">Type at least one SS rate first.</span>`); return; }
+  logActivity("Prices added", saved.join(", "), "SS rate added from the reminder");
+  MP_CACHE.t = 0; if (sheetOpen) closeSheet(); render(); toast(`Saved. Profit is now worked out for ${saved.length} more product${saved.length > 1 ? "s" : ""}`, "check");
+};
+
+/* ---------- 2. pending orders that can now get what was out of stock ---------- */
+function backOnOrder(o) {
+  if (!o || o.status !== "Pending") return [];
+  const seen = new Set(), on = new Set((linesByOrder[o.id] || []).map((l) => l.sap));
+  return D.oos.filter((x) => x.id === o.id && x.sap).map((x) => {
+    if (seen.has(x.sap)) return null; seen.add(x.sap);
+    const st = stockBySap[x.sap]; if (!st || !st.upc) return null;
+    const av = st.ea / st.upc, want = typeof x.missed === "number" ? x.missed : null;
+    if (av < (want != null ? Math.min(1, want) : 1) - 1e-9) return null;
+    return { sap: x.sap, name: st.name, av, want, partly: on.has(x.sap) };
+  }).filter(Boolean);
+}
+function pendingBack() { return pendingOrders().map((o) => ({ o, items: backOnOrder(o) })).filter((g) => g.items.length); }
+const backPill = (o) => { const n = backOnOrder(o).length; return n ? `<span class="pill good" title="Products this order missed are back in stock">${n} back in stock</span>` : ""; };
+function backBanner(o) {
+  const items = backOnOrder(o); if (!items.length) return "";
+  return `<div class="banner good" style="align-items:center">${ic("box", "sm")}<span class="grow"><b>Back in stock for this order:</b> ${items.map((i) => `${esc(shortName(i.name))} <span class="dim">(${nf(Math.floor(i.av))} cr now${i.want != null ? `, ${nf(i.want, 1)} missed` : ""})</span>`).join(", ")}. Refresh the order to add ${items.length > 1 ? "them" : "it"}, then save.</span><button class="btn btn-sm btn-primary" data-act="refreshOrder" data-id="${esc(o.id)}">${ic("repeat", "sm")} Refresh order</button></div>`;
+}
+ACT.refreshOrder = (el) => {
+  const o = orderById(el.dataset.id); if (!o || o.status !== "Pending") return;
+  const items = backOnOrder(o);
+  ACT.editOrder({ dataset: { id: o.id } });
+  S.draft.refreshNote = items.map((i) => shortName(i.name));
+  render(); toast("Back-in-stock products added back. Check the quantities and press Save order", "repeat");
+};
+function refreshNoteHtml() {
+  const n = S.draft.refreshNote; if (!n || !n.length || !S.draft.editId) return "";
+  return `<div class="banner good">${ic("repeat", "sm")}<span><b>Refreshing this order.</b> Back in stock and added back: ${esc(n.join(", "))}. Anything still short stays logged as missed. Press <b>Save order</b> to update it.</span></div>`;
+}
+ACT.pendingBackSheet = (el) => {
+  const groups = pendingBack(), next = el && el.dataset && el.dataset.next;
+  if (!groups.length) { if (next && backInStock().length) ACT.backInStock(); return; }
+  openSheet("Back in stock for pending orders", `<div class="banner good">${ic("box", "sm")}<span>These orders are not dispatched yet and missed products that are back in stock now. Refresh each one to add them before it goes on the truck.</span></div>
+    <div class="group">${groups.map((g) => `<div class="row" style="align-items:flex-start"><span class="grow"><div class="row-title clip">${esc(g.o.dist)}</div><div class="row-sub"><span class="mono">${esc(g.o.id)}</span> · saved ${fmtDate(g.o.time)}</div><div class="row-sub" style="margin-top:4px">${g.items.map((i) => esc(shortName(i.name)) + (i.want != null ? ` (${nf(i.want, 1)} cr missed)` : "")).join(", ")}</div></span><span class="row-end"><button class="btn btn-sm btn-primary" data-act="refreshOrder" data-id="${esc(g.o.id)}">Refresh order</button></span></div>`).join("")}</div>`,
+    backInStock().length ? `<button class="btn btn-secondary" data-act="closeSheet">Later</button><button class="btn btn-secondary" data-act="backInStock">Next: tell other distributors</button>` : `<button class="btn btn-secondary" data-act="closeSheet">Later</button>`);
 };
 
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
