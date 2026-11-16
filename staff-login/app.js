@@ -126,6 +126,7 @@ const ROUTES = {
   stock: { label: "Stock", icon: "box" },
   replenish: { label: "Replenishment", icon: "cycle" },
   tod: { label: "TOD & notes", icon: "rupee" },
+  logistics: { label: "Logistics", icon: "truck" },
   setup: { label: "Setup", icon: "gear" },
   more: { label: "More", icon: "grid" },
 };
@@ -656,6 +657,8 @@ function attention(facts) {
   if (slow.n) out.push({ ic: "box", cls: "warn", act: "slowList", title: `${slow.n} slow-moving product${slow.n > 1 ? "s" : ""} to push`, sub: `${nf(slow.crates, 0)} crates above normal sales · ₹${lakh(slow.value)} L tied up` });
   const bis = typeof backInStock === "function" ? backInStock() : [];
   if (bis.length) out.push({ ic: "box", cls: "good", act: "backInStock", title: `${bis.length} distributor${bis.length > 1 ? "s" : ""} waiting for stock that is back`, sub: [...new Set(bis.flatMap((g) => g.items.map((i) => shortName(i.name).split("(")[0].trim())))].slice(0, 2).join(", ") + " · tap to let them know" });
+  const runs = typeof unloggedRuns === "function" ? unloggedRuns() : [];
+  if (runs.length) out.push({ ic: "truck", cls: "warn", go: "logistics", title: `${runs.length} dispatch${runs.length > 1 ? "es" : ""} without a trip logged`, sub: runs.slice(0, 2).map((r) => fmtDate(r.date) + ": " + runLabel(r)).join(" · ") + " · add km and cost" });
   const todDue = D.tod.lines.filter((l) => l.status !== "Received").reduce((a, l) => a + (l.amount || 0), 0) || D.tod.total;
   out.push({ ic: "rupee", cls: "info", title: `${rs(todDue)} TOD due from Hangyo`, sub: "Not yet received, all months", go: "tod" });
   return out;
@@ -706,7 +709,8 @@ VIEWS.home = () => {
   if (showGT) tiles.push(tile("fill", "Fill rate, distributors", cur.fillGT != null ? pct(cur.fillGT, 1) : "–", "", `${cur.fillGT == null ? "Tracked from 8 Oct, when the tool started" : nf(cur.missed, 1) + " crates missed"}${showQC && cur.fillQC != null ? " · QC fill " + pct(cur.fillQC, 1) : ""}`, ""));
   else tiles.push(tile("fill", "Fill rate, quick commerce", cur.fillQC != null ? pct(cur.fillQC, 1) : "–", "", "Pieces accepted of pieces ordered", ""));
   if (showGT) tiles.push(tile("active", "Active distributors", nf(cur.dists.size), "", `${prev.dists.size ? prev.dists.size + " in " + cmp : "With a dispatched order"}`, prev.dists.size || !cmp ? (cur.dists.size >= prev.dists.size ? "▲ " : "▼ ") + Math.abs(cur.dists.size - prev.dists.size) + " vs " + cmp : ""));
-  if (showGT) tiles.push(tile("o2d", "Order to dispatch", cur.o2dAvg != null ? nf(cur.o2dAvg, 1) : "–", cur.o2dAvg != null ? "days" : "", `${cur.o2d.length} order${cur.o2d.length === 1 ? "" : "s"} dispatched`, ""));
+  if (showGT && !showQC) tiles.push(tile("o2d", "Order to dispatch", cur.o2dAvg != null ? nf(cur.o2dAvg, 1) : "–", cur.o2dAvg != null ? "days" : "", `${cur.o2d.length} order${cur.o2d.length === 1 ? "" : "s"} dispatched`, ""));
+  { const lg = logiForDash(R.from, R.to, F.ch), lp = R.pFrom ? logiForDash(R.pFrom, R.pTo, F.ch) : null; tiles.push(`<button class="tile" data-act="nav" data-to="logistics"><div class="tile-label"><span>Logistics cost</span>${ic("chevR", "sm dim")}</div><div class="tile-value">${lg.pct != null ? pct(lg.pct, 2) : "–"}<small>of sales</small></div>${lp && lp.pct != null && lg.pct != null ? `<span class="delta ${lg.pct > lp.pct ? "down" : "up"}">${lg.pct > lp.pct ? "↑" : "↓"} ${Math.abs((lg.pct - lp.pct) * 100).toFixed(1)} pts vs ${esc(cmp)}</span>` : ""}<div class="tile-sub">${rs(lg.cost)} on ${lg.n} trip${lg.n === 1 ? "" : "s"}${lg.perCrate != null ? " · " + rs2(lg.perCrate) + " per crate" : ""}</div></button>`); }
   tiles.push(tile("stock", "Stock on hand, at cost", lakhS(sv.total), "L", `Own ₹${lakh(sv.own)} L · QC ₹${lakh(sv.qc)} L · today`, ""));
   if (tiles.length < 8) tiles.push(tile("purchases", "Purchases from Hangyo", lakhS(pur.total), "L", `Own ₹${lakh(pur.own)} L · QC ₹${lakh(pur.qc)} L`, ""));
   const pace = R.isMonthToDate ? (() => { const t = NOW(), dim = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate(); return ` · on pace for ₹${lakh((cur.net / t.getDate()) * dim)} L`; })() : "";
@@ -752,13 +756,13 @@ VIEWS.home = () => {
   </div>`;
 };
 function momCard(facts) {
-  const months = monthsSeries(facts).map((m) => { const from = m.k + "-01", t = toDate(from), to = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0)); const s = periodStats(facts, from, to < ymd(NOW()) ? to : ymd(NOW())); s.pur = purchasesIn(from, to).total; return { m, s }; });
+  const months = monthsSeries(facts).map((m) => { const from = m.k + "-01", t = toDate(from), to = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0)); const s = periodStats(facts, from, to < ymd(NOW()) ? to : ymd(NOW())); s.pur = purchasesIn(from, to).total; s.logi = logiForDash(from, to, S.dash.ch); return { m, s }; });
   const rows = [
     ["Net sales", (s) => rs(s.net)], ["Distributor sales (GT)", (s) => rs(s.gt)], ["Swiggy", (s) => rs(s.swiggy)], ["Zepto", (s) => rs(s.zepto)],
     ["GT orders dispatched", (s) => nf(s.orders.size)], ["Average GT order", (s) => rs(s.avgOrder)], ["Active distributors", (s) => nf(s.dists.size)],
     ["Crates moved", (s) => nf(s.crates, 0)], ["Gross profit", (s) => rs(s.gp)], ["Gross margin", (s) => (s.margin != null ? pct(s.margin, 1) : "–")],
     ["Fill rate, distributors", (s) => (s.fillGT != null ? pct(s.fillGT, 1) : "–")], ["Fill rate, quick commerce", (s) => (s.fillQC != null ? pct(s.fillQC, 1) : "–")],
-    ["Missed sales (crates)", (s) => nf(s.missed, 1)], ["Returns and credit notes", (s) => rs(s.returns)], ["TOD earned", (s) => rs(s.tod)], ["Purchases from Hangyo", (s) => rs(s.pur)],
+    ["Logistics cost", (s) => rs(s.logi.cost)], ["Logistics, % of sales carried", (s) => (s.logi.pct != null ? pct(s.logi.pct, 2) : "–")], ["Missed sales (crates)", (s) => nf(s.missed, 1)], ["Returns and credit notes", (s) => rs(s.returns)], ["TOD earned", (s) => rs(s.tod)], ["Purchases from Hangyo", (s) => rs(s.pur)],
   ];
   const table = `<table class="t"><thead><tr><th class="sticky-col">Measure</th>${months.map(({ m }) => `<th class="r">${esc(m.label)}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><td class="sticky-col">${esc(l)}</td>${months.map(({ s }) => `<td class="r">${f(s)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   return `<div class="card"><div class="card-head"><div><div class="card-title">All the numbers, month on month</div><div class="card-sub">${S.dash.ch !== "all" || S.dash.district !== "all" ? "Filtered: " + esc([S.dash.ch !== "all" ? DASH_CHANNELS.find((c) => c[0] === S.dash.ch)[1] : "", S.dash.district !== "all" ? S.dash.district : ""].filter(Boolean).join(" · ")) + " · " : ""}*this month so far</div></div></div><div class="card-pad" style="padding-top:8px"><div style="overflow-x:auto;margin:0 -8px">${table}</div></div></div>`;
@@ -1575,7 +1579,7 @@ ACT.dispatchNow = () => {
   sel.forEach((o) => { o.status = "Dispatched"; o.dispatched = now; delete S.picked[o.id]; });
   logActivity("Orders dispatched", `${sel.length} order(s)`, sel.map((o) => shortOf(o.dist)).join(", "));
   closeSheet(); render(); toast(`${sel.length} order${sel.length > 1 ? "s" : ""} marked dispatched`, "truck");
-  setTimeout(() => openSheet("Let them know?", `<div class="success"><div class="tick">${ic("truck")}</div><div class="section-title">${sel.length} order${sel.length > 1 ? "s" : ""} on the way</div><div class="muted">Send each distributor a short “your order is on its way” email with the crates and the payment due date.</div></div><div class="group">${sel.map((o) => { const d = distByKey[key(o.dist)] || {}; return `<div class="row"><span class="grow"><div class="row-title">${esc(o.dist)}</div><div class="row-sub">${d.email ? esc(d.email) : `<span style="color:var(--warn)">No email saved</span>`}</div></span><span class="row-end">${nf(o.crates, 2)} crates</span></div>`; }).join("")}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Not now</button><button class="btn btn-primary" data-act="emailDispatch" data-ids="${sel.map((o) => o.id).join(",")}">${ic("arrowR", "sm")} Preview and send</button>`), 450);
+  setTimeout(() => openSheet("Let them know?", `<div class="success"><div class="tick">${ic("truck")}</div><div class="section-title">${sel.length} order${sel.length > 1 ? "s" : ""} on the way</div><div class="muted">Send each distributor a short “your order is on its way” email with the crates and the payment due date.</div></div><div class="group">${sel.map((o) => { const d = distByKey[key(o.dist)] || {}; return `<div class="row"><span class="grow"><div class="row-title">${esc(o.dist)}</div><div class="row-sub">${d.email ? esc(d.email) : `<span style="color:var(--warn)">No email saved</span>`}</div></span><span class="row-end">${nf(o.crates, 2)} crates</span></div>`; }).join("")}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Not now</button><button class="btn btn-secondary" data-act="tripForm" data-orders="${sel.map((o) => o.id).join(",")}">${ic("truck", "sm")} Log the trip</button><button class="btn btn-primary" data-act="emailDispatch" data-ids="${sel.map((o) => o.id).join(",")}">${ic("arrowR", "sm")} Preview and send</button>`), 450);
 };
 
 /* ===== QUICK COMMERCE ===== */
@@ -2367,7 +2371,7 @@ ACT.orderFor = (el) => { S.draft = newDraft(); S.draft.dist = el.dataset.name; c
 
 /* ===== MORE (phone) ===== */
 VIEWS.more = () => `<div class="page narrow"><div class="page-head"><h1 class="title">More</h1></div>
-  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
+  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["logistics", "Logistics", "Trips, transport cost and its share of sales", "truck", unloggedRuns().length], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
   <div class="group"><button class="row" data-act="cmd"><span class="attn-ic info">${ic("search")}</span><span class="grow"><div class="row-title">Search everything</div><div class="row-sub">Distributors, products, orders</div></span>${ic("chevR", "sm chev")}</button>${HOST ? `<button class="row" data-act="account"><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow"><div class="row-title">${esc(ME.name)}</div><div class="row-sub">Account, team and sign out</div></span>${ic("chevR", "sm chev")}</button>` : ""}</div></div>`;
 
 /* ===== ACCOUNT (only on the staff-login page) ===== */
@@ -2393,7 +2397,7 @@ ACT.signOut = () => { if (HOST) HOST.signOut(); };
 let cmdItems = [], cmdSel = 0;
 function cmdResults(q) {
   const k = key(q), out = [];
-  const screens = [["new-order", "New order", "plus"], ["home", "Home", "home"], ["orders", "Orders", "orders"], ["dispatch", "Dispatch", "truck"], ["quick", "Quick commerce", "bolt"], ["stock", "Stock", "box"], ["replenish", "Replenishment", "cycle"], ["tod", "TOD & notes", "rupee"], ["setup", "Setup", "gear"]];
+  const screens = [["new-order", "New order", "plus"], ["home", "Home", "home"], ["orders", "Orders", "orders"], ["dispatch", "Dispatch", "truck"], ["quick", "Quick commerce", "bolt"], ["stock", "Stock", "box"], ["replenish", "Replenishment", "cycle"], ["tod", "TOD & notes", "rupee"], ["logistics", "Logistics", "truck"], ["setup", "Setup", "gear"]];
   screens.filter((s) => !k || key(s[1]).includes(k)).forEach((s) => out.push({ sec: "Go to", icon: s[2], label: s[1], run: () => { if (s[0] === "new-order") ACT.newOrder(); else go(s[0]); } }));
   if (k) {
     D.distributors.filter((d) => key(d.name + " " + d.short).includes(k)).slice(0, 5).forEach((d) => out.push({ sec: "Distributors", icon: "people", label: "New order for " + d.name, hint: d.district, run: () => ACT.orderFor({ dataset: { name: d.name } }) }));
@@ -2793,6 +2797,246 @@ ACT.emailQCPick = async () => {
   mailSheet([qcPickEmail(Dl, b64)], `Email ${S.qcPlatform} pick list to Tropicana`);
 };
 
+/* ===== LOGISTICS: what each trip cost and what share of sales it takes =====
+   A trip carries dispatched distributor orders and/or Swiggy/Zepto deliveries. Sellers, crates and revenue
+   come from those orders; a per-km transporter is costed from the odometer (km × its rate), others
+   take the amount paid for that trip. Revenue is the invoiced value excluding GST, as in the old sheet. */
+/* transporters and their rates live in the workspace data (private), never in this code */
+function logi() {
+  const L = (D.logistics = D.logistics || {});
+  L.trips = L.trips || []; L.transporters = L.transporters || [];
+  if (!L.since) L.since = L.trips.length ? addDays(L.trips.reduce((a, t) => (t.date > a ? t.date : a), ""), 1) : ymd(NOW());
+  return L;
+}
+const transporterOf = (name) => logi().transporters.find((t) => key(t.name) === key(name)) || null;
+const tripPct = (t) => (t.revenue > 0 && t.cost != null ? t.cost / t.revenue : null);
+const tripMissing = (t) => t.cost == null || !(t.revenue > 0);
+/* dispatches since the app started tracking trips that are not on any trip yet */
+function unloggedRuns() {
+  const L = logi(), onTrip = new Set(), qcOn = new Set();
+  L.trips.forEach((t) => { (t.orders || []).forEach((id) => onTrip.add(id)); (t.qc || []).forEach((po) => qcOn.add(po)); });
+  const runs = {};
+  D.orders.forEach((o) => { if (o.status !== "Dispatched" || !o.dispatched || o.dispatched.slice(0, 10) < L.since || onTrip.has(o.id)) return; const d = o.dispatched.slice(0, 10), r = (runs[d] = runs[d] || { date: d, orders: [], qc: [] }); r.orders.push(o.id); });
+  D.qcPOs.forEach((p) => { if (!p.deliveredOn || p.deliveredOn.slice(0, 10) < L.since || qcOn.has(p.po) || !(p.valueAccepted > 0 || p.pcsDelivered > 0)) return; const d = p.deliveredOn.slice(0, 10), r = (runs[d] = runs[d] || { date: d, orders: [], qc: [] }); r.qc.push(p.po); });
+  return Object.values(runs).sort((a, b) => (a.date < b.date ? 1 : -1));
+}
+const runLabel = (r) => [...new Set(r.orders.map((id) => shortOf((orderById(id) || {}).dist || "")).concat(r.qc.map((po) => (D.qcPOs.find((p) => p.po === po) || {}).platform || "QC")))].join(", ");
+/* ---------- figures ---------- */
+function logiRange(preset) {
+  const t = NOW(), y = t.getFullYear(), m = t.getMonth(), today = ymd(t), ms = (yy, mm) => ymd(new Date(yy, mm, 1)), me = (yy, mm) => ymd(new Date(yy, mm + 1, 0));
+  if (preset === "month") return { from: ms(y, m), to: today, pFrom: ms(y, m - 1), pTo: ymd(new Date(y, m - 1, Math.min(t.getDate(), new Date(y, m, 0).getDate()))), label: MONTH_LONG[m] + " so far", cmp: "same days last month" };
+  if (preset === "lastMonth") return { from: ms(y, m - 1), to: me(y, m - 1), pFrom: ms(y, m - 2), pTo: me(y, m - 2), label: MONTH_LONG[(m + 11) % 12], cmp: MONTH_LONG[(m + 10) % 12] };
+  if (preset === "3m") return { from: ms(y, m - 2), to: today, pFrom: ms(y, m - 5), pTo: addDays(ms(y, m - 2), -1), label: "Last 3 months", cmp: "the 3 months before" };
+  return { from: "2000-01-01", to: today, pFrom: null, pTo: null, label: "All time", cmp: "" };
+}
+function logiFilter(trips, F, from, to) {
+  return trips.filter((t) => t.date >= from && t.date <= to && (F.type === "all" || t.type === F.type) && (F.tr === "all" || (t.transporter || "") === F.tr));
+}
+function logiStats(trips) {
+  const ok = trips.filter((t) => t.cost != null), withRev = ok.filter((t) => t.revenue > 0);
+  const cost = ok.reduce((a, t) => a + t.cost, 0), costR = withRev.reduce((a, t) => a + t.cost, 0), rev = withRev.reduce((a, t) => a + t.revenue, 0);
+  const cr = ok.filter((t) => t.crates > 0), crates = cr.reduce((a, t) => a + t.crates, 0), crCost = cr.reduce((a, t) => a + t.cost, 0);
+  const km = trips.reduce((a, t) => a + (t.km || 0), 0);
+  return { n: trips.length, cost, rev, pct: rev > 0 ? costR / rev : null, crates, perCrate: crates > 0 ? crCost / crates : null, km, missing: trips.filter(tripMissing).length };
+}
+const monthKey = (d) => d.slice(0, 7), monthLbl = (k) => MONTH_LONG[+k.slice(5) - 1].slice(0, 3) + " " + k.slice(2, 4);
+function logiByMonth(trips) {
+  const g = {}; trips.forEach((t) => { (g[monthKey(t.date)] = g[monthKey(t.date)] || []).push(t); });
+  return Object.keys(g).sort().map((k) => ({ k, label: monthLbl(k), ...logiStats(g[k]), trips: g[k] }));
+}
+function logiGroup(trips, f) { const g = {}; trips.forEach((t) => { const k = f(t); (g[k] = g[k] || []).push(t); }); return Object.entries(g).map(([k, v]) => ({ k, ...logiStats(v), trips: v })); }
+/* the % for the dashboard tile: trips in the period, filtered like the dashboard channel */
+function logiForDash(from, to, ch) {
+  const L = logi(), q = ch === "swiggy" ? /swiggy/i : ch === "zepto" ? /zepto/i : null;
+  const trips = L.trips.filter((t) => t.date >= from && t.date <= to && (ch === "all" || (ch === "gt" ? t.type === "GT" : t.type === "QC" && (!q || q.test(t.sellers)))));
+  return logiStats(trips);
+}
+/* ---------- chart: cost by month with the % on top ---------- */
+function logiChart(months) {
+  if (!months.length) return `<div class="empty">No trips in this period.</div>`;
+  const narrow = isNarrow(), W = narrow ? 340 : 620, H = narrow ? 220 : 250, m = { l: 34, r: 34, t: 26, b: 26 };
+  const sc = niceScale(Math.max(1, ...months.map((x) => x.cost / 1000))), maxP = Math.max(0.02, ...months.map((x) => x.pct || 0)) * 1.25;
+  const y = (v) => H - m.b - (v / sc.max) * (H - m.t - m.b), yp = (p) => H - m.b - (p / maxP) * (H - m.t - m.b), band = (W - m.l - m.r) / months.length, bw = Math.min(30, band * 0.5);
+  let g = "";
+  for (let i = 0; i <= sc.n; i++) { const v = sc.step * i; g += `<line class="gridline" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/><text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${+v.toFixed(1)}</text>`; }
+  const pts = [];
+  months.forEach((d, i) => {
+    const cx = m.l + band * i + band / 2, v = d.cost / 1000;
+    g += `<rect x="${cx - bw / 2}" y="${y(v)}" width="${bw}" height="${Math.max(0, y(0) - y(v))}" rx="3" fill="var(--s-gt)" opacity=".85"><title>${esc(d.label)}: ${rs(d.cost)} · ${d.pct != null ? pct(d.pct, 1) : "–"} of sales</title></rect>`;
+    g += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${esc(d.label)}</text>`;
+    if (d.pct != null) pts.push([cx, yp(d.pct), d.pct]);
+  });
+  if (pts.length > 1) g += `<path d="${pts.map((p, j) => (j ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ")}" fill="none" stroke="var(--s-swiggy)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  pts.forEach((p) => { g += `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="var(--s-swiggy)" stroke="var(--surface)" stroke-width="2"/><text class="lbl" x="${p[0]}" y="${p[1] - 9}" text-anchor="middle">${pct(p[2], 1)}</text>`; });
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Logistics cost by month in thousand rupees, with the cost as a share of sales">${g}</svg></div>`;
+}
+/* ---------- page ---------- */
+VIEWS.logistics = () => {
+  const L = logi(), F = (S.logi = S.logi || { preset: "all", type: "all", tr: "all" }), R = logiRange(F.preset);
+  const trips = logiFilter(L.trips, F, R.from, R.to).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.id < b.id ? 1 : -1));
+  const cur = logiStats(trips), prev = R.pFrom ? logiStats(logiFilter(L.trips, F, R.pFrom, R.pTo)) : null, runs = unloggedRuns();
+  const ptsChg = prev && prev.pct != null && cur.pct != null ? `${cur.pct > prev.pct ? "▲" : "▼"} ${Math.abs((cur.pct - prev.pct) * 100).toFixed(1)} pts vs ${R.cmp}` : "";
+  const months = logiByMonth(logiFilter(L.trips, F, R.from, R.to));
+  const tbl = (head, rows, foot) => `<div class="table-wrap"><table class="t"><thead><tr>${head.map((h, i) => `<th class="${i ? "r" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="${i ? "r" : ""}">${c}</td>`).join("")}</tr>`).join("")}</tbody>${foot ? `<tfoot><tr>${foot.map((c, i) => `<td class="${i ? "r" : ""}"><b>${c}</b></td>`).join("")}</tr></tfoot>` : ""}</table></div>`;
+  const pctCell = (p) => (p == null ? "–" : `<span style="${p > 0.06 ? "color:var(--bad);font-weight:600" : p > 0.045 ? "color:var(--warn);font-weight:600" : ""}">${pct(p, 1)}</span>`);
+  const byTR = logiGroup(trips, (t) => t.type + "|" + (t.type === "QC" ? "–" : t.route || "Not set")).sort((a, b) => (a.k < b.k ? -1 : 1));
+  const byTrans = logiGroup(trips, (t) => t.transporter || "Not set").sort((a, b) => b.cost - a.cost);
+  const gg = L.transporters.filter((t) => t.mode === "km");
+  const kmMonths = gg.map((t) => ({ t, rows: logiByMonth(trips.filter((x) => key(x.transporter) === key(t.name))) })).filter((x) => x.rows.length);
+  const monthTable = tbl(["Month", "Trips", "Crates", "Km", "Revenue", "Logistics cost", "% of revenue", "Per crate"], months.map((x) => [esc(x.label), x.n, nf(x.crates), nf(x.km), rs(x.rev), rs(x.cost), pctCell(x.pct), x.perCrate != null ? rs2(x.perCrate) : "–"]));
+  const chips = (name, list, val) => list.map(([v, l]) => `<button class="chip" data-act="logiF" data-f="${name}" data-v="${esc(v)}" aria-pressed="${val === v}">${esc(l)}</button>`).join("");
+  return `<div class="page">
+    <div class="page-head"><div><h1 class="title">Logistics</h1><div class="subtitle">What each trip cost and what share of the invoiced sales it takes.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="logiExcel">${ic("doc", "sm")} Download Excel</button><button class="btn btn-secondary" data-act="logiTransporters">${ic("truck", "sm")} Transporters</button><button class="btn btn-primary" data-act="tripForm">${ic("plus", "sm")} Log a trip</button></div></div>
+    ${runs.length ? `<div class="banner warn" style="align-items:flex-start">${ic("truck", "sm")}<span class="grow"><b>${runs.length} dispatch${runs.length > 1 ? "es have" : " has"} no trip logged yet.</b> ${runs.slice(0, 3).map((r) => `${fmtDate(r.date)}: ${esc(runLabel(r))}`).join(" · ")}${runs.length > 3 ? " and more" : ""}</span><button class="btn btn-sm btn-primary" data-act="tripForm" data-run="${runs[0].date}">Log ${fmtDate(runs[0].date)}</button></div>` : ""}
+    <div class="hstack gap-12 wrap"><div class="chips" style="margin:0">${chips("preset", [["month", "This month"], ["lastMonth", "Last month"], ["3m", "Last 3 months"], ["all", "All time"]], F.preset)}</div><div class="chips" style="margin:0">${chips("type", [["all", "GT and QC"], ["GT", "GT"], ["QC", "QC"]], F.type)}</div>
+      <select class="select sm" style="width:auto" data-in="logiTr" aria-label="Transporter"><option value="all">All transporters</option>${[...new Set(L.trips.map((t) => t.transporter || "").filter(Boolean))].sort().map((n) => `<option ${F.tr === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
+    <div class="tiles tiles-4">
+      <div class="tile"><div class="tile-label">Logistics cost · ${esc(R.label)}</div><div class="tile-value">${rs(cur.cost)}</div>${prev ? deltaChip(chgTxt(cur.cost, prev.cost, R.cmp)) : ""}<div class="tile-sub">${cur.n} trip${cur.n === 1 ? "" : "s"}${cur.missing ? ` · <span style="color:var(--warn)">${cur.missing} without a cost</span>` : ""}</div></div>
+      <div class="tile"><div class="tile-label">Share of invoiced sales</div><div class="tile-value">${cur.pct != null ? pct(cur.pct, 2) : "–"}</div>${ptsChg ? `<span class="delta ${cur.pct > prev.pct ? "down" : "up"}">${esc(ptsChg.replace("▲", "↑").replace("▼", "↓"))}</span>` : ""}<div class="tile-sub">On ${rs(cur.rev)} of sales carried</div></div>
+      <div class="tile"><div class="tile-label">Cost per crate</div><div class="tile-value">${cur.perCrate != null ? rs2(cur.perCrate) : "–"}</div><div class="tile-sub">${nf(cur.crates)} crates carried</div></div>
+      <div class="tile"><div class="tile-label">Kilometres run</div><div class="tile-value">${nf(cur.km)}<small>km</small></div><div class="tile-sub">${cur.km ? rs2(cur.cost / cur.km) + " per km overall" : "Both ways"}</div></div></div>
+    <div class="grid-2">
+      ${chartCard("logiMonths", "Cost and share of sales, by month", "Bars: logistics cost in ₹ thousand · line: % of invoiced sales", `<span><i style="background:var(--s-gt)"></i>Cost</span><span><i style="background:var(--s-swiggy)"></i>% of sales</span>`, logiChart(months), monthTable)}
+      <div class="card"><div class="card-head"><div><div class="card-title">By type and route</div><div class="card-sub">${esc(R.label)} · like the Overall pivot sheet</div></div></div><div class="card-pad" style="padding-top:6px">${tbl(["Type · route", "Trips", "Revenue", "Cost", "%"], byTR.map((x) => [esc(x.k.replace("|–", "").replace("|", " · ")), x.n, rs(x.rev), rs(x.cost), pctCell(x.pct)]), ["Total", cur.n, rs(cur.rev), rs(cur.cost), cur.pct != null ? pct(cur.pct, 1) : "–"])}</div></div>
+    </div>
+    <div class="grid-2">
+      <div class="card"><div class="card-head"><div><div class="card-title">By transporter</div><div class="card-sub">${esc(R.label)}</div></div></div><div class="card-pad" style="padding-top:6px">${tbl(["Transporter", "Trips", "Km", "Cost", "Per crate", "%"], byTrans.map((x) => [esc(x.k) + (x.km ? `<div class="row-sub">${rs2(x.cost / x.km)} per km</div>` : ""), x.n, nf(x.km), rs(x.cost), x.perCrate != null ? rs2(x.perCrate) : "–", pctCell(x.pct)]))}</div></div>
+      <div class="card"><div class="card-head"><div><div class="card-title">${kmMonths.length ? esc(kmMonths.map((x) => x.t.name).join(", ")) + ": km by month" : "Per-km transporters"}</div><div class="card-sub">To check the monthly bill · both ways</div></div></div><div class="card-pad" style="padding-top:6px">${kmMonths.length ? kmMonths.map((x) => tbl(["Month", "Trips", "Km", `Amount at ₹${x.t.rate}/km`], x.rows.map((r) => [esc(r.label), r.n, nf(r.km), rs(r.km * x.t.rate)]), ["Total", x.rows.reduce((a, r) => a + r.n, 0), nf(x.rows.reduce((a, r) => a + r.km, 0)), rs(x.rows.reduce((a, r) => a + r.km, 0) * x.t.rate)])).join("") : `<div class="empty">No per-km trips in this period.</div>`}</div></div>
+    </div>
+    <div><div class="group-label"><span>Trips · ${esc(R.label)}</span><span>${trips.length}</span></div>
+      ${trips.length ? `<div class="dg" style="--cols:84px minmax(0,2fr) 70px 70px 104px 92px 70px minmax(90px,130px);--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span class="c-hide">Date</span><span>Sellers</span><span class="r c-hide">Crates</span><span class="r c-hide">Km</span><span class="r c-hide">Revenue</span><span class="r">Cost</span><span class="r c-hide">%</span><span class="c-hide">Transporter</span></div>
+      ${trips.map((t) => `<button class="dg-row" data-act="tripForm" data-id="${esc(t.id)}"><span class="c-hide num">${fmtDate(t.date)}</span><span><div class="strong clip">${esc(t.sellers || "–")}</div><div class="row-sub clip"><span class="mob-only">${fmtDate(t.date)} · </span>${esc(t.type)}${t.route && t.type !== "QC" ? " · " + esc(t.route) : ""}${t.halting ? ` · ${nf(t.halting, 1)} h halting` : ""}${t.note ? " · " + esc(t.note) : ""}${(t.orders || []).length + (t.qc || []).length ? ` · ${(t.orders || []).length + (t.qc || []).length} linked` : ""}</div></span><span class="r c-hide">${t.crates != null ? nf(t.crates) : "–"}</span><span class="r c-hide">${t.km != null ? nf(t.km) : "–"}</span><span class="r c-hide">${t.revenue != null ? rs(t.revenue) : "–"}</span><span class="r strong">${t.cost != null ? rs(t.cost) : `<span class="pill warn">Add cost</span>`}<div class="row-sub mob-only">${tripPct(t) != null ? pct(tripPct(t), 1) : ""}</div></span><span class="r c-hide">${pctCell(tripPct(t))}</span><span class="c-hide clip">${esc(t.transporter || "–")}</span></button>`).join("")}</div>` : `<div class="group"><div class="empty"><div class="big">No trips here</div>Change the filters, or log a trip.</div></div>`}</div>
+  </div>`;
+};
+ACT.logiF = (el) => { S.logi[el.dataset.f] = el.dataset.v; render(); };
+IN.logiTr = (el) => { S.logi.tr = el.value; render(); };
+/* ---------- the trip form ---------- */
+function tripCands(T) {
+  /* what can go on this trip: its own links, plus dispatches in the 3 weeks before its date not on any other trip */
+  const L = logi(), other = new Set(), otherQ = new Set();
+  L.trips.forEach((t) => { if (t.id === T.id) return; (t.orders || []).forEach((i) => other.add(i)); (t.qc || []).forEach((p) => otherQ.add(p)); });
+  const lo = addDays(T.date || ymd(NOW()), -21), hi = addDays(T.date || ymd(NOW()), 2);
+  const os = D.orders.filter((o) => o.status === "Dispatched" && o.dispatched && (T.orders.includes(o.id) || (!other.has(o.id) && o.dispatched.slice(0, 10) >= Math.max(lo, L.since) && o.dispatched.slice(0, 10) <= hi))).sort((a, b) => (a.dispatched < b.dispatched ? 1 : -1));
+  const qs = D.qcPOs.filter((p) => p.deliveredOn && (T.qc.includes(p.po) || (!otherQ.has(p.po) && p.deliveredOn.slice(0, 10) >= Math.max(lo, L.since) && p.deliveredOn.slice(0, 10) <= hi))).sort((a, b) => (a.deliveredOn < b.deliveredOn ? 1 : -1));
+  return { os, qs };
+}
+function tripAuto(T) {
+  const os = T.orders.map(orderById).filter(Boolean), qs = T.qc.map((po) => D.qcPOs.find((p) => p.po === po)).filter(Boolean);
+  if (!os.length && !qs.length) return null;
+  const sellers = [...new Set(os.map((o) => shortOf(o.dist)).concat(qs.map((p) => p.platform)))].join(", ");
+  const crates = Math.round((os.reduce((a, o) => a + (o.crates || 0), 0) + qs.reduce((a, p) => a + (p.pcs ? (p.crates * (p.pcsDelivered || 0)) / p.pcs : 0), 0)) * 10) / 10;
+  const revenue = Math.round((os.reduce((a, o) => a + (o.value || 0), 0) + qs.reduce((a, p) => a + (p.valueAccepted || 0), 0)) * 100) / 100;
+  return { sellers, crates, revenue, type: os.length ? "GT" : "QC" };
+}
+function tripCalc(T) {
+  const tr = transporterOf(T.transporter), A = tripAuto(T);
+  if (A) { if (!T.own.sellers) T.sellers = A.sellers; if (!T.own.crates) T.crates = A.crates; if (!T.own.revenue) T.revenue = A.revenue; if (!T.own.type) T.type = A.type; }
+  if (T.odoStart != null && T.odoEnd != null && T.odoEnd >= T.odoStart && !T.own.km) T.km = T.odoEnd - T.odoStart;
+  if (tr && tr.mode === "km" && !T.own.cost) T.cost = T.km != null ? Math.round(T.km * (tr.rate || 0)) : null;
+  if (!T.own.route) T.route = T.type === "QC" ? null : T.km != null ? (T.km >= 260 ? "Long" : "Short") : T.route || null;
+  return { tr, A };
+}
+function lastOdo(name) { const t = logi().trips.filter((x) => key(x.transporter) === key(name) && x.odoEnd != null).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.odoEnd || 0) - (a.odoEnd || 0)))[0]; return t ? t.odoEnd : null; }
+ACT.tripForm = (el) => {
+  const L = logi(), id = el && el.dataset && el.dataset.id, run = el && el.dataset && el.dataset.run, ids = el && el.dataset && el.dataset.orders;
+  let T;
+  if (id) { const t = L.trips.find((x) => x.id === id); if (!t) return; T = JSON.parse(JSON.stringify(t)); T.orders = T.orders || []; T.qc = T.qc || []; T.own = { sellers: true, crates: true, revenue: true, type: true, km: t.odoStart == null, cost: true, route: true }; T.isNew = false; }
+  else {
+    const lastGT = L.trips.filter((t) => t.type === "GT" && t.transporter).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    T = { id: null, date: ymd(NOW()), sellers: "", type: "GT", crates: null, km: null, odoStart: null, odoEnd: null, revenue: null, cost: null, transporter: lastGT ? lastGT.transporter : (L.transporters[0] || {}).name || "", halting: null, route: null, orders: [], qc: [], note: "", own: {}, isNew: true };
+    if (run) { const r = unloggedRuns().find((x) => x.date === run); if (r) { T.date = r.date; T.orders = r.orders.slice(); T.qc = r.qc.slice(); } }
+    if (ids) { T.orders = ids.split(",").filter(Boolean); const o = orderById(T.orders[0]); if (o && o.dispatched) T.date = o.dispatched.slice(0, 10); }
+    if (T.orders.length === 0 && T.qc.length) T.type = "QC";
+    const tr = transporterOf(T.transporter); if (tr && tr.mode === "km") T.odoStart = lastOdo(tr.name);
+  }
+  S.trip = T; tripCalc(T);
+  openSheet(T.isNew ? "Log a trip" : "Trip of " + fmtDate(T.date), `<div id="trip-body" class="stack gap-16">${tripBody()}</div>`,
+    `${T.isNew ? "" : `<button class="btn btn-danger" data-act="tripDelAsk">Delete</button>`}<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="tripSave">Save trip</button>`, true);
+};
+function tripBody() {
+  const T = S.trip, { tr, A } = tripCalc(T), C = tripCands(T), L = logi(), p = T.revenue > 0 && T.cost != null ? T.cost / T.revenue : null;
+  const num = (f, v, ph, extra = "") => `<input class="input num-in" type="number" step="any" min="0" value="${v != null ? v : ""}" placeholder="${ph || ""}" data-in="tripF" data-f="${f}" ${extra}>`;
+  const auto = (f) => (A && !T.own[f] ? `<span class="pill plain" style="height:20px;font-size:11px">from the orders</span>` : "");
+  const pick = C.os.length || C.qs.length ? `<div class="group" style="max-height:260px;overflow:auto">${C.os.map((o) => `<label class="row" style="cursor:pointer"><input type="checkbox" data-in="tripLink" data-k="o" data-v="${esc(o.id)}" ${T.orders.includes(o.id) ? "checked" : ""}><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub">Dispatched ${fmtDate(o.dispatched)} · ${nf(o.crates, 1)} crates · ${rs(o.value)}</div></span></label>`).join("")}${C.qs.map((q) => `<label class="row" style="cursor:pointer"><input type="checkbox" data-in="tripLink" data-k="q" data-v="${esc(q.po)}" ${T.qc.includes(q.po) ? "checked" : ""}><span class="grow"><div class="row-title clip">${platDot(q.platform)}${esc(q.platform)} <span class="mono">${esc(q.po)}</span></div><div class="row-sub">Delivered ${fmtDate(q.deliveredOn)} · ${rs(q.valueAccepted || 0)}</div></span></label>`).join("")}</div>` : `<div class="row-sub">No dispatched orders or deliveries around this date that are not already on a trip. Fill in the details below.</div>`;
+  return `<div><div class="group-label"><span>1 · What went on this trip</span><span>${T.orders.length + T.qc.length} ticked</span></div>${pick}</div>
+    <div><div class="group-label"><span>2 · The trip</span></div><div class="card card-pad"><div class="form-grid">
+      <div class="field"><label class="label">Date</label><input class="input" type="date" value="${esc(T.date)}" data-in="tripF" data-f="date"></div>
+      <div class="field"><label class="label">Transporter</label><select class="select" data-in="tripF" data-f="transporter">${L.transporters.map((t) => `<option ${key(t.name) === key(T.transporter) ? "selected" : ""}>${esc(t.name)}</option>`).join("")}${T.transporter && !transporterOf(T.transporter) ? `<option selected>${esc(T.transporter)}</option>` : ""}</select></div>
+      <div class="field full"><label class="label">Sellers ${auto("sellers")}</label><input class="input" value="${esc(T.sellers || "")}" placeholder="Who the goods went to" data-in="tripF" data-f="sellers"></div>
+      <div class="field"><label class="label">Type</label><select class="select" data-in="tripF" data-f="type">${["GT", "QC"].map((x) => `<option ${T.type === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+      <div class="field"><label class="label">Route</label><select class="select" data-in="tripF" data-f="route"><option value="">${T.type === "QC" ? "Not needed" : "Not set"}</option>${["Short", "Long"].map((x) => `<option ${T.route === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+      <div class="field"><label class="label">Crates ${auto("crates")}</label>${num("crates", T.crates, "0")}</div>
+      <div class="field"><label class="label">Invoiced revenue, excl. GST ${auto("revenue")}</label>${num("revenue", T.revenue, "0.00")}</div>
+    </div></div></div>
+    <div><div class="group-label"><span>3 · Kilometres and cost</span><span>${tr && tr.mode === "km" ? `${esc(tr.name)}: ₹${tr.rate} per km` : "Amount paid for this trip"}</span></div><div class="card card-pad"><div class="form-grid">
+      <div class="field"><label class="label">Odometer at start</label>${num("odoStart", T.odoStart, "Reading at the start")}</div>
+      <div class="field"><label class="label">Odometer at end</label>${num("odoEnd", T.odoEnd, "Reading at the end")}</div>
+      <div class="field"><label class="label">Km, both ways</label>${num("km", T.km, "0")}</div>
+      <div class="field"><label class="label">Logistics cost (₹)${tr && tr.mode === "km" && !T.own.cost ? ` <span class="pill plain" style="height:20px;font-size:11px">km × ₹${tr.rate}</span>` : ""}</label>${num("cost", T.cost, tr && tr.mode === "km" ? "Fills in from the km" : "What you paid")}</div>
+      <div class="field"><label class="label">Halting time, hours after the first free hour</label>${num("halting", T.halting, "0")}</div>
+      <div class="field"><label class="label">Note</label><input class="input" value="${esc(T.note || "")}" data-in="tripF" data-f="note" placeholder="Optional"></div>
+    </div>
+    <div class="hstack gap-12 wrap" style="margin-top:14px" id="trip-sum">${tripSum(T)}</div></div></div>`;
+}
+const tripSum = (T) => { const p = T.revenue > 0 && T.cost != null ? T.cost / T.revenue : null; return `<span class="pill ${p == null ? "plain" : p > 0.06 ? "bad" : p > 0.045 ? "warn" : "good"}">${p != null ? pct(p, 2) + " of revenue" : "Add revenue and cost to see the %"}</span>${T.crates > 0 && T.cost != null ? `<span class="pill plain">${rs2(T.cost / T.crates)} per crate</span>` : ""}${T.km > 0 && T.cost != null ? `<span class="pill plain">${rs2(T.cost / T.km)} per km</span>` : ""}`; };
+const tripRedraw = () => { const sc = $("#sheet .sheet-body") || $("#sheet"), y = sc ? sc.scrollTop : 0; part("trip-body", tripBody()); if (sc) sc.scrollTop = y; };
+IN.tripF = (el) => {
+  const T = S.trip, f = el.dataset.f, v = el.value;
+  if (["crates", "km", "revenue", "cost", "halting", "odoStart", "odoEnd"].includes(f)) { T[f] = v === "" ? null : +v; if (["crates", "revenue", "cost", "km"].includes(f)) T.own[f] = v !== ""; }
+  else { T[f] = v; if (["sellers", "type", "route"].includes(f)) T.own[f] = true; }
+  if (f === "route") T.route = v || null;
+  if (f === "transporter") { const tr = transporterOf(v); T.own.cost = false; if (tr && tr.mode === "km" && T.odoStart == null) T.odoStart = lastOdo(tr.name); if (tr && tr.mode !== "km") T.cost = null; }
+  if (f === "odoStart" || f === "odoEnd") T.own.km = false;
+  tripCalc(T);
+  if (["transporter", "date", "type"].includes(f) || el.tagName === "SELECT") tripRedraw();
+  else { part("trip-sum", tripSum(T)); ["km", "cost"].forEach((k) => { if (k === f) return; const i = document.querySelector(`#trip-body [data-in="tripF"][data-f="${k}"]`); if (i && document.activeElement !== i) i.value = T[k] != null ? T[k] : ""; }); const rt = document.querySelector(`#trip-body [data-in="tripF"][data-f="route"]`); if (rt) rt.value = T.route || ""; }
+};
+IN.tripLink = (el) => {
+  const T = S.trip, arr = el.dataset.k === "o" ? T.orders : T.qc, v = el.dataset.v;
+  if (el.checked && !arr.includes(v)) arr.push(v); if (!el.checked) arr.splice(arr.indexOf(v), 1);
+  T.own.sellers = T.own.crates = T.own.revenue = T.own.type = false; tripRedraw();
+};
+ACT.tripSave = () => {
+  const L = logi(), T = S.trip; tripCalc(T);
+  if (!T.date) { toast("Add the date", "alert"); return; }
+  if (!T.sellers && !T.orders.length && !T.qc.length) { toast("Tick what went on the trip, or type the sellers", "alert"); return; }
+  const rec = { id: T.id || "TRIP-" + T.date.replace(/-/g, "") + "-" + stamp(NOW()).slice(-6), date: T.date, sellers: T.sellers || (tripAuto(T) || {}).sellers || "", type: T.type || "GT", crates: T.crates, km: T.km, odoStart: T.odoStart, odoEnd: T.odoEnd, revenue: T.revenue, cost: T.cost, rate: (transporterOf(T.transporter) || {}).mode === "km" ? transporterOf(T.transporter).rate : null, transporter: T.transporter || "", halting: T.halting, route: T.type === "QC" ? T.route || null : T.route || null, orders: T.orders.slice(), qc: T.qc.slice(), source: T.isNew ? "app" : T.source || "app", note: T.note || "" };
+  const i = L.trips.findIndex((x) => x.id === rec.id); if (i >= 0) { rec.source = L.trips[i].source || rec.source; L.trips[i] = rec; } else L.trips.push(rec);
+  logActivity(i >= 0 ? "Trip updated" : "Trip logged", fmtDate(rec.date), `${rec.sellers} · ${rec.cost != null ? rs(rec.cost) : "cost not added"}${tripPct(rec) != null ? " · " + pct(tripPct(rec), 1) : ""}`);
+  S.trip = null; closeSheet(); if (S.route === "logistics") render(); else render();
+  toast(rec.cost != null ? `Trip saved · ${tripPct(rec) != null ? pct(tripPct(rec), 1) + " of revenue" : rs(rec.cost)}` : "Trip saved. Add the cost when you have it", "truck");
+};
+ACT.tripDelAsk = () => { part("trip-sum", `<div class="confirm" style="width:100%"><span><b>Delete this trip?</b> Its orders go back to "no trip logged".</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="tripDelNo">Keep it</button><button class="btn btn-sm btn-danger" data-act="tripDel">Delete</button></span></div>`); };
+ACT.tripDelNo = () => part("trip-sum", tripSum(S.trip));
+ACT.tripDel = () => { const L = logi(), T = S.trip; L.trips = L.trips.filter((x) => x.id !== T.id); logActivity("Trip deleted", fmtDate(T.date), T.sellers || ""); S.trip = null; closeSheet(); render(); toast("Trip deleted"); };
+/* ---------- transporters ---------- */
+ACT.logiTransporters = () => {
+  const L = logi();
+  openSheet("Transporters", `<div class="banner info">${ic("info", "sm")}<span>A per-km transporter is costed automatically: km both ways × the rate. For the others, type what you paid for each trip.</span></div>
+    <div class="group">${L.transporters.map((t, i) => `<div class="row" style="flex-wrap:wrap;gap:10px"><span class="grow" style="min-width:160px"><input class="input sm" value="${esc(t.name)}" data-in="trF" data-i="${i}" data-f="name" aria-label="Name"></span><select class="select sm" style="width:auto" data-in="trF" data-i="${i}" data-f="mode"><option value="km" ${t.mode === "km" ? "selected" : ""}>Per km</option><option value="trip" ${t.mode !== "km" ? "selected" : ""}>Per trip (market)</option></select>${t.mode === "km" ? `<span class="hstack gap-8"><span class="row-sub">₹</span><input class="input sm num-in" style="width:80px" type="number" min="0" step="any" value="${t.rate != null ? t.rate : ""}" data-in="trF" data-i="${i}" data-f="rate" aria-label="Rate per km"><span class="row-sub">/ km</span></span>` : ""}</div>`).join("")}</div>
+    <button class="btn btn-secondary" data-act="trAdd">${ic("plus", "sm")} Add a transporter</button>`, `<button class="btn btn-primary" data-act="closeSheet">Done</button>`);
+};
+IN.trF = (el) => { const t = logi().transporters[+el.dataset.i], f = el.dataset.f, was = t.name; if (f === "rate") t.rate = el.value === "" ? null : +el.value; else t[f] = el.value; if (f === "name" && was !== el.value) logi().trips.forEach((x) => { if (x.transporter === was) x.transporter = el.value; }); if (f === "mode") ACT.logiTransporters(); };
+ACT.trAdd = () => { logi().transporters.push({ name: "New transporter", mode: "trip" }); ACT.logiTransporters(); };
+/* ---------- Excel, laid out like the old workbook ---------- */
+ACT.logiExcel = async (el) => {
+  const L = logi(), F = S.logi || { preset: "all", type: "all", tr: "all" }, R = logiRange(F.preset), now = NOW(), st = `${pad2(now.getDate())}-${pad2(now.getMonth() + 1)}-${now.getFullYear()}`;
+  const trips = logiFilter(L.trips, F, R.from, R.to).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1));
+  const xd = (s) => { const d = toDate(s); return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); };
+  const data = [["Date", "Sellers", "Type", "Crates", "KM (Both side)", "Invoiced Revenue", "Logistics cost ", "% of Revenue", "Transporter", "Halting time (in Hrs) after 1st free hour", "Route", "Month", "Odometer start", "Odometer end", "Note"]];
+  trips.forEach((t) => data.push([xd(t.date), t.sellers, t.type, t.crates, t.km, t.revenue, t.cost, tripPct(t) != null ? +tripPct(t).toFixed(4) : "", t.transporter || "", t.halting, t.route || "", +t.date.slice(5, 7), t.odoStart, t.odoEnd, t.note || ""]));
+  const tot = logiStats(trips);
+  data.push(["", "TOTAL", "", tot.crates, tot.km, Math.round(tot.rev * 100) / 100, tot.cost, tot.pct != null ? +tot.pct.toFixed(4) : "", "", "", "", "", "", "", ""]);
+  const piv = [["Type", "Route", "Sum of Invoiced Revenue", "Sum of logistics cost ", "Logistics Cost %", "Trips"]];
+  ["GT", "QC"].forEach((ty) => { const tt = trips.filter((t) => t.type === ty); if (!tt.length) return; logiGroup(tt, (t) => (ty === "QC" ? "(blank)" : t.route || "(blank)")).sort((a, b) => (a.k < b.k ? -1 : 1)).forEach((x, i) => piv.push([i ? "" : ty, x.k, Math.round(x.rev * 100) / 100, x.cost, x.pct != null ? +x.pct.toFixed(4) : "", x.n])); const s = logiStats(tt); piv.push([ty + " Total", "", Math.round(s.rev * 100) / 100, s.cost, s.pct != null ? +s.pct.toFixed(4) : "", s.n]); });
+  piv.push(["Grand Total", "", Math.round(tot.rev * 100) / 100, tot.cost, tot.pct != null ? +tot.pct.toFixed(4) : "", tot.n]);
+  const mon = [["Month", "Trips", "Crates", "KM (Both side)", "Invoiced Revenue", "Logistics cost", "% of Revenue", "Cost per crate"]].concat(logiByMonth(trips).map((x) => [x.label, x.n, x.crates, x.km, Math.round(x.rev * 100) / 100, x.cost, x.pct != null ? +x.pct.toFixed(4) : "", x.perCrate != null ? +x.perCrate.toFixed(2) : ""]));
+  const trs = [["Transporter", "Trips", "KM (Both side)", "Logistics cost", "Per km", "Per crate", "% of Revenue"]].concat(logiGroup(trips, (t) => t.transporter || "Not set").sort((a, b) => b.cost - a.cost).map((x) => [x.k, x.n, x.km, x.cost, x.km ? +(x.cost / x.km).toFixed(2) : "", x.perCrate != null ? +x.perCrate.toFixed(2) : "", x.pct != null ? +x.pct.toFixed(4) : ""]));
+  const sheets = [{ name: "Data entry", aoa: data, cols: [12, 44, 6, 8, 10, 14, 12, 10, 18, 14, 8, 7, 11, 11, 24] }, { name: "Overall pivot", aoa: piv, cols: [14, 10, 22, 20, 16, 8] }, { name: "By month", aoa: mon, cols: [10, 7, 8, 12, 16, 14, 12, 12] }, { name: "By transporter", aoa: trs, cols: [20, 7, 12, 14, 9, 10, 12] }];
+  L.transporters.filter((t) => t.mode === "km").forEach((t) => { const rows = logiByMonth(trips.filter((x) => key(x.transporter) === key(t.name))); if (rows.length) sheets.push({ name: t.name.slice(0, 28), aoa: [["Transporter", t.name], [], ["Month", "Trips", "Sum of KM (Both side)", `Amount at ₹${t.rate}/km`]].concat(rows.map((r) => [r.label, r.n, r.km, r.km * t.rate]), [["Grand Total", rows.reduce((a, r) => a + r.n, 0), rows.reduce((a, r) => a + r.km, 0), rows.reduce((a, r) => a + r.km, 0) * t.rate]]), cols: [14, 8, 20, 18] }); });
+  if (await downloadBook(el, sheets, `SahiReach logistics ${R.label === "All time" ? "" : R.label + " "}${st}.xlsx`)) { logActivity("Logistics downloaded", R.label, `${trips.length} trips`); toast("Logistics downloaded as Excel", "doc"); }
+};
+
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
 (function buildShell() {
   const item = (r, extra = "") => `<button class="nav-item" data-act="nav" data-to="${r}" data-nav="${r}">${ic(ROUTES[r].icon)}<span>${ROUTES[r].label}</span>${extra}</button>`;
@@ -2800,7 +3044,7 @@ ACT.emailQCPick = async () => {
     ${item("home")}
     <div class="nav-label">Sell</div>${item("orders")}${item("dispatch", `<span class="nav-badge hot" id="badge-dispatch" hidden></span>`)}${item("quick", `<span class="nav-badge" id="badge-quick" hidden></span>`)}
     <div class="nav-label">Stock</div>${item("stock")}${item("replenish")}
-    <div class="nav-label">Money</div>${item("tod")}
+    <div class="nav-label">Money</div>${item("tod")}${item("logistics")}
     <div class="nav-label">Manage</div>${item("setup")}
     <div class="side-foot"><button class="nav-item" data-act="cmd">${ic("search")}<span>Search</span><span class="nav-badge">⌘K</span></button><${HOST ? 'button class="me me-btn" data-act="account" aria-label="Account"' : 'div class="me"'}><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow" style="text-align:left;min-width:0"><span class="clip" style="display:block;font-weight:600;font-size:14px">${esc(ME.name)}</span><span class="brand-sub" style="display:block">SahiReach LLP</span></span>${HOST ? ic("chevR", "sm chev") : ""}</${HOST ? "button" : "div"}></div>`;
   const tab = (r, label) => `<button class="tab" data-act="nav" data-to="${r}" data-nav="${r}">${ic(ROUTES[r].icon)}<span>${label}</span></button>`;
