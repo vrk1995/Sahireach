@@ -1169,13 +1169,14 @@ function loadScriptOnce(src, test) {
   return new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = () => (test() ? ok() : bad(new Error("not loaded"))); s.onerror = () => bad(new Error("not loaded")); document.head.appendChild(s); });
 }
 const XLSX_SRC = (HOST && HOST.xlsxSrc) || "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
-async function downloadXlsx(el, aoa, cols, file, sheet, merges) {
+function downloadXlsx(el, aoa, cols, file, sheet, merges) { return downloadBook(el, [{ name: sheet, aoa, cols, merges }], file); }
+/* several sheets in one workbook; the first sheet opens first */
+async function downloadBook(el, sheets, file) {
   if (el) el.disabled = true;
   try { await loadScriptOnce(XLSX_SRC, () => !!window.XLSX); }
   catch (e) { if (el) el.disabled = false; toast("Could not prepare the Excel file. Check your internet and try again.", "alert"); return false; }
-  const X = window.XLSX, ws = X.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = cols.map((w) => ({ wch: w })); if (merges) ws["!merges"] = merges;
-  const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, sheet);
+  const X = window.XLSX, wb = X.utils.book_new();
+  sheets.forEach((sh) => { const ws = X.utils.aoa_to_sheet(sh.aoa); ws["!cols"] = sh.cols.map((w) => ({ wch: w })); if (sh.merges) ws["!merges"] = sh.merges; if (sh.freeze) ws["!freeze"] = sh.freeze; X.utils.book_append_sheet(wb, ws, sh.name); });
   X.writeFile(wb, file, { compression: true });
   if (el) el.disabled = false; return true;
 }
@@ -1583,7 +1584,7 @@ VIEWS.replenish = () => {
     <div class="chips">${["All", "On this truck", "Changed", "Below reorder", "Hero", "Core", "Tail", "Push", "Don't order"].map((f) => `<button class="chip" data-act="replFilter" data-f="${esc(f)}" aria-pressed="${S.replFilter === f}">${esc(f)}${f !== "All" ? ` <span style="opacity:.6" data-rc="${esc(f)}">${count(f)}</span>` : ""}</button>`).join("")}</div>
     <div id="repl-grid">${replGrid()}</div>`;
   return `<div class="page">
-    <div class="page-head"><div><h1 class="title">Replenishment</h1><div class="subtitle">What to order from Hangyo and when, worked out from your sales, missed sales and stock.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="replAdd">${ic("plus", "sm")} Add product to plan</button><button class="btn btn-secondary" data-act="clearAsk">${ic("undo", "sm")} Clear my changes</button><button class="btn btn-secondary" data-act="planTruck">${ic("cycle", "sm")} Plan the truck</button><button class="btn btn-primary" data-act="makePO">${ic("doc", "sm")} Make Hangyo PO</button></div></div>
+    <div class="page-head"><div><h1 class="title">Replenishment</h1><div class="subtitle">What to order from Hangyo and when, worked out from your sales, missed sales and stock.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="replAdd">${ic("plus", "sm")} Add product to plan</button><button class="btn btn-secondary" data-act="clearAsk">${ic("undo", "sm")} Clear my changes</button><button class="btn btn-secondary" data-act="planTruck">${ic("cycle", "sm")} Plan the truck</button><button class="btn btn-secondary" data-act="replExcel">${ic("doc", "sm")} Download Excel</button><button class="btn btn-primary" data-act="makePO">${ic("doc", "sm")} Make Hangyo PO</button></div></div>
     ${seg("replTab", S.replTab, [["plan", "Truck plan"], ["qc", "Swiggy & Zepto"], ["orders", "Hangyo POs"], ["rules", "Rules"]])}
     ${S.replTab === "plan" ? plan : S.replTab === "qc" ? qcReplHtml() : S.replTab === "orders" ? poLogHtml() : rulesHtml()}</div>`;
 };
@@ -1646,7 +1647,7 @@ ACT.makePO = () => {
     <div class="group-label" style="padding-bottom:0"><span>Own stock · ${lines.length} lines</span></div>${lines.length ? tbl(lines, (r) => r.final) : `<div class="group"><div class="empty">Nothing for own stock.</div></div>`}
     <div class="group-label" style="padding-bottom:0"><span>Quick commerce stock · ${qls.length} lines</span></div>${typedNote}${qls.length ? tbl(qls, (q) => q.final) : `<div class="group"><div class="empty">Nothing for Swiggy / Zepto.</div></div>`}
     <div class="row-sub">The Hangyo portal takes boxes. Place the order there, then mark it as placed so the next plan does not order it twice.</div>`,
-    `<button class="btn btn-secondary" data-act="copyPO">${ic("copy", "sm")} Copy lines</button><button class="btn btn-primary" data-act="placePO">Mark PO as placed</button>`, true);
+    `<button class="btn btn-secondary" data-act="replExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="copyPO">${ic("copy", "sm")} Copy lines</button><button class="btn btn-primary" data-act="placePO">Mark PO as placed</button>`, true);
 };
 ACT.copyPO = () => copyText(["OWN STOCK"].concat(D.repl.rows.filter((r) => r.final > 0).map((r) => `${r.name}\t${r.final} crates\t${r.final * (r.upc || 0)} boxes`), ["", "QUICK COMMERCE STOCK"], qcPOLines().map((q) => `${q.name}\t${q.final} crates\t${q.final * (q.upc || 0)} boxes`)).join("\n"), "PO lines copied");
 ACT.placePO = () => {
@@ -1752,6 +1753,58 @@ function slowOffer(dist) {
   if (!list.length) return "";
   return `<div class="offer"><span class="offer-k">${ic("bolt", "sm")} ${theirs.length ? "Offer them, they bought it before:" : "Slow stock to offer:"}</span>${list.map((r) => `<button class="chip" data-act="addLine" data-sap="${r.sap}" title="${esc(r.name)} · ${nf(r.crates, 1)} crates in stock, lasts ${coverTxt(r)}">${esc(shortName(r.name).split("(")[0].trim())} <span style="opacity:.6">${nf(r.crates, 0)}</span></button>`).join("")}</div>`;
 }
+
+/* ===== REPLENISHMENT AS AN EXCEL WORKBOOK =====
+   Sheet 1 "Hangyo PO" keeps the layout of the old Excel PO sheet (title, party row, headers on row 3, TOTAL on row 4,
+   one product per row from row 5), so it can be used to place the order on the Hangyo portal as before. */
+const r2 = (v) => (v == null || v === "" || isNaN(+v) ? null : Math.round(+v * 100) / 100);
+function replBookSheets() {
+  recomputeRepl();
+  const R = D.repl, now = NOW(), T = replTotals(), qls = qcPOLines(), ch = R.changes || { youSet: [], moved: [], qcYou: [] };
+  const dateTxt = `${pad2(now.getDate())}-${pad2(now.getMonth() + 1)}-${now.getFullYear()}`, timeTxt = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+  const word = R.decision.includes("NOW") ? "Order now" : R.decision.includes("SOON") ? "Order soon" : "Hold";
+  const orderOn = !R.orderBy ? "Not in 60 days" : R.orderBy <= ymd(now) ? "Today" : fmtDate(R.orderBy);
+  const qcCr = qls.reduce((a, q) => a + q.final, 0), qcVal = qls.reduce((a, q) => a + q.final * (q.upc || 0) * (ssRate(q.sap) || 0), 0);
+  /* 1 · Hangyo PO: own + quick commerce together, one line per product */
+  const po = {};
+  R.rows.filter((r) => r.final > 0).forEach((r) => { po[r.sap] = { name: r.name, cat: r.cat || "", upc: r.upc || 0, own: r.final, qc: 0, sap: r.sap }; });
+  qls.forEach((q) => { const x = (po[q.sap] = po[q.sap] || { name: q.name, cat: q.cat || (catBySap[q.sap] || {}).cat || "", upc: q.upc || 0, own: 0, qc: 0, sap: q.sap }); x.qc += q.final; });
+  const poRows = Object.values(po).sort((a, b) => a.name.localeCompare(b.name));
+  const poCr = poRows.reduce((a, x) => a + x.own + x.qc, 0), poBx = poRows.reduce((a, x) => a + (x.own + x.qc) * x.upc, 0);
+  const poAoa = [["HANGYO ICECREAM PURCHASE"], [`SAHIREACH LLP · ${dateTxt} ${timeTxt} · ${word} · own stock ${nf(T.own)} + quick commerce ${nf(qcCr)} = ${nf(T.own + qcCr)} of ${nf(R.truck)} crates`],
+    ["PRODUCT NAME", "TYPE", "Units/Crates", "ORDER CRATE NUMBER", "BOXES/UNITS", "Own stock crates", "Quick commerce crates", "SAP code", "Value at SS rate"],
+    ["TOTAL", "", "", poCr, poBx, T.own, qcCr, "", Math.round(T.value + qcVal)]];
+  poRows.forEach((x) => { const c = x.own + x.qc; poAoa.push([x.name, x.cat, x.upc, c, c * x.upc, x.own || null, x.qc || null, x.sap, Math.round(c * x.upc * (ssRate(x.sap) || 0))]); });
+  /* 2 · Truck plan: every own-stock product with the engine's working */
+  const rows = R.rows.slice().sort((a, b) => (b.final || 0) - (a.final || 0) || (b.perDay || 0) - (a.perDay || 0) || a.name.localeCompare(b.name));
+  const changeTxt = (r) => (!r.delta ? null : ch.youSet.includes(r.sap) || (r.yours != null && r.yours !== "") ? `You set ${r.delta > 0 ? "+" : ""}${r.delta}` : r.delta < 0 ? `${r.delta} to make room` : `+${r.delta} to fill`);
+  const plan = [["REPLENISHMENT: TRUCK PLAN  (SahiReach LLP)"], [`Worked out ${dateTxt} ${timeTxt} from stock, orders, missed sales and open Hangyo POs`], [],
+    ["The engine says", word], ["Why", R.why || ""], ["Order on", orderOn], ["Truck size (crates)", R.truck], ["Own stock on this truck", T.own], ["Quick commerce on this truck", qcCr], ["Total on this truck", T.own + qcCr],
+    ["Value at SS rate", Math.round(T.value + qcVal)], ["Own sales (crates / day)", r2(R.perDay)], ["One truck lasts (days)", R.truckDays], ["Hero / Core below reorder point", R.belowRop], ["Hero / Core that run out before the truck", R.runOut || 0], [],
+    ["SAP code", "Tropicana code", "Product", "Category", "Class", "Order rule", "Sold, last 14 days", "Sold, days 15–28", "Sold, days 29–56", "Missed, 28 days", "Sells / day", "Stock (crates)", "On order", "Days of stock", "Safety stock", "Reorder point", "Target stock", "Below reorder point", "Suggested", "Your crates", "Final crates", "Boxes", "Change vs plan", "Value at SS rate", "Days of stock after truck", "Note"]];
+  const head = plan.length;
+  rows.forEach((r) => plan.push([r.sap, tropCode(r.sap) || "", r.name, r.cat || "", r.cls || "", r.rule || "Auto", r2(r.s14), r2(r.s28), r2(r.s56), r2(r.missed), r2(r.perDay), r2(r.stock), r2(r.onOrder), r.perDay > 0 ? r2(r.days) : null, r2(r.safety), r2(r.rop), r2(r.target), r.belowRop ? "Yes" : "", r2(r.suggested), r.yours != null && r.yours !== "" ? +r.yours : null, r.final || 0, (r.final || 0) * (r.upc || 0), changeTxt(r), Math.round(r.value || 0), r.daysAfter != null ? r2(r.daysAfter) : null, r.note || ""]));
+  plan.push(["", "", "TOTAL", "", "", "", r2(rows.reduce((a, r) => a + (r.s14 || 0), 0)), r2(rows.reduce((a, r) => a + (r.s28 || 0), 0)), r2(rows.reduce((a, r) => a + (r.s56 || 0), 0)), r2(rows.reduce((a, r) => a + (r.missed || 0), 0)), r2(rows.reduce((a, r) => a + (r.perDay || 0), 0)), r2(rows.reduce((a, r) => a + (r.stock || 0), 0)), r2(rows.reduce((a, r) => a + (r.onOrder || 0), 0)), "", "", "", "", "", rows.reduce((a, r) => a + (r.suggested || 0), 0), "", T.own, rows.reduce((a, r) => a + (r.final || 0) * (r.upc || 0), 0), "", Math.round(T.value), "", ""]);
+  /* 3 · Swiggy & Zepto */
+  const qrows = D.qcStock.slice().sort((a, b) => (b.final || 0) - (a.final || 0) || (b.perDay || 0) - (a.perDay || 0));
+  const typed = R.qcCrates != null && R.qcCrates !== "";
+  const qc = [["REPLENISHMENT: SWIGGY & ZEPTO STOCK  (SahiReach LLP)"], [`Worked out ${dateTxt} ${timeTxt} · suggested = Swiggy and Zepto orders per day over 28 days × (${replCfg().lead} days lead time + ${R.truckDays} days one truck lasts + ${replCfg().qcSafety} extra days), less stock after open POs`], typed ? [`You typed ${nf(+R.qcCrates)} quick commerce crates for the truck on the Truck plan tab`] : [], [],
+    ["SAP code", "Tropicana code", "Product", "Pieces / crate", "QC stock (crates)", "On open POs (crates)", "On order from Hangyo", "Sells / day (crates)", "Days of stock after POs", "Suggested", "Your crates", "Final crates", "Boxes", "Change vs plan", "Value at SS rate"]];
+  qrows.forEach((q) => qc.push([q.sap, q.trop || tropCode(q.sap) || "", q.name, q.ppc || null, r2(q.crates || 0), r2(q.openCrates || 0), r2(q.onOrder || 0), r2(q.perDay), q.daysAfter != null ? r2(q.daysAfter) : null, q.suggested || 0, q.yours != null && q.yours !== "" ? +q.yours : null, q.final || 0, (q.final || 0) * (q.upc || 0), q.delta ? `You set ${q.delta > 0 ? "+" : ""}${q.delta}` : null, Math.round((q.final || 0) * (q.upc || 0) * (ssRate(q.sap) || 0))]));
+  qc.push(["", "", "TOTAL", "", r2(qrows.reduce((a, q) => a + (q.crates || 0), 0)), r2(qrows.reduce((a, q) => a + (q.openCrates || 0), 0)), r2(qrows.reduce((a, q) => a + (q.onOrder || 0), 0)), r2(R.qcPerDay), "", qrows.reduce((a, q) => a + (q.suggested || 0), 0), "", qcCr, qls.reduce((a, q) => a + q.final * (q.upc || 0), 0), "", Math.round(qcVal)]);
+  return {
+    file: `SahiReach replenishment ${dateTxt} ${timeTxt.replace(":", "")}.xlsx`, poLines: poRows.length, head,
+    sheets: [
+      { name: "Hangyo PO", aoa: poAoa, cols: [46, 16, 12, 20, 13, 15, 20, 11, 15], merges: [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } }] },
+      { name: "Truck plan", aoa: plan, cols: [10, 13, 44, 16, 10, 12, 10, 10, 10, 10, 9, 10, 9, 9, 9, 9, 9, 10, 10, 10, 10, 8, 18, 13, 12, 40], merges: [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } }, { s: { r: 4, c: 1 }, e: { r: 4, c: 12 } }] },
+      { name: "Swiggy & Zepto", aoa: qc, cols: [10, 13, 44, 10, 12, 13, 13, 12, 13, 10, 10, 10, 8, 14, 13], merges: [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 12 } }] },
+    ],
+  };
+}
+ACT.replExcel = async (el) => {
+  const B = replBookSheets();
+  if (await downloadBook(el, B.sheets, B.file)) { logActivity("Replenishment downloaded", `${B.poLines} PO lines`, "Excel"); toast("Replenishment downloaded as Excel", "doc"); }
+};
 
 /* ===== TOD & NOTES ===== */
 function todState() {
