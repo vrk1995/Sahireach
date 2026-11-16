@@ -1080,7 +1080,7 @@ ACT.saveOrder = () => {
 ACT.nav2 = (el) => { closeSheet(); go(el.dataset.to); };
 
 /* ===== READ AN ORDER FROM A MESSAGE, AN EXCEL FILE OR A PHOTO =====
-   1. Read: Claude reads it when smart reading is switched on (staff site), otherwise the matcher on this device.
+   1. Read: the matcher on this device (smart reading with Claude is built but switched off: IMP_SMART).
    2. Check (first confirmation): what was understood, what was not, stock, and in-stock alternatives.
    3. The lines go into the normal New order screen, where Save order is the second confirmation.
    Corrections are remembered, so the same wording matches straight away next time. */
@@ -1264,7 +1264,9 @@ function impAlternatives(sap, need) {
 function impCatalogText() {
   return D.catalog.filter((c) => c.sap).map((c) => { const st = stockBySap[c.sap], cr = st && st.upc ? Math.floor(st.ea / st.upc) : null, link = (replBySap[c.sap] || {}).same; return `${c.sap} | ${c.name} | ${c.cat || ""} | ${(st && st.upc) || c.upc || "?"} boxes/crate, ${(st && st.ppe) || c.ppe || 1} pcs/box | ${cr == null ? "not stocked" : cr > 0 ? cr + " crates in stock" : "out of stock"}${link ? " | old pack, now ordered as " + link : ""}`; }).join("\n");
 }
+const IMP_SMART = false; /* Claude reading: switch on later */
 async function impSmart(input, distHint) {
+  if (!IMP_SMART) return null;
   if (!HOST || !HOST.readOrder || D.company && D.company.smartOff) return null;
   const bought = distHint ? Object.entries(impBought(distHint)).sort((a, b) => b[1] - a[1]).slice(0, 60).map(([s]) => s) : [];
   const aliases = Object.entries(D.orderAliases || {}).slice(-150).map(([k, v]) => `${k} => ${v}`).join("\n");
@@ -1299,10 +1301,10 @@ function impBuild(parsed, distName, smart) {
 /* ---------- screens ---------- */
 ACT.importOrder = () => {
   S.impIn = S.impIn || { text: "", file: null };
-  const smartOn = !!(HOST && HOST.readOrder) && !S.smartMissing && !(D.company && D.company.smartOff);
+  const smartOn = IMP_SMART && !!(HOST && HOST.readOrder) && !S.smartMissing && !(D.company && D.company.smartOff);
   openSheet("Read an order", `<div class="card card-pad"><div class="field"><label class="label" for="imp-text">Paste the message</label><textarea class="input" id="imp-text" rows="10" style="height:auto;min-height:200px;padding:12px;line-height:1.45" placeholder="Aqua blue Exim - Primary order&#10;&#10;Vanilla cup 2&#10;Mini Choco bar 2&#10;Big cone Vanilla 2&#10;Sipup&#10;Vanilla 1">${esc(S.impIn.text)}</textarea></div>
       <div class="hstack gap-12 wrap" style="margin-top:14px;align-items:center"><span class="row-sub">or</span><label class="btn btn-secondary" for="imp-file" style="cursor:pointer">${ic("doc", "sm")} Choose a file</label><input id="imp-file" type="file" accept=".xlsx,.xls,.csv,.txt${smartOn ? ",image/*" : ""}" hidden data-in="impFile"><span class="row-sub" id="imp-fname">${S.impIn.file ? esc(S.impIn.file.name) : smartOn ? "Excel, CSV, text or a photo of the order" : "Excel, CSV or text"}</span></div>
-      <div class="row-sub" style="margin-top:12px">${smartOn ? `${ic("bolt", "sm")} Claude reads the order and finds the closest products. You check everything before anything is saved.` : HOST ? `Read on this device, using names, sizes and what each distributor bought before. Smart reading with Claude (for photos and harder messages) is not switched on yet.` : `Read on this device, using names, sizes and what each distributor bought before.`}</div></div>
+      <div class="row-sub" style="margin-top:12px">${smartOn ? `${ic("bolt", "sm")} Claude reads the order and finds the closest products. You check everything before anything is saved.` : `The tool finds the closest products from the names, sizes and what each distributor bought before. You check everything before anything is saved.`}</div></div>
       <div id="imp-wait"></div>`,
     `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="impRead">Read order</button>`);
   setTimeout(() => { const t = $("#imp-text"); if (t && !S.impIn.text) t.focus(); }, 60);
@@ -1379,7 +1381,7 @@ function impBody() {
   const order = L.map((l, i) => i).sort((a, b) => { const r = (l) => (!l.sap && !l.leave ? 0 : l.leave ? 3 : l.conf !== "sure" || l.qty == null ? 1 : 2); return r(L[a]) - r(L[b]) || a - b; });
   return `<div class="card card-pad"><div class="hstack between wrap gap-12"><div class="field" style="min-width:260px;flex:1"><label class="label" for="imp-dist">Distributor</label><select class="select" id="imp-dist" data-in="impDist">${I.dist ? "" : `<option value="">Choose the distributor…</option>`}${D.distributors.map((d) => `<option ${d.name === I.dist ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></div>
       <div class="hstack gap-8 wrap">${none.length ? `<span class="pill bad">${none.length} not understood</span>` : ""}${check.length ? `<span class="pill warn">${check.length} to check</span>` : ""}<span class="pill good">${sure.length} matched</span>${oos ? `<span class="pill plain">${oos} short or out of stock</span>` : ""}</div></div>
-    <div class="row-sub" style="margin-top:10px">${I.smart ? `${ic("bolt", "sm")} Read by Claude` : "Read on this device"} from ${I.src === "excel" ? "the Excel file" : I.src === "photo" ? "the photo" : "the message"}${I.file ? ` (${esc(I.file)})` : ""}. ${I.skipped ? `${I.skipped} rows with no quantity were skipped. ` : ""}Nothing is saved until you press Save order on the next screen.</div></div>
+    <div class="row-sub" style="margin-top:10px">${I.smart ? `${ic("bolt", "sm")} Read by Claude` : "Read"} from ${I.src === "excel" ? "the Excel file" : I.src === "photo" ? "the photo" : "the message"}${I.file ? ` (${esc(I.file)})` : ""}. ${I.skipped ? `${I.skipped} rows with no quantity were skipped. ` : ""}Nothing is saved until you press Save order on the next screen.</div></div>
     ${none.length ? `<div class="banner bad">${ic("alert", "sm")}<span><b>${none.length} line${none.length > 1 ? "s" : ""} could not be understood:</b> ${none.map((l) => "“" + esc(l.raw) + "”").join(", ")}. Choose the product or leave ${none.length > 1 ? "them" : "it"} out.</span></div>` : ""}
     <div class="group imp-list">${order.map((i) => impLineHtml(L[i], i)).join("")}</div>
     <div class="row-sub">Your corrections are remembered, so the same wording is matched straight away next time.</div>
