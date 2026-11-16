@@ -1242,7 +1242,7 @@ function qcOpenHtml() {
   const ok = Dl.value >= Dl.min, prog = Dl.min ? Math.min(100, (Dl.value / Dl.min) * 100) : 100;
   if (!list.length) return `<div class="group"><div class="empty"><div class="big">No open ${esc(S.qcPlatform)} POs</div>Add a PO when it arrives and it will show here until it is delivered or lapses.</div></div>`;
   return `<div class="split s320">
-    <div class="stack gap-20"><div><div class="group-label"><span>Open POs, soonest expiry first</span></div><div class="group">${list.map((p) => { const exp = daysLeft(p) < 0; return `<div class="row tap" ${exp ? "" : `role="checkbox" tabindex="0" aria-checked="${!!S.qcPicked[p.po]}" data-act="toggleQC" data-po="${p.po}" style="cursor:pointer"`}><span class="check" aria-checked="${!exp && !!S.qcPicked[p.po]}" ${exp ? 'style="opacity:.3"' : ""}>${ic("check")}</span><span class="grow"><div class="row-title mono" style="font-size:14.5px">${esc(p.po)}</div><div class="row-sub">${p.lines} lines · ${nf(p.pcs)} pieces · PO of ${fmtDate(p.date)}</div></span><span class="row-end"><span style="text-align:right"><div class="row-value">${rs(p.value)}</div><div style="margin-top:3px">${expiryPill(p)}</div></span><button class="icon-btn" data-act="qcPOSheet" data-po="${p.po}" aria-label="Open PO">${ic("chevR", "sm")}</button></span></div>`; }).join("")}</div></div>
+    <div class="stack gap-20"><div><div class="group-label"><span>Open POs, soonest expiry first</span></div><div class="group">${list.map((p) => { const exp = daysLeft(p) < 0; return `<div class="row tap" ${exp ? "" : `role="checkbox" tabindex="0" aria-checked="${!!S.qcPicked[p.po]}" data-act="toggleQC" data-po="${p.po}" style="cursor:pointer"`}><span class="check" aria-checked="${!exp && !!S.qcPicked[p.po]}" ${exp ? 'style="opacity:.3"' : ""}>${ic("check")}</span><span class="grow"><div class="row-title mono" style="font-size:14.5px">${esc(p.po)}</div><div class="row-sub">${p.lines} lines · ${nf(p.pcs)} pieces · PO of ${fmtDate(p.date)}${p.edited ? " · edited" : ""}</div></span><span class="row-end"><span style="text-align:right"><div class="row-value">${rs(p.value)}</div><div style="margin-top:3px">${expiryPill(p)}</div></span><button class="icon-btn" data-act="qcPOSheet" data-po="${p.po}" aria-label="Open PO">${ic("chevR", "sm")}</button></span></div>`; }).join("")}</div></div>
       ${Dl.rows.length ? `<div><div class="group-label"><span>What goes on this delivery</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="qcPickEdit">${ic("pencil", "sm")} Edit crates</button></div><div class="dg" style="--cols:minmax(0,1.6fr) 80px 80px 90px 90px 90px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">Pieces on POs</span><span class="r c-hide">Per crate</span><span class="r c-hide">From QC stock</span><span class="r c-hide">From own stock</span><span class="r">Crates to send</span></div>${Dl.rows.map((r) => `<div class="dg-row"><span><div class="strong clip">${esc(shortName(r.name))}</div>${r.notSent > 0 ? `<div class="row-sub" style="color:var(--warn)">${nf(r.notSent)} pieces not sent${r.edited ? " · changed by you" : r.send < r.full ? " · stock short" : " · under a full crate"}</div>` : `<div class="row-sub">${r.extra ? nf(r.extra) + " pieces over the PO" : "Sent in full"}${r.edited ? " · changed by you" : ""}</div>`}</span><span class="r c-hide">${nf(r.pcs)}</span><span class="r c-hide">${r.ppc}</span><span class="r c-hide">${r.fromQC}<span class="dim"> of ${r.qcCr}</span></span><span class="r c-hide">${r.fromOwn || `<span class="dim">–</span>`}</span><span class="r strong">${r.send}</span></div>`).join("")}</div></div>` : ""}</div>
     <div class="sticky"><div class="card card-pad"><div class="card-title">This delivery</div><div class="row-sub">${esc(S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo)}</div>
       <div class="tile-value" style="margin-top:10px">${nf(Dl.crates)}<small>crates</small></div><div class="row-sub">${Dl.pos.length} PO${Dl.pos.length === 1 ? "" : "s"} ticked · ${rs(Dl.value)} excl. GST</div>
@@ -1254,26 +1254,8 @@ function qcOpenHtml() {
 }
 function qcHistoryHtml() {
   const list = D.qcPOs.filter((p) => p.status !== "Open").sort((a, b) => ((a.deliveredOn || a.expiry) < (b.deliveredOn || b.expiry) ? 1 : -1));
-  return `<div class="dg" style="--cols:minmax(0,1.3fr) 110px 100px 100px 110px minmax(90px,140px);--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>PO</span><span class="c-hide">Status</span><span class="r c-hide">Ordered</span><span class="r c-hide">Accepted</span><span class="r">Value accepted</span><span class="c-hide">Fill rate</span></div>${list.map((p) => `<button class="dg-row" data-act="qcPOSheet" data-po="${p.po}"><span><div class="strong mono">${platDot(p.platform)}${esc(p.po)}</div><div class="row-sub">${esc(p.platform)} · ${p.deliveredOn ? "delivered " + fmtDate(p.deliveredOn) : "expired " + fmtDate(p.expiry)}</div></span><span class="c-hide">${statusPill(p.status)}</span><span class="r c-hide">${nf(p.pcs)}</span><span class="r c-hide">${nf(p.pcsAccepted)}</span><span class="r strong">${rs(p.valueAccepted)}</span><span class="bar-cell c-hide"><div class="meter ${p.fill < 0.6 ? "bad" : p.fill < 0.85 ? "warn" : ""}"><i style="width:${(p.fill || 0) * 100}%"></i></div><span class="num" style="font-size:13px;min-width:34px;text-align:right">${pct(p.fill || 0, 0)}</span></span></button>`).join("")}</div>`;
+  return `<div class="dg" style="--cols:minmax(0,1.3fr) 110px 100px 100px 110px minmax(90px,140px);--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>PO</span><span class="c-hide">Status</span><span class="r c-hide">Ordered</span><span class="r c-hide">Accepted</span><span class="r">Value accepted</span><span class="c-hide">Fill rate</span></div>${list.map((p) => `<button class="dg-row" data-act="qcPOSheet" data-po="${p.po}"><span><div class="strong mono">${platDot(p.platform)}${esc(p.po)}</div><div class="row-sub">${esc(p.platform)} · ${p.deliveredOn ? "delivered " + fmtDate(p.deliveredOn) : p.status === "Cancelled" ? "cancelled " + fmtDate(p.cancelledOn || p.expiry) : "expired " + fmtDate(p.expiry)}</div></span><span class="c-hide">${statusPill(p.status)}</span><span class="r c-hide">${nf(p.pcs)}</span><span class="r c-hide">${nf(p.pcsAccepted)}</span><span class="r strong">${rs(p.valueAccepted)}</span><span class="bar-cell c-hide"><div class="meter ${p.fill < 0.6 ? "bad" : p.fill < 0.85 ? "warn" : ""}"><i style="width:${(p.fill || 0) * 100}%"></i></div><span class="num" style="font-size:13px;min-width:34px;text-align:right">${pct(p.fill || 0, 0)}</span></span></button>`).join("")}</div>`;
 }
-function qcNewHtml() {
-  const n = S.qcNew || (S.qcNew = { platform: "Swiggy", po: "", lines: [] });
-  const items = D.qcStock.filter((q) => (n.platform === "Swiggy" ? q.swPrice || q.swiggy : q.zpPrice || q.zepto));
-  const total = n.lines.reduce((a, l) => a + l.pcs * l.price, 0);
-  return `<div class="split"><div class="stack gap-20"><div class="card card-pad"><div class="form-grid"><div class="field"><label class="label" for="qn-platform">Platform</label><select class="select" id="qn-platform" data-in="qnField" data-f="platform"><option ${n.platform === "Swiggy" ? "selected" : ""}>Swiggy</option><option ${n.platform === "Zepto" ? "selected" : ""}>Zepto</option></select></div><div class="field"><label class="label" for="qn-po">PO number</label><input class="input" id="qn-po" placeholder="KCOPO10712" value="${esc(n.po)}" data-in="qnField" data-f="po"></div><div class="field"><label class="label" for="qn-date">PO date</label><input class="input" id="qn-date" type="date" value="${iso(NOW()).slice(0, 10)}"></div><div class="field"><label class="label" for="qn-exp">Expiry date</label><input class="input" id="qn-exp" type="date" value="${iso(new Date(Date.now() + 10 * 864e5)).slice(0, 10)}"></div></div></div>
-    <div><div class="group-label"><span>Lines, exactly as on the PO</span><span>pieces · price per piece excl. GST</span></div><div class="group">${items.map((q) => { const l = n.lines.find((x) => x.sap === q.sap), pr = n.platform === "Swiggy" ? q.swPrice : q.zpPrice; return `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(q.name))}</div><div class="row-sub">${q.ppc} pieces per crate · last price ${pr ? rs2(pr) : "–"} · ${nf(q.crates)} crates in QC stock</div></span><span class="row-end"><input class="input sm num-in" style="width:96px" type="number" inputmode="numeric" min="0" placeholder="0" value="${l ? l.pcs : ""}" id="qn-${q.sap}" data-in="qnPcs" data-sap="${q.sap}" aria-label="Pieces"></span></div>`; }).join("")}</div></div></div>
-    <div class="sticky"><div class="card card-pad" id="qn-sum">${qcNewSum()}</div></div></div>`;
-}
-function qcNewSum() { const n = S.qcNew, pcs = n.lines.reduce((a, l) => a + l.pcs, 0), val = n.lines.reduce((a, l) => a + l.pcs * l.price, 0); return `<div class="card-title">PO summary</div><div style="margin-top:10px"><div class="sum-row"><span class="muted">Lines</span><span class="num">${n.lines.length}</span></div><div class="sum-row"><span class="muted">Pieces</span><span class="num">${nf(pcs)}</span></div><div class="sum-row"><span class="muted">Value excl. GST</span><span class="num">${rs2(val)}</span></div><div class="sum-row total"><span>Incl. GST 5%</span><span class="num">${rs2(val * 1.05)}</span></div></div><button class="btn btn-primary btn-lg btn-block" style="margin-top:16px" data-act="qcSavePO" ${n.lines.length && n.po.trim() ? "" : "disabled"}>Save PO</button><div class="row-sub" style="margin-top:10px;text-align:center">Stock does not move until the delivery is marked.</div>`; }
-IN.qnField = (el) => { S.qcNew[el.dataset.f] = el.value; if (el.dataset.f === "platform") { S.qcNew.lines = []; render(); } else part("qn-sum", qcNewSum()); };
-IN.qnPcs = (el) => { const n = S.qcNew, q = qcBySap[el.dataset.sap], v = Math.max(0, +el.value || 0); n.lines = n.lines.filter((l) => l.sap !== q.sap); if (v) n.lines.push({ sap: q.sap, product: q.name, pcs: v, price: (n.platform === "Swiggy" ? q.swPrice : q.zpPrice) || 0, ppc: q.ppc }); part("qn-sum", qcNewSum()); };
-ACT.qcSavePO = () => {
-  const n = S.qcNew, exp = $("#qn-exp").value, dt = $("#qn-date").value, val = n.lines.reduce((a, l) => a + l.pcs * l.price, 0);
-  const p = { po: n.po.trim(), platform: n.platform, date: dt + "T00:00", expiry: exp + "T00:00", daysLeft: 10, to: n.platform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo, lines: n.lines.length, pcs: n.lines.reduce((a, l) => a + l.pcs, 0), crates: n.lines.reduce((a, l) => a + l.pcs / l.ppc, 0), value: val, status: "Open" };
-  D.qcPOs.push(p); qcLinesByPO[p.po] = n.lines.map((l) => ({ po: p.po, product: l.product, sap: l.sap, pcs: l.pcs, price: l.price, value: l.pcs * l.price, ppc: l.ppc, status: "Open" }));
-  S.qcPicked[p.po] = true; S.qcPlatform = n.platform; S.qcNew = null; S.qcTab = "open";
-  logActivity("QC PO saved", p.po, `${p.platform}, ${p.lines} line(s), ${nf(p.pcs)} pieces`); render(); toast("PO saved as open");
-};
 function qcGrnHtml() {
   const list = D.qcPOs.filter((p) => p.status === "Delivered").sort((a, b) => (a.deliveredOn < b.deliveredOn ? 1 : -1)).slice(0, 8);
   return `<div class="banner info">${ic("info", "sm")}<span>After a delivery, record what the platform accepted at GRN. Good pieces that came back go into QC stock; damaged pieces are written off.</span></div><div><div class="group-label"><span>Latest deliveries</span></div><div class="group">${list.map((p) => `<button class="row" data-act="grnSheet" data-po="${p.po}"><span class="grow"><div class="row-title mono" style="font-size:14.5px">${platDot(p.platform)}${esc(p.po)}</div><div class="row-sub">Delivered ${fmtDate(p.deliveredOn)} · ${nf(p.pcsDelivered)} pieces sent · ${nf(p.pcsAccepted)} accepted</div></span><span class="row-end">${p.pcsAccepted < p.pcsDelivered ? `<span class="pill warn">${nf(p.pcsDelivered - p.pcsAccepted)} short</span>` : `<span class="pill good">In full</span>`}${ic("chevR", "sm chev")}</span></button>`).join("")}</div></div>`;
@@ -1282,7 +1264,7 @@ VIEWS.quick = () => {
   const open = openQC(), tabs = { open: qcOpenHtml, add: qcNewHtml, grn: qcGrnHtml, history: qcHistoryHtml };
   return `<div class="page">
     <div class="page-head"><div><h1 class="title">Quick commerce</h1><div class="subtitle">Swiggy and Zepto purchase orders, from the day they arrive to the GRN.</div></div><div class="head-actions">${S.qcTab === "open" ? seg("qcPlatform", S.qcPlatform, [["Swiggy", "Swiggy", open.filter((p) => p.platform === "Swiggy").length], ["Zepto", "Zepto", open.filter((p) => p.platform === "Zepto").length]]) : ""}</div></div>
-    ${seg("qcTab", S.qcTab, [["open", "Open POs"], ["add", "New PO"], ["grn", "GRN"], ["history", "History"]])}
+    ${seg("qcTab", S.qcTab, [["open", "Open POs"], ["add", S.qcNew && S.qcNew.editPo ? "Edit PO" : "New PO"], ["grn", "GRN"], ["history", "History"]])}
     ${tabs[S.qcTab]()}</div>`;
 };
 function qcPickTable(Dl, editing) {
@@ -1358,7 +1340,10 @@ ACT.toggleOwn = () => { S.qcOwn = !S.qcOwn; render(); };
 ACT.qcPOSheet = (el) => {
   const p = D.qcPOs.find((x) => x.po === el.dataset.po), lines = qcLinesByPO[p.po] || [];
   openSheet(esc(p.po), `<div class="card card-pad"><div class="hstack gap-8 wrap">${statusPill(p.status)}<span class="pill plain">${platDot(p.platform)}${esc(p.platform)}</span>${p.status === "Open" ? expiryPill(p) : ""}</div><div class="kv" style="margin-top:14px"><div><div class="k">PO date</div><div class="v">${fmtDate(p.date)}</div></div><div><div class="k">Expiry</div><div class="v">${fmtDate(p.expiry)}</div></div><div><div class="k">Pieces ordered</div><div class="v num">${nf(p.pcs)}</div></div><div><div class="k">Value ordered</div><div class="v num">${rs(p.value)}</div></div>${p.status !== "Open" ? `<div><div class="k">Accepted</div><div class="v num">${nf(p.pcsAccepted)} pcs</div></div><div><div class="k">Fill rate</div><div class="v num">${pct(p.fill || 0, 0)}</div></div>` : ""}</div><div class="row-sub" style="margin-top:12px">${esc(p.to || "")}</div></div>
-    <div><div class="group-label"><span>${lines.length} lines</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.pcs)} pieces × ${rs2(l.price)}${l.code ? " · item " + esc(l.code) : ""}${l.status !== "Open" && l.accepted != null ? ` · ${nf(l.accepted)} accepted${l.lapsed ? ", " + nf(l.lapsed) + " not sent" : ""}` : ""}</div></span><span class="row-end"><span class="row-value">${rs(l.value)}</span></span></div>`).join("")}</div></div>`);
+    <div><div class="group-label"><span>${lines.length} lines</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.pcs)} pieces × ${rs2(l.price)}${l.code ? " · item " + esc(l.code) : ""}${l.status !== "Open" && l.accepted != null ? ` · ${nf(l.accepted)} accepted${l.lapsed ? ", " + nf(l.lapsed) + " not sent" : ""}` : ""}</div></span><span class="row-end"><span class="row-value">${rs(l.value)}</span></span></div>`).join("")}</div></div>
+    ${p.edited ? `<div class="row-sub">Edited ${fmtDT(p.edited)}${p.timesEdited > 1 ? ` · ${p.timesEdited} times` : ""}</div>` : ""}
+    ${p.status === "Delivered" ? `<div class="banner info">${ic("info", "sm")}<span>Delivered POs keep their lines. To correct what ${esc(p.platform)} accepted, use the GRN tab.</span></div>` : ""}<div id="qcpo-confirm"></div>`,
+    p.status === "Open" ? `<button class="btn btn-danger" data-act="qcCancelAsk" data-po="${esc(p.po)}">Cancel PO</button><button class="btn btn-primary" data-act="qcEditPO" data-po="${esc(p.po)}">${ic("pencil", "sm")} Edit PO</button>` : "");
 };
 ACT.qcDeliver = () => {
   const Dl = qcDelivery(), now = iso(NOW()); if (!Dl.crates) return;
@@ -1379,6 +1364,143 @@ ACT.grnSave = (el) => {
   lines.forEach((l, i) => { const a = Math.min(l.delivered, Math.max(0, +$("#grn-a-" + i).value || 0)), b = Math.min(l.delivered - a, Math.max(0, +$("#grn-b-" + i).value || 0)); l.accepted = a; l.short = l.delivered - a; l.valueAccepted = Math.round(a * l.price * 100) / 100; acc += a; back += b; const qc = qcBySap[l.sap]; if (qc && b) { qc.crates += b / (l.ppc || 1); } });
   p.pcsAccepted = acc; p.fill = acc / p.pcs; p.valueAccepted = (qcLinesByPO[p.po] || []).reduce((a, l) => a + (l.valueAccepted || 0), 0);
   logActivity("GRN saved", p.po, `${nf(acc)} accepted, ${nf(back)} back in stock`); closeSheet(); render(); toast("GRN saved");
+};
+
+/* ===== SWIGGY / ZEPTO PO ENTRY AND EDITING =====
+   Works like a distributor order: search a product, Enter, type the pieces, Enter again and you are back in the
+   search for the next line. The same screen edits an open PO. */
+const qcPlatPrice = (q, plat) => (q ? (plat === "Swiggy" ? q.swPrice : q.zpPrice) || 0 : 0);
+const qcPlatCode = (q, plat) => (q ? (plat === "Swiggy" ? q.swCode : q.zpCode) || "" : "");
+function newQCDraft() { const t = NOW(); return { platform: S.qcPlatform || "Swiggy", po: "", date: ymd(t), expiry: ymd(new Date(t.getTime() + 10 * 864e5)), lines: [], q: "", sel: 0, editPo: null }; }
+function qcDraft() { return S.qcNew || (S.qcNew = newQCDraft()); }
+function qcSearch(q, plat) {
+  const words = key(q).split(" ").filter(Boolean); if (!words.length) return [];
+  return D.qcStock.filter((x) => words.every((w) => key(x.name + " " + (x.swCode || "") + " " + (x.zpCode || "") + " " + (x.trop || "")).includes(w)))
+    .sort((a, b) => (qcPlatPrice(b, plat) > 0) - (qcPlatPrice(a, plat) > 0) || (b.crates || 0) - (a.crates || 0) || a.name.localeCompare(b.name)).slice(0, 12);
+}
+function qcResults() {
+  const n = qcDraft(); if (!n.q) return "";
+  const list = qcSearch(n.q, n.platform);
+  if (!list.length) return `<div class="results"><div class="empty" style="padding:22px">No quick commerce product matches “${esc(n.q)}”.</div></div>`;
+  n.sel = Math.min(n.sel || 0, list.length - 1);
+  return `<div class="results" role="listbox">${list.map((x, i) => { const pr = qcPlatPrice(x, n.platform), on = n.lines.find((l) => l.sap === x.sap); return `<button class="res" role="option" aria-selected="${i === n.sel}" data-act="qnAdd" data-sap="${x.sap}"><span class="stock-badge ${!(x.crates > 0) ? "zero" : ""}">${nf(Math.floor(x.crates || 0))}</span><span class="grow"><div class="row-title">${esc(x.name)}</div><div class="row-sub">${x.ppc || "–"} pieces / crate · ${pr ? rs2(pr) + " / piece last time" : `no ${esc(n.platform)} price yet`}${qcPlatCode(x, n.platform) ? " · item " + esc(qcPlatCode(x, n.platform)) : ""}${on ? ` · <b>already on this PO</b>` : ""}</div></span>${ic("plus", "sm dim")}</button>`; }).join("")}</div><div class="row-sub" style="padding:6px 4px 0">↑ ↓ to choose · Enter to add · then type the pieces and press Enter for the next product</div>`;
+}
+const qnVal = (l) => (+l.pcs || 0) * (+l.price || 0);
+function qcLinesHtml() {
+  const n = qcDraft();
+  if (!n.lines.length) return `<div class="empty"><div class="big">No lines yet</div>Search above and add each product on the ${esc(n.platform)} PO.</div>`;
+  return n.lines.map((l, i) => { const q = qcBySap[l.sap] || {}, ppc = l.ppc || q.ppc || 0, cr = ppc ? (+l.pcs || 0) / ppc : 0, last = qcPlatPrice(q, n.platform); return `<div class="qline ${n.flash === i ? "flash" : ""}" id="qnl-${i}"><span class="line-no">${i + 1}</span>
+    <div class="line-name"><span class="line-title">${esc(l.product)}</span><div class="row-sub" id="qnc-${i}">${ppc ? `${nf(cr, 2)} crate${cr === 1 ? "" : "s"} · ${ppc} pcs / crate` : "pieces per crate not set"} · ${nf(q.crates || 0)} crates in QC stock</div></div>
+    <div class="qline-qty"><div class="stepper sm"><button data-act="qnStep" data-i="${i}" data-d="-1" aria-label="Fewer pieces">${ic("minus", "sm")}</button><input id="qnp-${i}" class="qn-pcs" type="number" inputmode="numeric" min="0" value="${l.pcs}" data-in="qnPcs" data-i="${i}" aria-label="Pieces" enterkeyhint="next"><button data-act="qnStep" data-i="${i}" data-d="1" aria-label="More pieces">${ic("plus", "sm")}</button></div><span class="row-sub">pcs</span></div>
+    <div class="qline-price"><span class="row-sub">₹</span><input class="input sm num-in qn-price" id="qnr-${i}" type="number" inputmode="decimal" min="0" step="0.01" value="${l.price ? +(+l.price).toFixed(4) : ""}" placeholder="0.00" data-in="qnPrice" data-i="${i}" aria-label="Price per piece excl. GST" title="Price per piece on the PO, excl. GST${last ? ". Last time " + rs2(last) : ""}" enterkeyhint="next"><span class="row-sub">/ pc</span></div>
+    <div class="line-val"><div class="row-value" id="qnv-${i}">${rs2(qnVal(l))}</div></div>
+    <button class="icon-btn line-rm" data-act="qnRm" data-i="${i}" aria-label="Remove line">${ic("trash", "sm")}</button></div>`; }).join("");
+}
+function qcNewSum() {
+  const n = qcDraft(), pcs = n.lines.reduce((a, l) => a + (+l.pcs || 0), 0), val = n.lines.reduce((a, l) => a + qnVal(l), 0), cr = n.lines.reduce((a, l) => a + (l.ppc ? (+l.pcs || 0) / l.ppc : 0), 0);
+  const dup = n.po.trim() && D.qcPOs.some((p) => p.po === n.po.trim() && p.po !== n.editPo), noPrice = n.lines.filter((l) => (+l.pcs || 0) > 0 && !(+l.price > 0)).length, badDate = n.expiry && n.date && n.expiry < n.date;
+  const okay = n.lines.some((l) => +l.pcs > 0) && n.po.trim() && !dup && !badDate && n.date && n.expiry;
+  return `<div class="card-title">${n.editPo ? "Edited PO" : "PO summary"}</div><div style="margin-top:10px"><div class="sum-row"><span class="muted">Lines</span><span class="num">${n.lines.filter((l) => +l.pcs > 0).length}</span></div><div class="sum-row"><span class="muted">Pieces</span><span class="num">${nf(pcs)}</span></div><div class="sum-row"><span class="muted">About</span><span class="num">${nf(cr, 1)} crates</span></div><div class="sum-row"><span class="muted">Value excl. GST</span><span class="num">${rs2(val)}</span></div><div class="sum-row total"><span>Incl. GST 5%</span><span class="num">${rs2(val * 1.05)}</span></div></div>
+    ${dup ? `<div class="line-msg bad" style="margin-top:10px">${ic("alert", "sm")} PO ${esc(n.po.trim())} is already saved.</div>` : ""}${badDate ? `<div class="line-msg bad" style="margin-top:10px">${ic("alert", "sm")} Expiry is before the PO date.</div>` : ""}${noPrice ? `<div class="line-msg warn" style="margin-top:10px">${ic("tag", "sm")} ${noPrice} line${noPrice > 1 ? "s have" : " has"} no price.</div>` : ""}
+    <button class="btn btn-primary btn-lg btn-block" style="margin-top:16px" data-act="qcSavePO" ${okay ? "" : "disabled"}>${n.editPo ? "Save changes" : "Save PO"}</button>
+    ${n.editPo ? `<button class="btn btn-secondary btn-block" style="margin-top:8px" data-act="qnCancelEdit">Cancel, keep the PO as it was</button>` : n.lines.length ? `<button class="btn btn-secondary btn-block" style="margin-top:8px" data-act="qnClear">Clear</button>` : ""}
+    <div class="row-sub" style="margin-top:10px;text-align:center">Stock does not move until the delivery is marked.</div>`;
+}
+function qcNewHtml() {
+  const n = qcDraft();
+  return `<div class="split"><div class="stack gap-20">
+    ${n.editPo ? `<div class="editing-bar">${ic("pencil", "sm")}<span>Editing <span class="mono">${esc(n.editPo)}</span>. Saving replaces its lines. Pick lists and the truck plan use the new numbers.</span></div>` : ""}
+    <div><div class="group-label"><span>1 · The PO</span></div><div class="card card-pad"><div class="form-grid qn-head">
+      <div class="field"><span class="label">Platform</span>${seg("qnPlatform", n.platform, [["Swiggy", "Swiggy"], ["Zepto", "Zepto"]])}</div>
+      <div class="field"><label class="label" for="qn-po">PO number</label><input class="input" id="qn-po" placeholder="KCOPO10712" value="${esc(n.po)}" data-in="qnField" data-f="po" autocomplete="off" enterkeyhint="next"></div>
+      <div class="field"><label class="label" for="qn-date">PO date</label><input class="input" id="qn-date" type="date" value="${esc(n.date)}" data-in="qnField" data-f="date"></div>
+      <div class="field"><label class="label" for="qn-exp">Expiry date</label><input class="input" id="qn-exp" type="date" value="${esc(n.expiry)}" data-in="qnField" data-f="expiry"></div></div></div></div>
+    <div><div class="group-label"><span>2 · Lines, exactly as on the PO</span><span>pieces · price per piece excl. GST</span></div>
+      <div class="stack gap-10"><div class="prod-search"><div class="search">${ic("search", "sm")}<input class="input" id="qn-q" type="search" placeholder="Add a product. Try berry, or kulfi" value="${esc(n.q)}" data-in="qnQ" autocomplete="off" enterkeyhint="done"></div><div id="qn-results" class="prod-results">${qcResults()}</div></div>
+      <div class="group" id="qn-lines">${qcLinesHtml()}</div></div></div>
+  </div><div class="sticky"><div class="card card-pad" id="qn-sum">${qcNewSum()}</div></div></div>`;
+}
+const qnRefreshSum = () => part("qn-sum", qcNewSum());
+const qnRefreshLines = () => { part("qn-lines", qcLinesHtml()); qnRefreshSum(); };
+IN.qnField = (el) => { qcDraft()[el.dataset.f] = el.value; qnRefreshSum(); };
+IN.qnQ = (el) => { const n = qcDraft(); n.q = el.value; n.sel = 0; part("qn-results", qcResults()); };
+ACT.qnAdd = (el) => {
+  const n = qcDraft(), q = qcBySap[el.dataset.sap]; if (!q) return;
+  let i = n.lines.findIndex((l) => l.sap === q.sap);
+  if (i < 0) { n.lines.push({ sap: q.sap, product: q.name, pcs: q.ppc || 1, price: qcPlatPrice(q, n.platform), ppc: q.ppc || 0, code: qcPlatCode(q, n.platform), manual: false }); i = n.lines.length - 1; }
+  n.q = ""; n.sel = 0; const s = $("#qn-q"); if (s) s.value = ""; part("qn-results", "");
+  n.flash = i; qnRefreshLines(); n.flash = null;
+  const p = $("#qnp-" + i); if (p) { p.focus(); p.select(); p.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+};
+const qnLineUpdate = (i) => {
+  const n = qcDraft(), l = n.lines[i]; if (!l) return; const q = qcBySap[l.sap] || {}, cr = l.ppc ? (+l.pcs || 0) / l.ppc : 0;
+  const v = $("#qnv-" + i); if (v) v.textContent = rs2(qnVal(l));
+  const c = $("#qnc-" + i); if (c) c.textContent = `${l.ppc ? `${nf(cr, 2)} crate${cr === 1 ? "" : "s"} · ${l.ppc} pcs / crate` : "pieces per crate not set"} · ${nf(q.crates || 0)} crates in QC stock`;
+  qnRefreshSum();
+};
+IN.qnPcs = (el) => { const l = qcDraft().lines[+el.dataset.i]; l.pcs = el.value === "" ? "" : Math.max(0, Math.round(+el.value)); qnLineUpdate(+el.dataset.i); };
+IN.qnPrice = (el) => { const l = qcDraft().lines[+el.dataset.i]; l.price = el.value === "" ? 0 : Math.max(0, +el.value); l.manual = true; qnLineUpdate(+el.dataset.i); };
+ACT.qnStep = (el) => { const i = +el.dataset.i, l = qcDraft().lines[i]; l.pcs = Math.max(0, (+l.pcs || 0) + +el.dataset.d); const p = $("#qnp-" + i); if (p) p.value = l.pcs; qnLineUpdate(i); };
+ACT.qnRm = (el) => { qcDraft().lines.splice(+el.dataset.i, 1); qnRefreshLines(); };
+ACT.qnClear = () => { S.qcNew = newQCDraft(); render(); };
+ACT.qnCancelEdit = () => { S.qcNew = null; S.qcTab = "open"; render(); toast("Edit cancelled, nothing changed", "info"); };
+/* platform switch keeps the lines; prices you did not type follow the new platform's last price */
+const _seg = ACT.seg;
+ACT.seg = (el) => {
+  if (el.dataset.name !== "qnPlatform") return _seg(el);
+  const n = qcDraft(); n.platform = el.dataset.value;
+  n.lines.forEach((l) => { const q = qcBySap[l.sap]; if (!l.manual) l.price = qcPlatPrice(q, n.platform); l.code = qcPlatCode(q, n.platform) || l.code; });
+  render();
+};
+document.addEventListener("keydown", (e) => {
+  const t = e.target; if (!t || !t.id) return;
+  if (t.id === "qn-q") {
+    const items = $$("#qn-results .res"); if (!items.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); const n = qcDraft(); n.sel = Math.max(0, Math.min(items.length - 1, (n.sel || 0) + (e.key === "ArrowDown" ? 1 : -1))); items.forEach((x, i) => x.setAttribute("aria-selected", i === n.sel)); items[n.sel].scrollIntoView({ block: "nearest" }); }
+    else if (e.key === "Enter") { e.preventDefault(); const it = items[qcDraft().sel || 0]; if (it) ACT.qnAdd(it); }
+  } else if (e.key === "Enter" && (/^qnp-/.test(t.id) || /^qnr-/.test(t.id) || t.id === "qn-po")) { e.preventDefault(); const s = $("#qn-q"); if (s) s.focus(); }
+});
+ACT.qcSavePO = () => {
+  const n = qcDraft(), po = n.po.trim(), lines = n.lines.filter((l) => +l.pcs > 0);
+  if (!po || !lines.length) return;
+  if (D.qcPOs.some((p) => p.po === po && p.po !== n.editPo)) { toast(`PO ${po} is already saved`, "alert"); return; }
+  if (n.expiry < n.date) { toast("Expiry is before the PO date", "alert"); return; }
+  const val = lines.reduce((a, l) => a + qnVal(l), 0), now = NOW();
+  const head = { po, platform: n.platform, date: n.date + "T00:00", expiry: n.expiry + "T00:00", daysLeft: daysBetween(ymd(now), n.expiry), to: n.platform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo, lines: lines.length, pcs: lines.reduce((a, l) => a + +l.pcs, 0), crates: xr(lines.reduce((a, l) => a + (l.ppc ? l.pcs / l.ppc : 0), 0), 2), value: Math.round(val * 100) / 100 };
+  const newLines = lines.map((l) => ({ po, product: l.product, sap: l.sap, code: l.code || null, pcs: +l.pcs, price: +l.price || 0, value: Math.round(+l.pcs * (+l.price || 0) * 100) / 100, ppc: l.ppc, status: "Open", delivered: null, accepted: null, short: null, lapsed: null, valueAccepted: 0 }));
+  if (n.editPo) {
+    const p = D.qcPOs.find((x) => x.po === n.editPo);
+    if (!p || p.status !== "Open") { toast("This PO is no longer open, so it cannot be edited", "alert"); S.qcNew = null; S.qcTab = "open"; render(); return; }
+    const before = qcLinesByPO[p.po] || [], was = { pcs: p.pcs, value: p.value, lines: p.lines };
+    const diff = []; const bS = {}; before.forEach((l) => { bS[l.sap] = (bS[l.sap] || 0) + l.pcs; }); const aS = {}; newLines.forEach((l) => { aS[l.sap] = (aS[l.sap] || 0) + l.pcs; });
+    new Set([...Object.keys(bS), ...Object.keys(aS)]).forEach((s) => { if ((bS[s] || 0) !== (aS[s] || 0)) diff.push(`${shortName((qcBySap[s] || {}).name || s).split("(")[0].trim()} ${bS[s] || 0}→${aS[s] || 0}`); });
+    if (p.po !== po) { delete qcLinesByPO[p.po]; if (S.qcPicked[p.po]) { delete S.qcPicked[p.po]; S.qcPicked[po] = true; } }
+    Object.assign(p, head, { edited: iso(now), timesEdited: (p.timesEdited || 0) + 1 });
+    qcLinesByPO[po] = newLines;
+    logActivity("QC PO edited", po, `${n.editPo !== po ? "was " + n.editPo + "; " : ""}${diff.length ? diff.slice(0, 6).join(", ") + (diff.length > 6 ? " and more" : "") : "lines unchanged"} · ${nf(was.pcs)}→${nf(head.pcs)} pieces`);
+    S.qcPlatform = n.platform; S.qcNew = null; S.qcTab = "open"; render(); toast(`PO ${po} updated`);
+    return;
+  }
+  const p = Object.assign(head, { status: "Open", delivery: null, deliveredOn: null, pcsDelivered: null, pcsAccepted: null, valueAccepted: null, fill: null, back: null, damaged: null });
+  D.qcPOs.push(p); qcLinesByPO[po] = newLines;
+  S.qcPicked[po] = true; S.qcPlatform = n.platform; S.qcNew = null; S.qcTab = "open";
+  logActivity("QC PO saved", po, `${p.platform}, ${p.lines} line(s), ${nf(p.pcs)} pieces`); render(); toast("PO saved as open");
+};
+ACT.qcEditPO = (el) => {
+  const p = D.qcPOs.find((x) => x.po === el.dataset.po); if (!p || p.status !== "Open") return;
+  const cur = S.qcNew;
+  if (cur && !cur.editPo && cur.lines.length) toast("Your unsaved new PO was put aside to edit this one", "info");
+  S.qcNew = { platform: p.platform, po: p.po, date: (p.date || "").slice(0, 10), expiry: (p.expiry || "").slice(0, 10), q: "", sel: 0, editPo: p.po,
+    lines: (qcLinesByPO[p.po] || []).map((l) => { const q = qcBySap[l.sap] || {}; return { sap: l.sap, product: l.product, pcs: l.pcs, price: l.price, ppc: l.ppc || q.ppc || 0, code: l.code || "", manual: true }; }) };
+  closeSheet(); S.qcTab = "add"; go("quick");
+};
+ACT.qcCancelAsk = (el) => part("qcpo-confirm", `<div class="confirm" style="margin-top:12px"><span><b>Cancel PO ${esc(el.dataset.po)}?</b> It leaves the open list and is not delivered. You cannot undo this.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="qcCancelNo">Keep it</button><button class="btn btn-sm btn-danger" data-act="qcCancelPO" data-po="${esc(el.dataset.po)}">Yes, cancel PO</button></span></div>`);
+ACT.qcCancelNo = () => part("qcpo-confirm", "");
+ACT.qcCancelPO = (el) => {
+  const p = D.qcPOs.find((x) => x.po === el.dataset.po); if (!p || p.status !== "Open") return;
+  Object.assign(p, { status: "Cancelled", cancelledOn: iso(NOW()), pcsDelivered: 0, pcsAccepted: 0, valueAccepted: 0, fill: 0 });
+  (qcLinesByPO[p.po] || []).forEach((l) => { l.status = "Cancelled"; });
+  delete S.qcPicked[p.po]; logActivity("QC PO cancelled", p.po, p.platform); closeSheet(); render(); toast(`PO ${p.po} cancelled`);
 };
 
 /* ===== STOCK ===== */

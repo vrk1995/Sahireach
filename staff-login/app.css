@@ -509,3 +509,20 @@ table.t th.sticky-col { background: var(--surface-2); z-index: 2; }
 .offer-k { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--warn); margin-right: 2px; }
 .offer .chip { height: 30px; font-size: 13px; }
 @media (max-width: 960px) { .tiles .tile-wide-sm:nth-child(odd):last-child { grid-column: 1 / -1; } }
+/* Swiggy / Zepto PO lines */
+.qline { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 96px 30px; gap: 4px 10px; align-items: center; padding: 7px 12px 7px 10px; position: relative; }
+.qline + .qline::before { content: ""; position: absolute; top: 0; left: 40px; right: 0; height: 1px; background: var(--hairline); }
+.qline.flash { animation: line-flash 1.2s var(--ease); }
+.qline .row-sub { font-size: 12.5px; }
+.qline-qty, .qline-price { display: flex; align-items: center; gap: 5px; }
+.qline-qty .stepper input { width: 64px; }
+.qline-price .input { width: 104px; }
+.qn-head { grid-template-columns: auto minmax(0, 1fr) 150px 150px; align-items: end; }
+@media (max-width: 960px) {
+  .qn-head { grid-template-columns: 1fr 1fr; }
+  .qline { grid-template-columns: 18px minmax(0, 1fr) auto 30px; padding: 8px 10px 8px 8px; }
+  .qline .line-val { grid-column: 3; grid-row: 1; }
+  .qline .line-rm { grid-column: 4; grid-row: 1; }
+  .qline-qty { grid-column: 2; grid-row: 2; }
+  .qline-price { grid-column: 3 / 5; grid-row: 2; justify-content: flex-end; }
+}
