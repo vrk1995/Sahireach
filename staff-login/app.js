@@ -228,12 +228,12 @@ function salesFacts() {
   const f = [];
   (D.salesBefore || []).forEach((r) => {
     const uc = unitCost(r.sap), ea = r.ea || 0;
-    f.push({ date: r.date, ch: "gt", dist: canonDist(r.dist), sap: r.sap, product: r.product, crates: r.crates || 0, value: r.value || 0, tod: 0, cost: uc != null ? ea * uc : 0, ref: r.inv, kind: r.type === "Credit Note" ? "return" : "vyapar" });
+    f.push({ date: r.date, ch: "gt", dist: canonDist(r.dist), sap: r.sap, product: r.product, crates: r.crates || 0, value: r.value || 0, tod: 0, cost: uc != null ? ea * uc : 0, noCost: uc == null, ref: r.inv, kind: r.type === "Credit Note" ? "return" : "vyapar" });
   });
   D.orders.forEach((o) => {
     if (o.status !== "Dispatched" || !o.dispatched) return;
     const dt = o.dispatched.slice(0, 10);
-    (linesByOrder[o.id] || []).forEach((l) => { const uc = unitCost(l.sap); f.push({ date: dt, ch: "gt", dist: o.dist, sap: l.sap, product: l.product, crates: l.crates || 0, value: l.value || 0, tod: l.tod || 0, cost: uc != null ? (l.ea || 0) * uc : 0, ref: o.id, kind: "order" }); });
+    (linesByOrder[o.id] || []).forEach((l) => { const uc = unitCost(l.sap); f.push({ date: dt, ch: "gt", dist: o.dist, sap: l.sap, product: l.product, crates: l.crates || 0, value: l.value || 0, tod: l.tod || 0, cost: uc != null ? (l.ea || 0) * uc : 0, noCost: uc == null, ref: o.id, kind: "order" }); });
   });
   D.notes.forEach((n) => {
     if (n.status !== "Active" || !n.sales) return;
@@ -278,17 +278,19 @@ function factsIn(facts, from, to) { return from ? facts.filter((f) => f.date >= 
 
 /* ---- the numbers for one period ---- */
 function periodStats(facts, from, to) {
-  const F = factsIn(facts, from, to), s = { facts: F, net: 0, gt: 0, swiggy: 0, zepto: 0, crates: 0, gtCrates: 0, toolCrates: 0, qcCrates: 0, gpGT: 0, gpQC: 0, tod: 0, returns: 0, orders: new Set(), dists: new Set(), missed: 0, qcOrdered: 0, qcAccepted: 0, o2d: [], qcDeliveries: new Set() };
+  const F = factsIn(facts, from, to), s = { facts: F, net: 0, gt: 0, swiggy: 0, zepto: 0, crates: 0, gtCrates: 0, toolCrates: 0, qcCrates: 0, gpGT: 0, gpQC: 0, tod: 0, returns: 0, noCost: 0, noCostP: {}, orders: new Set(), dists: new Set(), missed: 0, qcOrdered: 0, qcAccepted: 0, o2d: [], qcDeliveries: new Set() };
   if (!from) return s;
   F.forEach((f) => {
     s.net += f.value; s[f.ch] += f.value; s.crates += f.crates;
-    if (f.ch === "gt") { s.gtCrates += f.crates; if (f.kind === "order") s.toolCrates += f.crates; s.gpGT += f.value + f.tod - f.cost; s.tod += f.tod; if (f.kind === "note" || f.kind === "return") s.returns += -f.value; else { s.orders.add(f.ref); if (f.value > 0) s.dists.add(f.dist); } }
+    if (f.ch === "gt") { s.gtCrates += f.crates; if (f.kind === "order") s.toolCrates += f.crates; if (f.noCost && f.value > 0) { s.noCost += f.value; s.noCostP[f.product || f.sap] = (s.noCostP[f.product || f.sap] || 0) + f.value; } else s.gpGT += f.value + f.tod - f.cost; s.tod += f.tod; if (f.kind === "note" || f.kind === "return") s.returns += -f.value; else { s.orders.add(f.ref); if (f.value > 0) s.dists.add(f.dist); } }
     else { s.qcCrates += f.crates; s.gpQC += f.value * QC_GP_RATE; s.qcDeliveries.add(f.ref); }
   });
   const ch = S.dash.ch, dsel = S.dash.district;
   if (ch === "all" || ch === "gt") D.oos.forEach((o) => { const ord = D.orders.find((x) => x.id === o.id), d = ord && ord.status === "Dispatched" && ord.dispatched ? ord.dispatched.slice(0, 10) : null; if (typeof o.missed === "number" && d && d >= from && d <= to && (dsel === "all" || districtOf(o.dist) === dsel)) s.missed += o.missed; });
   if (dsel === "all" && ch !== "gt") D.qcPOs.forEach((p) => { const d = (p.deliveredOn || (p.status === "Lapsed" ? p.expiry : "") || "").slice(0, 10); if (!d || d < from || d > to) return; if ((ch === "swiggy" || ch === "zepto") && p.platform.toLowerCase() !== ch) return; s.qcOrdered += p.pcs || 0; s.qcAccepted += p.pcsAccepted || 0; });
   D.orders.forEach((o) => { if (o.status === "Dispatched" && o.dispatched && o.dispatched.slice(0, 10) >= from && o.dispatched.slice(0, 10) <= to && (ch === "all" || ch === "gt") && (dsel === "all" || districtOf(o.dist) === dsel)) s.o2d.push((toDate(o.dispatched) - toDate(o.time)) / 864e5); });
+  /* sales of products with no cost price would count as pure profit: estimate their profit at the margin of the rest */
+  if (s.noCost) { const base = s.gt - s.noCost + s.tod; s.gpEst = base > 0 ? s.noCost * (s.gpGT / base) : 0; s.gpGT += s.gpEst; }
   s.qc = s.swiggy + s.zepto; s.gp = s.gpGT + s.gpQC;
   s.margin = s.net + s.tod ? s.gp / (s.net + s.tod) : null;
   s.fillGT = s.toolCrates + s.missed > 0 ? s.toolCrates / (s.toolCrates + s.missed) : null;
@@ -657,6 +659,7 @@ function attention(facts) {
   if (slow.n) out.push({ ic: "box", cls: "warn", act: "slowList", title: `${slow.n} slow-moving product${slow.n > 1 ? "s" : ""} to push`, sub: `${nf(slow.crates, 0)} crates above normal sales · ₹${lakh(slow.value)} L tied up` });
   const bis = typeof backInStock === "function" ? backInStock() : [];
   if (bis.length) out.push({ ic: "box", cls: "good", act: "backInStock", title: `${bis.length} distributor${bis.length > 1 ? "s" : ""} waiting for stock that is back`, sub: [...new Set(bis.flatMap((g) => g.items.map((i) => shortName(i.name).split("(")[0].trim())))].slice(0, 2).join(", ") + " · tap to let them know" });
+  { const nc = periodStats(facts, addDays(ymd(NOW()), -89), ymd(NOW())); if (nc.noCost > 0) { const ps = Object.keys(nc.noCostP); out.push({ ic: "tag", cls: "warn", act: "noCostFix", title: `${ps.length} product${ps.length > 1 ? "s" : ""} sold without a cost price`, sub: `${ps.slice(0, 2).map((x) => shortName(x).split("(")[0].trim()).join(", ")} · ${rs(nc.noCost)} of sales · add the SS rate so the margin is right` }); } }
   const runs = typeof unloggedRuns === "function" ? unloggedRuns() : [];
   if (runs.length) out.push({ ic: "truck", cls: "warn", go: "logistics", title: `${runs.length} dispatch${runs.length > 1 ? "es" : ""} without a trip logged`, sub: runs.slice(0, 2).map((r) => fmtDate(r.date) + ": " + runLabel(r)).join(" · ") + " · add km and cost" });
   const todDue = D.tod.lines.filter((l) => l.status !== "Received").reduce((a, l) => a + (l.amount || 0), 0) || D.tod.total;
@@ -752,6 +755,7 @@ VIEWS.home = () => {
       ${showGT ? `<div><div class="group-label"><span>Top distributors · ${esc(R.label)}</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="drill" data-k="gt">See all</button></div><div class="group">${topD.length ? topD.map((x, i) => { const pv = dPrev[x.key] ? dPrev[x.key].value : 0; return `<button class="row" data-act="distSheet" data-name="${esc(x.key)}"><span class="avatar soft">${i + 1}</span><span class="grow"><div class="row-title clip">${esc(x.key)}</div><div class="bar-cell" style="margin-top:5px"><div class="meter"><i style="width:${(x.value / maxD) * 100}%"></i></div><span class="row-sub nowrap">${esc(districtOf(x.key))} · ${x.refs.size} order${x.refs.size === 1 ? "" : "s"}</span></div></span><span class="row-end"><span><div class="row-value">₹${lakh(x.value)} L</div><div>${pv > 0 ? growthChip(x.value / pv - 1) : cmp ? growthChip("New") : ""}</div></span></span></button>`; }).join("") : `<div class="empty" style="padding:24px">No distributor sales in this period.</div>`}</div></div>` : ""}
       <div><div class="group-label"><span>Top products · ${esc(R.label)}</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="drill" data-k="products">See all</button></div><div class="group">${topP.length ? topP.map((x, i) => { const dl = daysLeftOf(x.key, x.crates); return `<div class="row"><span class="avatar soft">${i + 1}</span><span class="grow"><div class="row-title clip">${esc(shortName(pName(x.key)))}</div><div class="bar-cell" style="margin-top:5px"><div class="meter"><i style="width:${(x.value / maxP) * 100}%"></i></div><span class="row-sub nowrap">${nf(x.crates, 0)} crates${dl != null ? " · " + nf(dl, 0) + " days of stock" : ""}</span></div></span><span class="row-end"><span><div class="row-value">₹${lakh(x.value)} L</div><div>${classPill((replBySap[x.key] || {}).cls)}</div></span></span></div>`; }).join("") : `<div class="empty" style="padding:24px">No product sales in this period.</div>`}</div></div>
     </div>
+    ${gpCards(cur, prev, R, filterNote)}
     ${momCard(facts)}
   </div>`;
 };
@@ -784,7 +788,8 @@ ACT.drill = (el) => {
     body = tbl(["District / platform", "Crates", "Sales"], Object.values(groupBy(cur.facts, (f) => (f.ch === "gt" ? districtOf(f.dist) : CH_LABEL[f.ch]))).sort((a, b) => b.crates - a.crates).map((x) => [esc(x.key), nf(x.crates, 1), rs(x.value)]));
   } else if (k === "gp") {
     title = "Gross profit"; big = `₹${lakh(cur.gp)}<small>lakh</small>`; sub = `Margin ${cur.margin != null ? pct(cur.margin, 1) : "–"} · GT at the SS rate with TOD counted in · QC at ${pct(QC_GP_RATE, 0)} of sales`;
-    const g = {}; cur.facts.forEach((f) => { const k2 = f.ch === "gt" ? f.dist : CH_LABEL[f.ch], x = (g[k2] = g[k2] || { k: k2, v: 0, gp: 0, tod: 0 }); x.v += f.value; x.tod += f.tod; x.gp += f.ch === "gt" ? f.value + f.tod - f.cost : f.value * QC_GP_RATE; });
+    const g = {}, est = gpEstRate(cur); cur.facts.forEach((f) => { const k2 = f.ch === "gt" ? f.dist : CH_LABEL[f.ch], x = (g[k2] = g[k2] || { k: k2, v: 0, gp: 0, tod: 0 }); x.v += f.value; x.tod += f.tod; x.gp += factGP(f, est); });
+    if (cur.noCost) sub += ` · ${noCostNote(cur)}`;
     body = tbl(["Distributor / platform", "Sales", "TOD", "Gross profit", "Margin"], Object.values(g).sort((a, b) => b.gp - a.gp).map((x) => [esc(x.k), rs(x.v), x.tod ? rs(x.tod) : "–", rs(x.gp), x.v + x.tod ? pct(x.gp / (x.v + x.tod), 1) : "–"]));
   } else if (k === "fill") {
     title = "Fill rate"; big = cur.fillGT != null ? pct(cur.fillGT, 1) : cur.fillQC != null ? pct(cur.fillQC, 1) : "–"; sub = `${nf(cur.missed, 1)} crates missed for distributors${cur.fillQC != null ? " · quick commerce " + pct(cur.fillQC, 1) : ""}`;
@@ -808,6 +813,45 @@ ACT.drill = (el) => {
   }
   openSheet(esc(title), `<div class="card card-pad"><div class="tile-label">${esc(R.label)}${S.dash.ch !== "all" ? " · " + esc(DASH_CHANNELS.find((c) => c[0] === S.dash.ch)[1]) : ""}${S.dash.district !== "all" ? " · " + esc(S.dash.district) : ""}</div><div class="hero-figure" style="font-size:40px">${big}</div><div class="tile-sub">${esc(sub)}</div></div><div class="group-label" style="padding-bottom:0"><span>What is behind this number</span></div>${body}`, "", true);
 };
+/* ---- gross profit per line of sale ---- */
+const gpEstRate = (s) => (s && s.noCost ? s.gpEst / s.noCost : 0);
+function factGP(f, est) { return f.ch === "gt" ? (f.noCost && f.value > 0 ? f.value * (est || 0) : f.value + f.tod - f.cost) : f.value * QC_GP_RATE; }
+function noCostNote(s) { const ps = Object.keys(s.noCostP || {}); return `${rs(s.noCost)} of sales (${ps.map((x) => shortName(x).split("(")[0].trim()).join(", ")}) have no cost price, so their profit is estimated at ${pct(gpEstRate(s), 1)}. Add the SS rate in Setup → Products.`; }
+ACT.noCostFix = () => {
+  const facts = salesFacts(), s = periodStats(facts, addDays(ymd(NOW()), -89), ymd(NOW())), saps = {}; facts.forEach((f) => { if (f.noCost && f.sap && f.date >= addDays(ymd(NOW()), -89)) saps[f.sap] = f.product; });
+  openSheet("Products without a cost price", `<div class="banner warn">${ic("tag", "sm")}<span>Without the SS rate the tool cannot work out the profit on these products. Until you add it, their profit is estimated at the average margin of everything else.</span></div>
+    <div class="group">${Object.entries(saps).map(([sap, n]) => `<button class="row" data-act="productEdit" data-sap="${esc(sap)}"><span class="grow"><div class="row-title clip">${esc(n)}</div><div class="row-sub">${rs((s.noCostP || {})[n] || 0)} sold in the last 90 days · SAP ${esc(sap)}</div></span><span class="row-end"><span class="btn btn-sm btn-secondary">Add SS rate</span></span></button>`).join("")}</div>`);
+};
+/* ---- gross profit by distributor and by product (dashboard) ---- */
+function gpRows(cur, prev, keyFn, nameFn) {
+  const est = gpEstRate(cur), estP = gpEstRate(prev), g = {}, gp = {};
+  cur.facts.forEach((f) => { const k = keyFn(f); if (k == null) return; const x = (g[k] = g[k] || { k, v: 0, tod: 0, gp: 0, est: false }); x.v += f.value; x.tod += f.ch === "gt" ? f.tod : 0; x.gp += factGP(f, est); if (f.ch !== "gt" || (f.noCost && f.value > 0)) x.est = true; });
+  (prev.facts || []).forEach((f) => { const k = keyFn(f); if (k == null) return; gp[k] = (gp[k] || 0) + factGP(f, estP); });
+  return Object.values(g).filter((x) => Math.abs(x.v) > 0.5).map((x) => ({ ...x, name: nameFn(x.k), m: x.v + x.tod ? x.gp / (x.v + x.tod) : null, prevGP: gp[x.k] != null ? gp[x.k] : null })).sort((a, b) => b.gp - a.gp);
+}
+function gpBars(rows, avg) {
+  const top = rows.slice(0, 10), max = Math.max(1, ...top.map((d) => Math.abs(d.gp)));
+  if (!top.length) return `<div class="empty">No sales in this period.</div>`;
+  return `<div class="gp-bars">` + top.map((d) => `<div class="hbar" title="${esc(d.name)}: profit ${rs(d.gp)} on ${rs(d.v)} sales${d.m != null ? " · margin " + pct(d.m, 1) : ""}">
+    <div class="clip">${esc(d.label || d.name)}</div>
+    <div class="tracks"><div class="trk" style="width:${Math.max(0, (Math.abs(d.gp) / max) * 100)}%;background:var(${d.gp < 0 ? "--bad" : "--s-gt"})"></div></div>
+    <div class="num nowrap" style="min-width:118px;text-align:right"><b>${rs(d.gp)}</b> <span class="delta ${d.m == null ? "flat" : avg != null && d.m < avg - 0.003 ? "down" : avg != null && d.m > avg + 0.003 ? "up" : "flat"}" title="Margin">${d.m != null ? pct(d.m, 1) : "–"}</span></div></div>`).join("") + `</div>`;
+}
+function gpTable(rows, label) {
+  return `<table class="t"><thead><tr><th>${label}</th><th class="r">Sales</th><th class="r">TOD</th><th class="r">Gross profit</th><th class="r">Margin</th><th class="r">Before</th></tr></thead><tbody>${rows.map((d) => `<tr><td>${esc(d.name)}${d.est ? " *" : ""}</td><td class="r">${rs(d.v)}</td><td class="r">${d.tod ? rs(d.tod) : "–"}</td><td class="r"><b>${rs(d.gp)}</b></td><td class="r">${d.m != null ? pct(d.m, 1) : "–"}</td><td class="r">${d.prevGP != null ? rs(d.prevGP) : "–"}</td></tr>`).join("")}</tbody></table>`;
+}
+function gpCards(cur, prev, R, filterNote) {
+  const pName = (k) => shortName((catBySap[k] || stockBySap[k] || qcBySap[k] || { name: k }).name);
+  const byD = gpRows(cur, prev, (f) => (f.ch === "gt" ? f.dist : CH_LABEL[f.ch]), (k) => k);
+  const byP = gpRows(cur, prev, (f) => (f.product && f.kind !== "note" ? f.sap || f.product : null), pName);
+  byP.forEach((x) => { x.label = x.name.replace(/\s*\(.*$/, "").trim() || x.name; const sz = (x.name.match(/\(([^)]*)\)/) || [])[1]; if (sz && byP.filter((y) => (y.name.replace(/\s*\(.*$/, "").trim()) === x.label).length > 1) x.label += " · " + sz.replace(/\s+/g, ""); });
+  const avg = cur.margin, sub = `${esc(R.label)}${filterNote ? " · " + esc(filterNote) : ""} · margin vs ${avg != null ? pct(avg, 1) : "the"} average`;
+  const foot = `<div class="row-sub" style="margin-top:10px">Distributor sales: sales + TOD from Hangyo − cost at the SS rate. Swiggy and Zepto: ${pct(QC_GP_RATE, 0)} of sales.${cur.noCost ? " " + esc(noCostNote(cur)) : ""}</div>`;
+  return `<div class="grid-2">
+    ${chartCard("gpDist", "Gross profit by distributor", sub, "", gpBars(byD, avg) + foot, gpTable(byD, "Distributor") + `<div class="row-sub" style="margin-top:8px">* includes an estimate (Swiggy/Zepto at ${pct(QC_GP_RATE, 0)}, or products without a cost price)</div>`)}
+    ${chartCard("gpProd", "Gross profit by product", sub, "", gpBars(byP, avg) + foot, gpTable(byP, "Product") + `<div class="row-sub" style="margin-top:8px">* includes an estimate (Swiggy/Zepto at ${pct(QC_GP_RATE, 0)}, or products without a cost price)</div>`)}
+  </div>`;
+}
 
 /* ===== ORDERS: list, detail, sales order, new / edit order ===== */
 const UNIT_LABEL = { Crate: "Crates", "EA (Box)": "Boxes", Pieces: "Pieces" };
