@@ -531,10 +531,10 @@ function recomputeRepl() {
 const cssVar = (n) => `var(${n})`;
 const isNarrow = () => window.innerWidth < 720;
 function niceScale(v) { for (let k = -2; k < 9; k++) for (const s of [1, 2, 5]) { const step = s * Math.pow(10, k), n = Math.ceil(v / step - 1e-9); if (n <= 5) return { step, n, max: n * step }; } return { step: v, n: 1, max: v }; }
-function chartCard(id, title, sub, legend, chartHtml, tableHtml) {
+function chartCard(id, title, sub, legend, chartHtml, tableHtml, extra) {
   const mode = S.chartMode[id] || "chart";
   return `<div class="card"><div class="card-head"><div><div class="card-title">${title}</div><div class="card-sub">${sub}</div></div>
-    <div class="seg"><button data-act="chartMode" data-id="${id}" data-mode="chart" aria-pressed="${mode === "chart"}">Chart</button><button data-act="chartMode" data-id="${id}" data-mode="table" aria-pressed="${mode === "table"}">Table</button></div></div>
+    <div class="hstack gap-8">${extra || ""}<div class="seg"><button data-act="chartMode" data-id="${id}" data-mode="chart" aria-pressed="${mode === "chart"}">Chart</button><button data-act="chartMode" data-id="${id}" data-mode="table" aria-pressed="${mode === "table"}">Table</button></div></div></div>
     <div class="card-pad" style="padding-top:12px">${mode === "chart" ? `${legend ? `<div class="legend" style="margin-bottom:8px">${legend}</div>` : ""}${chartHtml}` : `<div style="overflow-x:auto">${tableHtml}</div>`}</div></div>`;
 }
 ACT.chartMode = (el) => { S.chartMode[el.dataset.id] = el.dataset.mode; render(); };
@@ -754,8 +754,8 @@ VIEWS.home = () => {
       <div class="card"><div class="card-head"><div><div class="card-title">${F.ch === "all" ? "Districts and quick commerce" : showGT ? "By district" : "By platform"}</div><div class="card-sub">${esc(R.label)}${cmp ? " against " + esc(cmp) : ""}</div></div><div class="legend"><span><i style="background:var(--s-gt)"></i>Now</span>${cmp ? `<span><i style="background:var(--s-prev)"></i>Before</span>` : ""}</div></div><div class="card-pad" style="padding-top:10px">${barRows.length ? bars(barRows) : `<div class="empty" style="padding:24px">No sales in this period.</div>`}</div></div>
     </div>
     <div class="grid-2">
-      ${showGT ? `<div><div class="group-label"><span>Top distributors · ${esc(R.label)}</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="drill" data-k="gt">See all</button></div><div class="group">${topD.length ? topD.map((x, i) => { const pv = dPrev[x.key] ? dPrev[x.key].value : 0; return `<button class="row" data-act="distSheet" data-name="${esc(x.key)}"><span class="avatar soft">${i + 1}</span><span class="grow"><div class="row-title clip">${esc(x.key)}</div><div class="bar-cell" style="margin-top:5px"><div class="meter"><i style="width:${(x.value / maxD) * 100}%"></i></div><span class="row-sub nowrap">${esc(districtOf(x.key))} · ${x.refs.size} order${x.refs.size === 1 ? "" : "s"}</span></div></span><span class="row-end"><span><div class="row-value">₹${lakh(x.value)} L</div><div>${pv > 0 ? growthChip(x.value / pv - 1) : cmp ? growthChip("New") : ""}</div></span></span></button>`; }).join("") : `<div class="empty" style="padding:24px">No distributor sales in this period.</div>`}</div></div>` : ""}
-      <div><div class="group-label"><span>Top products · ${esc(R.label)}</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="drill" data-k="products">See all</button></div><div class="group">${topP.length ? topP.map((x, i) => { const dl = daysLeftOf(x.key, x.crates); return `<div class="row"><span class="avatar soft">${i + 1}</span><span class="grow"><div class="row-title clip">${esc(shortName(pName(x.key)))}</div><div class="bar-cell" style="margin-top:5px"><div class="meter"><i style="width:${(x.value / maxP) * 100}%"></i></div><span class="row-sub nowrap">${nf(x.crates, 0)} crates${dl != null ? " · " + nf(dl, 0) + " days of stock" : ""}</span></div></span><span class="row-end"><span><div class="row-value">₹${lakh(x.value)} L</div><div>${classPill((replBySap[x.key] || {}).cls)}</div></span></span></div>`; }).join("") : `<div class="empty" style="padding:24px">No product sales in this period.</div>`}</div></div>
+      ${showGT ? `<div><div class="group-label"><span>Top distributors · ${esc(R.label)}</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="seeAll" data-kind="dist">See all</button></div><div class="group">${topD.length ? topD.map((x, i) => { const pv = dPrev[x.key] ? dPrev[x.key].value : 0; return `<button class="row" data-act="whyDist" data-from="home" data-k="${esc(x.key)}"><span class="avatar soft">${i + 1}</span><span class="grow"><div class="row-title clip">${esc(x.key)}</div><div class="bar-cell" style="margin-top:5px"><div class="meter"><i style="width:${(x.value / maxD) * 100}%"></i></div><span class="row-sub nowrap">${esc(districtOf(x.key))} · ${x.refs.size} order${x.refs.size === 1 ? "" : "s"}</span></div></span><span class="row-end"><span><div class="row-value">₹${lakh(x.value)} L</div><div>${pv > 0 ? growthChip(x.value / pv - 1) : cmp ? growthChip("New") : ""}</div></span></span></button>`; }).join("") : `<div class="empty" style="padding:24px">No distributor sales in this period.</div>`}</div></div>` : ""}
+      <div><div class="group-label"><span>Top products · ${esc(R.label)}</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="seeAll" data-kind="prod">See all</button></div><div class="group">${topP.length ? topP.map((x, i) => { const dl = daysLeftOf(x.key, x.crates); return `<button class="row" data-act="whyProd" data-from="home" data-k="${esc(x.key)}"><span class="avatar soft">${i + 1}</span><span class="grow"><div class="row-title clip">${esc(shortName(pName(x.key)))}</div><div class="bar-cell" style="margin-top:5px"><div class="meter"><i style="width:${(x.value / maxP) * 100}%"></i></div><span class="row-sub nowrap">${nf(x.crates, 0)} crates${dl != null ? " · " + nf(dl, 0) + " days of stock" : ""}</span></div></span><span class="row-end"><span><div class="row-value">₹${lakh(x.value)} L</div><div>${classPill((replBySap[x.key] || {}).cls)}</div></span></span></button>`; }).join("") : `<div class="empty" style="padding:24px">No product sales in this period.</div>`}</div></div>
     </div>
     ${gpCards(cur, prev, R, filterNote)}
     ${momCard(facts)}
@@ -829,15 +829,12 @@ function gpRows(cur, prev, keyFn, nameFn) {
   const est = gpEstRate(cur), estP = gpEstRate(prev), g = {}, gp = {};
   cur.facts.forEach((f) => { const k = keyFn(f); if (k == null) return; const x = (g[k] = g[k] || { k, v: 0, tod: 0, gp: 0, est: false }); x.v += f.value; x.tod += f.ch === "gt" ? f.tod : 0; x.gp += factGP(f, est); if (f.ch !== "gt" || (f.noCost && f.value > 0)) x.est = true; });
   (prev.facts || []).forEach((f) => { const k = keyFn(f); if (k == null) return; gp[k] = (gp[k] || 0) + factGP(f, estP); });
-  return Object.values(g).filter((x) => Math.abs(x.v) > 0.5).map((x) => ({ ...x, name: nameFn(x.k), m: x.v + x.tod ? x.gp / (x.v + x.tod) : null, prevGP: gp[x.k] != null ? gp[x.k] : null })).sort((a, b) => b.gp - a.gp);
+  return Object.values(g).filter((x) => Math.abs(x.v) > 0.5).map((x) => ({ ...x, name: nameFn(x.k), m: x.v + x.tod > 0 ? x.gp / (x.v + x.tod) : null, prevGP: gp[x.k] != null ? gp[x.k] : null })).sort((a, b) => b.gp - a.gp);
 }
-function gpBars(rows, avg) {
+function gpBars(rows, avg, act) {
   const top = rows.slice(0, 10), max = Math.max(1, ...top.map((d) => Math.abs(d.gp)));
   if (!top.length) return `<div class="empty">No sales in this period.</div>`;
-  return `<div class="gp-bars">` + top.map((d) => `<div class="hbar" title="${esc(d.name)}: profit ${rs(d.gp)} on ${rs(d.v)} sales${d.m != null ? " · margin " + pct(d.m, 1) : ""}">
-    <div class="clip">${esc(d.label || d.name)}</div>
-    <div class="tracks"><div class="trk" style="width:${Math.max(0, (Math.abs(d.gp) / max) * 100)}%;background:var(${d.gp < 0 ? "--bad" : "--s-gt"})"></div></div>
-    <div class="num nowrap" style="min-width:118px;text-align:right"><b>${rs(d.gp)}</b> <span class="delta ${d.m == null ? "flat" : avg != null && d.m < avg - 0.003 ? "down" : avg != null && d.m > avg + 0.003 ? "up" : "flat"}" title="Margin">${d.m != null ? pct(d.m, 1) : "–"}</span></div></div>`).join("") + `</div>`;
+  return `<div class="gp-bars">` + top.map((d) => gpRowHtml(d, max, avg, act).replace('data-act="' + act + '"', `data-act="${act}" data-from="home"`)).join("") + `</div>`;
 }
 function gpTable(rows, label) {
   return `<table class="t"><thead><tr><th>${label}</th><th class="r">Sales</th><th class="r">TOD</th><th class="r">Gross profit</th><th class="r">Margin</th><th class="r">Before</th></tr></thead><tbody>${rows.map((d) => `<tr><td>${esc(d.name)}${d.est ? " *" : ""}</td><td class="r">${rs(d.v)}</td><td class="r">${d.tod ? rs(d.tod) : "–"}</td><td class="r"><b>${rs(d.gp)}</b></td><td class="r">${d.m != null ? pct(d.m, 1) : "–"}</td><td class="r">${d.prevGP != null ? rs(d.prevGP) : "–"}</td></tr>`).join("")}</tbody></table>`;
@@ -850,10 +847,115 @@ function gpCards(cur, prev, R, filterNote) {
   const avg = cur.margin, sub = `${esc(R.label)}${filterNote ? " · " + esc(filterNote) : ""} · margin vs ${avg != null ? pct(avg, 1) : "the"} average`;
   const foot = `<div class="row-sub" style="margin-top:10px">Distributor sales: sales + TOD from Hangyo − cost at the SS rate. Swiggy and Zepto: ${pct(QC_GP_RATE, 0)} of sales.${cur.noCost ? " " + esc(noCostNote(cur)) : ""}</div>`;
   return `<div class="grid-2">
-    ${chartCard("gpDist", "Gross profit by distributor", sub, "", gpBars(byD, avg) + foot, gpTable(byD, "Distributor") + `<div class="row-sub" style="margin-top:8px">* includes an estimate (Swiggy/Zepto at ${pct(QC_GP_RATE, 0)}, or products without a cost price)</div>`)}
-    ${chartCard("gpProd", "Gross profit by product", sub, "", gpBars(byP, avg) + foot, gpTable(byP, "Product") + `<div class="row-sub" style="margin-top:8px">* includes an estimate (Swiggy/Zepto at ${pct(QC_GP_RATE, 0)}, or products without a cost price)</div>`)}
+    ${chartCard("gpDist", "Gross profit by distributor", sub, "", gpBars(byD, avg, "whyDist") + foot, gpTable(byD, "Distributor") + `<div class="row-sub" style="margin-top:8px">* includes an estimate (Swiggy/Zepto at ${pct(QC_GP_RATE, 0)}, or products without a cost price)</div>`, `<button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="seeAll" data-kind="gpDist">See all</button>`)}
+    ${chartCard("gpProd", "Gross profit by product", sub, "", gpBars(byP, avg, "whyProd") + foot, gpTable(byP, "Product") + `<div class="row-sub" style="margin-top:8px">* includes an estimate (Swiggy/Zepto at ${pct(QC_GP_RATE, 0)}, or products without a cost price)</div>`, `<button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="seeAll" data-kind="gpProd">See all</button>`)}
   </div>`;
 }
+
+/* ===== "SEE ALL" LISTS AND WHAT IS BEHIND EACH NUMBER =====
+   Every See all shows the same rows as its card on Home, for everyone in the period (with the dashboard filters).
+   Tapping a row opens the breakdown behind that number: orders/invoices and products (or distributors). */
+const prodName = (k) => (catBySap[k] || stockBySap[k] || qcBySap[k] || { name: k }).name;
+const prodLabel = (k) => shortName(prodName(k));
+function seeAllData(kind) {
+  const H = homeData(), { R, cur, prev } = H, cmp = R.pFrom ? R.cmpLabel : "";
+  if (kind === "dist") {
+    const g = groupBy(cur.facts.filter((f) => f.ch === "gt"), (f) => f.dist), gp = groupBy(prev.facts.filter((f) => f.ch === "gt"), (f) => f.dist);
+    return { H, cmp, rows: Object.values(g).filter((x) => x.value > 0).sort((a, b) => b.value - a.value).map((x) => ({ ...x, prev: gp[x.key] ? gp[x.key].value : 0 })) };
+  }
+  if (kind === "prod") {
+    const g = groupBy(cur.facts.filter((f) => f.product && f.kind !== "note"), (f) => f.sap || f.product);
+    return { H, cmp, rows: Object.values(g).sort((a, b) => b.value - a.value) };
+  }
+  if (kind === "gpDist") return { H, cmp, rows: gpRows(cur, prev, (f) => (f.ch === "gt" ? f.dist : CH_LABEL[f.ch]), (k) => k) };
+  const rows = gpRows(cur, prev, (f) => (f.product && f.kind !== "note" ? f.sap || f.product : null), prodLabel);
+  return { H, cmp, rows };
+}
+const daysOfStock = (sap, crates, days) => { const st = stockBySap[sap]; if (!st || !st.upc || !crates) return null; return (st.ea / st.upc) / (crates / days); };
+/* the row markup: identical to the cards on Home */
+function distRowHtml(x, i, max, cmp) {
+  return `<button class="row" data-act="whyDist" data-k="${esc(x.key)}"><span class="avatar soft">${i + 1}</span><span class="grow"><div class="row-title clip">${esc(x.key)}</div><div class="bar-cell" style="margin-top:5px"><div class="meter"><i style="width:${(x.value / max) * 100}%"></i></div><span class="row-sub nowrap">${esc(districtOf(x.key))} · ${x.refs.size} order${x.refs.size === 1 ? "" : "s"}</span></div></span><span class="row-end"><span><div class="row-value">₹${lakh(x.value)} L</div><div>${x.prev > 0 ? growthChip(x.value / x.prev - 1) : cmp ? growthChip("New") : ""}</div></span>${ic("chevR", "sm chev")}</span></button>`;
+}
+function prodRowHtml(x, i, max, days) {
+  const dl = daysOfStock(x.key, x.crates, days);
+  return `<button class="row" data-act="whyProd" data-k="${esc(x.key)}"><span class="avatar soft">${i + 1}</span><span class="grow"><div class="row-title clip">${esc(prodLabel(x.key))}</div><div class="bar-cell" style="margin-top:5px"><div class="meter"><i style="width:${(x.value / max) * 100}%"></i></div><span class="row-sub nowrap">${nf(x.crates, 0)} crates${dl != null ? " · " + nf(dl, 0) + " days of stock" : ""}</span></div></span><span class="row-end"><span><div class="row-value">₹${lakh(x.value)} L</div><div>${classPill((replBySap[x.key] || {}).cls)}</div></span>${ic("chevR", "sm chev")}</span></button>`;
+}
+function gpRowHtml(d, max, avg, act) {
+  return `<button class="hbar hbar-btn" data-act="${act}" data-k="${esc(d.k)}" title="${esc(d.name)}: profit ${rs(d.gp)} on ${rs(d.v)} sales${d.m != null ? " · margin " + pct(d.m, 1) : ""}">
+    <div class="clip">${esc(d.label || d.name)}</div>
+    <div class="tracks"><div class="trk" style="width:${Math.max(0, (Math.abs(d.gp) / max) * 100)}%;background:var(${d.gp < 0 ? "--bad" : "--s-gt"})"></div></div>
+    <div class="num nowrap" style="min-width:118px;text-align:right"><b>${rs(d.gp)}</b> <span class="delta ${d.m == null ? "flat" : avg != null && d.m < avg - 0.003 ? "down" : avg != null && d.m > avg + 0.003 ? "up" : "flat"}" title="Margin">${d.m != null ? pct(d.m, 1) : "–"}</span></div></button>`;
+}
+const SEE_TITLES = { dist: "Top distributors", prod: "Top products", gpDist: "Gross profit by distributor", gpProd: "Gross profit by product" };
+ACT.seeAll = (el) => {
+  const kind = el.dataset.kind, sort = (S.seeSort = el.dataset.sort || (S.seeKind === kind ? S.seeSort : null) || (kind.startsWith("gp") ? "gp" : "sales")); S.seeKind = kind;
+  const A = seeAllData(kind), { H, cmp } = A, R = H.R, q = key(S.seeQ || "");
+  let rows = A.rows.slice();
+  if (kind.startsWith("gp")) {
+    rows.sort((a, b) => (sort === "m" ? (b.m == null ? -1 : a.m == null ? 1 : b.m - a.m) : sort === "sales" ? b.v - a.v : b.gp - a.gp));
+    if (kind === "gpProd") rows.forEach((x) => { x.label = x.name; });
+  }
+  const filt = rows.filter((x) => !q || key(kind === "dist" ? x.key : kind === "prod" ? prodName(x.key) : x.name).includes(q));
+  const filterNote = [S.dash.ch !== "all" ? DASH_CHANNELS.find((c) => c[0] === S.dash.ch)[1] : "", S.dash.district !== "all" ? S.dash.district : ""].filter(Boolean).join(" · ");
+  const total = kind.startsWith("gp") ? `${rs(rows.reduce((a, x) => a + x.gp, 0))} profit on ${rs(rows.reduce((a, x) => a + x.v, 0))} sales` : `${rs(rows.reduce((a, x) => a + x.value, 0))} in sales`;
+  let body;
+  if (kind === "dist") { const max = rows.length ? rows[0].value : 1; body = `<div class="group">${filt.map((x) => distRowHtml(x, rows.indexOf(x), max, cmp)).join("") || `<div class="empty">Nothing matches.</div>`}</div>`; }
+  else if (kind === "prod") { const max = rows.length ? rows[0].value : 1; body = `<div class="group">${filt.map((x) => prodRowHtml(x, rows.indexOf(x), max, R.days)).join("") || `<div class="empty">Nothing matches.</div>`}</div>`; }
+  else { const max = Math.max(1, ...rows.map((d) => Math.abs(d.gp))); body = `<div class="card card-pad gp-bars">${filt.map((d) => gpRowHtml(d, max, H.cur.margin, kind === "gpDist" ? "whyDist" : "whyProd")).join("") || `<div class="empty">Nothing matches.</div>`}</div>`; }
+  openSheet(SEE_TITLES[kind], `<div class="row-sub">${esc(R.label)}${filterNote ? " · " + esc(filterNote) : ""} · ${rows.length} ${kind.endsWith("rod") || kind === "prod" ? "products" : "distributors"} · ${total}. Tap a row to see what is behind the number.</div>
+    <div class="hstack gap-12 wrap"><div class="search" style="flex:1;min-width:200px">${ic("search", "sm")}<input class="input" id="see-q" type="search" placeholder="Search" value="${esc(S.seeQ || "")}" data-in="seeQ" autocomplete="off"></div>${kind.startsWith("gp") ? `<div class="seg">${[["gp", "Profit"], ["m", "Margin"], ["sales", "Sales"]].map(([v, l]) => `<button data-act="seeAll" data-kind="${kind}" data-sort="${v}" aria-pressed="${sort === v}">${l}</button>`).join("")}</div>` : ""}</div>
+    <div id="see-list">${body}</div>
+    ${kind.startsWith("gp") ? `<div class="row-sub">Distributor sales: sales + TOD from Hangyo − cost at the SS rate. Swiggy and Zepto: ${pct(QC_GP_RATE, 0)} of sales.${H.cur.noCost ? " " + esc(noCostNote(H.cur)) : ""}</div>` : ""}`,
+    `<button class="btn btn-secondary" data-act="seeExcel" data-kind="${kind}">${ic("doc", "sm")} Download Excel</button><button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
+};
+IN.seeQ = (el) => { S.seeQ = el.value; const at = el.selectionStart; ACT.seeAll({ dataset: { kind: S.seeKind, sort: S.seeSort } }); const i = $("#see-q"); if (i) { i.focus(); try { i.setSelectionRange(at, at); } catch (e) {} } };
+ACT.seeExcel = async (el) => {
+  const kind = el.dataset.kind, A = seeAllData(kind), R = A.H.R, now = NOW(), st = `${pad2(now.getDate())}-${pad2(now.getMonth() + 1)}-${now.getFullYear()}`;
+  let aoa;
+  if (kind === "dist") aoa = [["Distributor", "District", "Orders", "Crates", "Sales (excl. GST)", "Before", "Change"]].concat(A.rows.map((x) => [x.key, districtOf(x.key), x.refs.size, +x.crates.toFixed(2), Math.round(x.value), Math.round(x.prev), x.prev > 0 ? +(x.value / x.prev - 1).toFixed(4) : ""]));
+  else if (kind === "prod") aoa = [["Product", "SAP code", "Class", "Crates", "Sales (excl. GST)", "Days of stock"]].concat(A.rows.map((x) => { const dl = daysOfStock(x.key, x.crates, R.days); return [prodName(x.key), x.key, (replBySap[x.key] || {}).cls || "", +x.crates.toFixed(2), Math.round(x.value), dl != null ? Math.round(dl) : ""]; }));
+  else aoa = [[kind === "gpDist" ? "Distributor" : "Product", "Sales (excl. GST)", "TOD", "Gross profit", "Margin", "Before", "Estimated"]].concat(A.rows.map((x) => [kind === "gpProd" ? prodName(x.k) : x.name, Math.round(x.v), Math.round(x.tod), Math.round(x.gp), x.m != null ? +x.m.toFixed(4) : "", x.prevGP != null ? Math.round(x.prevGP) : "", x.est ? "Yes" : ""]));
+  if (await downloadXlsx(el, aoa, kind === "prod" || kind === "gpProd" ? [44, 12, 10, 10, 14, 12, 10] : [32, 14, 10, 12, 14, 12, 10], `SahiReach ${SEE_TITLES[kind].toLowerCase()} ${R.label} ${st}.xlsx`, SEE_TITLES[kind].slice(0, 30))) toast("Downloaded", "doc");
+};
+/* ---------- behind the number ---------- */
+function whyTable(head, rows, foot) {
+  return `<div class="table-wrap"><table class="t"><thead><tr>${head.map((h, i) => `<th class="${i ? "r" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody>${foot ? `<tfoot><tr>${foot.map((c, i) => `<td class="${i ? "r" : ""}"><b>${c}</b></td>`).join("")}</tr></tfoot>` : ""}</table></div>`;
+}
+const refLabel = (f) => (f.kind === "order" ? "Order" : f.kind === "vyapar" ? "Invoice" : f.kind === "qc" ? "PO" : f.kind === "return" ? "Return" : "Note");
+function whyBack() { return S.seeKind ? `<button class="btn btn-secondary" data-act="seeAll" data-kind="${S.seeKind}">${ic("chevL", "sm")} Back to the list</button>` : ""; }
+ACT.whyDist = (el) => {
+  if (el.dataset.from === "home") S.seeKind = null;
+  const k = el.dataset.k, H = homeData(), { R, cur, prev } = H, est = gpEstRate(cur), isQC = k === "Swiggy" || k === "Zepto";
+  const F = cur.facts.filter((f) => (isQC ? CH_LABEL[f.ch] === k : f.ch === "gt" && f.dist === k)), P = prev.facts.filter((f) => (isQC ? CH_LABEL[f.ch] === k : f.ch === "gt" && f.dist === k));
+  const sum = (A, fn) => A.reduce((a, f) => a + fn(f), 0), sales = sum(F, (f) => f.value), tod = sum(F, (f) => (f.ch === "gt" ? f.tod : 0)), gp = sum(F, (f) => factGP(f, est)), pSales = sum(P, (f) => f.value);
+  const byRef = {}; F.forEach((f) => { const x = (byRef[f.ref] = byRef[f.ref] || { ref: f.ref, date: f.date, kind: f.kind, crates: 0, v: 0, tod: 0, gp: 0, n: 0 }); x.crates += f.crates; x.v += f.value; x.tod += f.ch === "gt" ? f.tod : 0; x.gp += factGP(f, est); x.n++; if (f.date > x.date) x.date = f.date; });
+  const byP = {}; F.forEach((f) => { const kk = f.sap || f.product || "Other"; const x = (byP[kk] = byP[kk] || { k: kk, crates: 0, v: 0, tod: 0, gp: 0 }); x.crates += f.crates; x.v += f.value; x.tod += f.ch === "gt" ? f.tod : 0; x.gp += factGP(f, est); });
+  const refs = Object.values(byRef).sort((a, b) => (a.date < b.date ? 1 : -1)), prods = Object.values(byP).sort((a, b) => b.v - a.v);
+  const m = sales + tod > 0 ? gp / (sales + tod) : null;
+  const refRow = (x) => { const isOrd = !!orderById(x.ref); return `<tr ${isOrd ? `class="tr-tap" data-act="orderSheet" data-id="${esc(x.ref)}"` : ""}><td>${fmtDate(x.date)} · ${refLabel(x)} <span class="mono" style="font-size:12px">${esc(x.ref || "")}</span>${isOrd ? ` ${ic("chevR", "sm dim")}` : ""}</td><td class="r">${nf(x.crates, 1)}</td><td class="r">${rs(x.v)}</td><td class="r">${x.tod ? rs(x.tod) : "–"}</td><td class="r"><b>${rs(x.gp)}</b></td></tr>`; };
+  const pRow = (x) => `<tr class="tr-tap" data-act="whyProd" data-k="${esc(x.k)}"><td>${esc(prodLabel(x.k))} ${ic("chevR", "sm dim")}</td><td class="r">${nf(x.crates, 1)}</td><td class="r">${rs(x.v)}</td><td class="r"><b>${rs(x.gp)}</b></td><td class="r">${x.v + x.tod > 0 ? pct(x.gp / (x.v + x.tod), 1) : "–"}</td></tr>`;
+  const d = distByKey[key(k)];
+  openSheet(esc(k), `<div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="tile"><div class="tile-label">Sales · ${esc(R.label)}</div><div class="tile-value">${rs(sales)}</div><div>${pSales > 0 ? growthChip(sales / pSales - 1) : ""}</div><div class="tile-sub">${R.pFrom ? `${esc(R.cmpLabel)}: ${rs(pSales)}` : ""}</div></div><div class="tile"><div class="tile-label">Gross profit</div><div class="tile-value">${rs(gp)}</div><div class="tile-sub">Margin ${m != null ? pct(m, 1) : "–"}${tod ? ` · TOD ${rs(tod)}` : ""}${isQC ? ` · at ${pct(QC_GP_RATE, 0)}` : ""}</div></div><div class="tile"><div class="tile-label">Crates</div><div class="tile-value">${nf(sum(F, (f) => f.crates), 1)}</div><div class="tile-sub">${refs.length} ${isQC ? "PO" : "order"}${refs.length === 1 ? "" : "s"} or invoices</div></div></div>
+    <div><div class="group-label"><span>${isQC ? "POs delivered" : "Orders and invoices"}</span><span>tap an order to open it</span></div>${whyTable(["Date · reference", "Crates", "Sales", "TOD", "Gross profit"], refs.map(refRow), ["Total", nf(sum(F, (f) => f.crates), 1), rs(sales), tod ? rs(tod) : "–", rs(gp)])}</div>
+    <div><div class="group-label"><span>By product</span><span>tap a product</span></div>${whyTable(["Product", "Crates", "Sales", "Gross profit", "Margin"], prods.map(pRow))}</div>`,
+    `${whyBack()}${d ? `<button class="btn btn-secondary" data-act="distSheet" data-name="${esc(d.name)}">Distributor details</button>` : ""}<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
+};
+ACT.whyProd = (el) => {
+  if (el.dataset.from === "home") S.seeKind = null;
+  const k = el.dataset.k, H = homeData(), { R, cur, prev } = H, est = gpEstRate(cur);
+  const F = cur.facts.filter((f) => (f.sap || f.product) === k && f.kind !== "note"), P = prev.facts.filter((f) => (f.sap || f.product) === k && f.kind !== "note");
+  const sum = (A, fn) => A.reduce((a, f) => a + fn(f), 0), sales = sum(F, (f) => f.value), tod = sum(F, (f) => (f.ch === "gt" ? f.tod : 0)), gp = sum(F, (f) => factGP(f, est)), pSales = sum(P, (f) => f.value), crates = sum(F, (f) => f.crates);
+  const byD = {}; F.forEach((f) => { const kk = f.ch === "gt" ? f.dist : CH_LABEL[f.ch]; const x = (byD[kk] = byD[kk] || { k: kk, crates: 0, v: 0, tod: 0, gp: 0 }); x.crates += f.crates; x.v += f.value; x.tod += f.ch === "gt" ? f.tod : 0; x.gp += factGP(f, est); });
+  const ds = Object.values(byD).sort((a, b) => b.v - a.v), lines = F.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+  const m = sales + tod > 0 ? gp / (sales + tod) : null, st = stockBySap[k], dl = daysOfStock(k, crates, R.days);
+  const dRow = (x) => `<tr class="tr-tap" data-act="whyDist" data-k="${esc(x.k)}"><td>${esc(x.k)} ${ic("chevR", "sm dim")}</td><td class="r">${nf(x.crates, 1)}</td><td class="r">${rs(x.v)}</td><td class="r"><b>${rs(x.gp)}</b></td><td class="r">${x.v + x.tod > 0 ? pct(x.gp / (x.v + x.tod), 1) : "–"}</td></tr>`;
+  const lRow = (f) => { const isOrd = !!orderById(f.ref); return `<tr ${isOrd ? `class="tr-tap" data-act="orderSheet" data-id="${esc(f.ref)}"` : ""}><td>${fmtDate(f.date)} · ${esc(f.ch === "gt" ? shortOf(f.dist) : CH_LABEL[f.ch])} <span class="mono" style="font-size:12px">${esc(f.ref || "")}</span>${isOrd ? ` ${ic("chevR", "sm dim")}` : ""}</td><td class="r">${nf(f.crates, 2)}</td><td class="r">${rs(f.value)}</td><td class="r">${rs(factGP(f, est))}</td></tr>`; };
+  openSheet(esc(prodLabel(k)), `<div class="row-sub">${esc(prodName(k))}${st && st.trop ? " · " + esc(st.trop) : ""} · SAP ${esc(k)}</div>
+    <div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="tile"><div class="tile-label">Sales · ${esc(R.label)}</div><div class="tile-value">${rs(sales)}</div><div>${pSales > 0 ? growthChip(sales / pSales - 1) : ""}</div><div class="tile-sub">${R.pFrom ? `${esc(R.cmpLabel)}: ${rs(pSales)}` : ""}</div></div><div class="tile"><div class="tile-label">Gross profit</div><div class="tile-value">${rs(gp)}</div><div class="tile-sub">Margin ${m != null ? pct(m, 1) : "–"}${tod ? ` · TOD ${rs(tod)}` : ""}</div></div><div class="tile"><div class="tile-label">Crates sold</div><div class="tile-value">${nf(crates, 1)}</div><div class="tile-sub">${st && st.upc ? `${nf(st.ea / st.upc, 1)} in stock${dl != null ? " · " + nf(dl, 0) + " days" : ""}` : "Not stocked"}</div></div></div>
+    <div><div class="group-label"><span>Who bought it</span><span>tap a distributor</span></div>${whyTable(["Distributor", "Crates", "Sales", "Gross profit", "Margin"], ds.map(dRow), ["Total", nf(crates, 1), rs(sales), rs(gp), m != null ? pct(m, 1) : "–"])}</div>
+    <div><div class="group-label"><span>Every sale</span><span>${lines.length}</span></div>${whyTable(["Date · who · reference", "Crates", "Sales", "Gross profit"], lines.map(lRow))}</div>`,
+    `${whyBack()}${stockBySap[k] || catBySap[k] ? `<button class="btn btn-secondary" data-act="productSheet" data-sap="${esc(k)}">Product details</button>` : ""}<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
+};
 
 /* ===== ORDERS: list, detail, sales order, new / edit order ===== */
 const UNIT_LABEL = { Crate: "Crates", "EA (Box)": "Boxes", Pieces: "Pieces" };
