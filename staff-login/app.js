@@ -3,6 +3,11 @@ const HOST = window.SR || null; /* set by the staff-login page after sign-in; ab
 const D = HOST && HOST.data ? HOST.data : JSON.parse(document.getElementById("seed").textContent);
 const LOGO = HOST && HOST.logo ? HOST.logo : document.getElementById("logo-data").textContent.trim();
 const ME = (HOST && HOST.me) || { name: "Vishnu", role: "owner" };
+/* roles: owner = everything; staff = day-to-day work, no costs or profit; viewer = sees everything, changes nothing.
+   The database enforces the same rules: staff are sent no cost data, and a viewer's changes are refused. */
+const ROLE = (() => { if (HOST) return ["owner", "staff", "viewer"].includes(ME.role) ? ME.role : "staff"; let r = ""; try { r = new URLSearchParams(location.search).get("as") || ""; } catch (e) {} return ["staff", "viewer"].includes(r) ? r : "owner"; })();
+const CAN_EDIT = ROLE !== "viewer", SEE_MONEY = ROLE !== "staff";
+const ROLE_LABEL = { owner: "Owner", staff: "Staff", viewer: "Viewer" };
 const FIRST = String(ME.name || "").trim().split(/\s+/)[0] || "there";
 const CO = D.company || { name: "SahiReach LLP", address: "", gstin: "", fssai: "" };
 const $ = (s, r) => (r || document).querySelector(s);
@@ -130,6 +135,8 @@ const ROUTES = {
   setup: { label: "Setup", icon: "gear" },
   more: { label: "More", icon: "grid" },
 };
+if (!SEE_MONEY) { delete ROUTES.tod; delete ROUTES.logistics; }
+if (!CAN_EDIT) delete ROUTES["new-order"];
 let sheetOpen = false;
 const VIEWS = {};
 const ACT = {};
@@ -626,7 +633,7 @@ function bindCharts() {
 const DATA_OLD = !!HOST && (!D.meta || !(D.meta.dataVersion >= 2));
 function dataUpdateBanner() {
   if (!DATA_OLD) return "";
-  return ME.role === "owner"
+  return ROLE === "owner"
     ? `<div class="banner warn">${ic("alert", "sm")}<span class="grow"><b>One-time data update.</b> Load the new workspace file (sahireach-workspace-13-nov.json) so September sales and the new dashboard figures show correctly.</span><button class="btn btn-sm btn-primary" data-act="dataUpload">Choose file</button></div>`
     : `<div class="banner warn">${ic("alert", "sm")}<span>Some figures are incomplete until the owner loads the updated data file.</span></div>`;
 }
@@ -657,10 +664,11 @@ function attention(facts) {
   const quiet = quietDistributors(facts);
   if (quiet.length) out.push({ ic: "people", cls: "warn", title: `${quiet.length} distributor${quiet.length > 1 ? "s" : ""} gone quiet`, sub: quiet.slice(0, 2).map((q) => shortOf(q.name)).join(", ") + (quiet.length > 2 ? " and more" : "") + ` · nothing dispatched for ${quiet[0].days}+ days`, go: "setup" });
   const slow = slowSum(slowRows());
-  if (slow.n) out.push({ ic: "box", cls: "warn", act: "slowList", title: `${slow.n} slow-moving product${slow.n > 1 ? "s" : ""} to push`, sub: `${nf(slow.crates, 0)} crates above normal sales · ₹${lakh(slow.value)} L tied up` });
+  if (slow.n) out.push({ ic: "box", cls: "warn", act: "slowList", title: `${slow.n} slow-moving product${slow.n > 1 ? "s" : ""} to push`, sub: `${nf(slow.crates, 0)} crates above normal sales${SEE_MONEY ? ` · ₹${lakh(slow.value)} L tied up` : ""}` });
   const bis = typeof backInStock === "function" ? backInStock() : [];
   if (bis.length) out.push({ ic: "box", cls: "good", act: "backInStock", title: `${bis.length} distributor${bis.length > 1 ? "s" : ""} waiting for stock that is back`, sub: [...new Set(bis.flatMap((g) => g.items.map((i) => shortName(i.name).split("(")[0].trim())))].slice(0, 2).join(", ") + " · tap to let them know" });
   { const pb = pendingBack(); if (pb.length) out.push({ ic: "box", cls: "good", act: "pendingBackSheet", title: `${pb.length} pending order${pb.length > 1 ? "s" : ""} can get products that were out of stock`, sub: pb.slice(0, 2).map((g) => shortOf(g.o.dist)).join(", ") + " · tap to refresh the order" }); }
+  if (!SEE_MONEY) return out;
   const runs = typeof unloggedRuns === "function" ? unloggedRuns() : [];
   if (runs.length) out.push({ ic: "truck", cls: "warn", go: "logistics", title: `${runs.length} dispatch${runs.length > 1 ? "es" : ""} without a trip logged`, sub: runs.slice(0, 2).map((r) => fmtDate(r.date) + ": " + runLabel(r)).join(" · ") + " · add km and cost" });
   const todDue = D.tod.lines.filter((l) => l.status !== "Received").reduce((a, l) => a + (l.amount || 0), 0) || D.tod.total;
@@ -709,14 +717,14 @@ VIEWS.home = () => {
   if (showGT) tiles.push(tile("gt", "Distributor sales (GT)", lakhS(cur.gt), "L", `${cur.orders.size} order${cur.orders.size === 1 ? "" : "s"}${cur.avgOrder ? " · avg " + rs(cur.avgOrder) : ""}`, chgTxt(cur.gt, prev.gt, cmp)));
   if (showQC) tiles.push(tile("qc", F.ch === "swiggy" ? "Swiggy" : F.ch === "zepto" ? "Zepto" : "Quick commerce", lakhS(cur.qc), "L", F.ch === "all" || F.ch === "qc" ? `Swiggy ₹${lakh(cur.swiggy)} L · Zepto ₹${lakh(cur.zepto)} L` : `${cur.qcDeliveries.size} PO${cur.qcDeliveries.size === 1 ? "" : "s"} delivered`, chgTxt(cur.qc, prev.qc, cmp)));
   tiles.push(tile("crates", "Crates moved", nf(cur.crates, 0), "", showGT && showQC ? `GT ${nf(cur.gtCrates, 0)} · QC ${nf(cur.qcCrates, 0)}` : showGT ? "To distributors" : "To Swiggy and Zepto", chgTxt(cur.crates, prev.crates, cmp)));
-  tiles.push(tile("gp", "Gross profit", lakhS(cur.gp), "L", `${cur.margin != null ? "Margin " + pct(cur.margin, 1) : ""}${showGT && showQC ? ` · GT ₹${lakh(cur.gpGT)} L · QC ₹${lakh(cur.gpQC)} L` : ""}`, chgTxt(cur.gp, prev.gp, cmp)));
+  if (SEE_MONEY) tiles.push(tile("gp", "Gross profit", lakhS(cur.gp), "L", `${cur.margin != null ? "Margin " + pct(cur.margin, 1) : ""}${showGT && showQC ? ` · GT ₹${lakh(cur.gpGT)} L · QC ₹${lakh(cur.gpQC)} L` : ""}`, chgTxt(cur.gp, prev.gp, cmp)));
   if (showGT) tiles.push(tile("fill", "Fill rate, distributors", cur.fillGT != null ? pct(cur.fillGT, 1) : "–", "", `${cur.fillGT == null ? "Tracked from 8 Oct, when the tool started" : nf(cur.missed, 1) + " crates missed"}${showQC && cur.fillQC != null ? " · QC fill " + pct(cur.fillQC, 1) : ""}`, ""));
   else tiles.push(tile("fill", "Fill rate, quick commerce", cur.fillQC != null ? pct(cur.fillQC, 1) : "–", "", "Pieces accepted of pieces ordered", ""));
   if (showGT) tiles.push(tile("active", "Active distributors", nf(cur.dists.size), "", `${prev.dists.size ? prev.dists.size + " in " + cmp : "With a dispatched order"}`, prev.dists.size || !cmp ? (cur.dists.size >= prev.dists.size ? "▲ " : "▼ ") + Math.abs(cur.dists.size - prev.dists.size) + " vs " + cmp : ""));
-  if (showGT && !showQC) tiles.push(tile("o2d", "Order to dispatch", cur.o2dAvg != null ? nf(cur.o2dAvg, 1) : "–", cur.o2dAvg != null ? "days" : "", `${cur.o2d.length} order${cur.o2d.length === 1 ? "" : "s"} dispatched`, ""));
-  { const lg = logiForDash(R.from, R.to, F.ch), lp = R.pFrom ? logiForDash(R.pFrom, R.pTo, F.ch) : null; tiles.push(`<button class="tile" data-act="nav" data-to="logistics"><div class="tile-label"><span>Logistics cost</span>${ic("chevR", "sm dim")}</div><div class="tile-value">${lg.pct != null ? pct(lg.pct, 2) : "–"}<small>of sales</small></div>${lp && lp.pct != null && lg.pct != null ? `<span class="delta ${lg.pct > lp.pct ? "down" : "up"}">${lg.pct > lp.pct ? "↑" : "↓"} ${Math.abs((lg.pct - lp.pct) * 100).toFixed(1)} pts vs ${esc(cmp)}</span>` : ""}<div class="tile-sub">${rs(lg.cost)} on ${lg.n} trip${lg.n === 1 ? "" : "s"}${lg.perCrate != null ? " · " + rs2(lg.perCrate) + " per crate" : ""}</div></button>`); }
-  tiles.push(tile("stock", "Stock on hand, at cost", lakhS(sv.total), "L", `Own ₹${lakh(sv.own)} L · QC ₹${lakh(sv.qc)} L · today`, ""));
-  if (tiles.length < 8) tiles.push(tile("purchases", "Purchases from Hangyo", lakhS(pur.total), "L", `Own ₹${lakh(pur.own)} L · QC ₹${lakh(pur.qc)} L`, ""));
+  if (showGT && (!showQC || !SEE_MONEY)) tiles.push(tile("o2d", "Order to dispatch", cur.o2dAvg != null ? nf(cur.o2dAvg, 1) : "–", cur.o2dAvg != null ? "days" : "", `${cur.o2d.length} order${cur.o2d.length === 1 ? "" : "s"} dispatched`, ""));
+  if (SEE_MONEY) { const lg = logiForDash(R.from, R.to, F.ch), lp = R.pFrom ? logiForDash(R.pFrom, R.pTo, F.ch) : null; tiles.push(`<button class="tile" data-act="nav" data-to="logistics"><div class="tile-label"><span>Logistics cost</span>${ic("chevR", "sm dim")}</div><div class="tile-value">${lg.pct != null ? pct(lg.pct, 2) : "–"}<small>of sales</small></div>${lp && lp.pct != null && lg.pct != null ? `<span class="delta ${lg.pct > lp.pct ? "down" : "up"}">${lg.pct > lp.pct ? "↑" : "↓"} ${Math.abs((lg.pct - lp.pct) * 100).toFixed(1)} pts vs ${esc(cmp)}</span>` : ""}<div class="tile-sub">${rs(lg.cost)} on ${lg.n} trip${lg.n === 1 ? "" : "s"}${lg.perCrate != null ? " · " + rs2(lg.perCrate) + " per crate" : ""}</div></button>`); }
+  if (SEE_MONEY) tiles.push(tile("stock", "Stock on hand, at cost", lakhS(sv.total), "L", `Own ₹${lakh(sv.own)} L · QC ₹${lakh(sv.qc)} L · today`, ""));
+  if (SEE_MONEY && tiles.length < 8) tiles.push(tile("purchases", "Purchases from Hangyo", lakhS(pur.total), "L", `Own ₹${lakh(pur.own)} L · QC ₹${lakh(pur.qc)} L`, ""));
   const pace = R.isMonthToDate ? (() => { const t = NOW(), dim = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate(); return ` · on pace for ₹${lakh((cur.net / t.getDate()) * dim)} L`; })() : "";
   const n = R.days, labels = [], prevLabels = R.pFrom ? [] : null;
   for (let i = 0; i < n; i++) { labels.push(fmtDate(addDays(R.from, i))); if (prevLabels) prevLabels.push(fmtDate(addDays(R.pFrom, i))); }
@@ -769,7 +777,7 @@ function momCard(facts) {
     ["Crates moved", (s) => nf(s.crates, 0)], ["Gross profit", (s) => rs(s.gp)], ["Gross margin", (s) => (s.margin != null ? pct(s.margin, 1) : "–")],
     ["Fill rate, distributors", (s) => (s.fillGT != null ? pct(s.fillGT, 1) : "–")], ["Fill rate, quick commerce", (s) => (s.fillQC != null ? pct(s.fillQC, 1) : "–")],
     ["Logistics cost", (s) => rs(s.logi.cost)], ["Logistics, % of sales carried", (s) => (s.logi.pct != null ? pct(s.logi.pct, 2) : "–")], ["Missed sales (crates)", (s) => nf(s.missed, 1)], ["Returns and credit notes", (s) => rs(s.returns)], ["TOD earned", (s) => rs(s.tod)], ["Purchases from Hangyo", (s) => rs(s.pur)],
-  ];
+  ].filter(([l]) => SEE_MONEY || !/profit|margin|logistics|tod|purchases/i.test(l));
   const table = `<table class="t"><thead><tr><th class="sticky-col">Measure</th>${months.map(({ m }) => `<th class="r">${esc(m.label)}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><td class="sticky-col">${esc(l)}</td>${months.map(({ s }) => `<td class="r">${f(s)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   return `<div class="card"><div class="card-head"><div><div class="card-title">All the numbers, month on month</div><div class="card-sub">${S.dash.ch !== "all" || S.dash.district !== "all" ? "Filtered: " + esc([S.dash.ch !== "all" ? DASH_CHANNELS.find((c) => c[0] === S.dash.ch)[1] : "", S.dash.district !== "all" ? S.dash.district : ""].filter(Boolean).join(" · ")) + " · " : ""}*this month so far</div></div></div><div class="card-pad" style="padding-top:8px"><div style="overflow-x:auto;margin:0 -8px">${table}</div></div></div>`;
 }
@@ -840,6 +848,7 @@ function gpTable(rows, label) {
   return `<table class="t"><thead><tr><th>${label}</th><th class="r">Sales</th><th class="r">TOD</th><th class="r">Gross profit</th><th class="r">Margin</th><th class="r">Before</th></tr></thead><tbody>${rows.map((d) => `<tr><td>${esc(d.name)}${d.est ? " *" : ""}</td><td class="r">${rs(d.v)}</td><td class="r">${d.tod ? rs(d.tod) : "–"}</td><td class="r"><b>${rs(d.gp)}</b></td><td class="r">${d.m != null ? pct(d.m, 1) : "–"}</td><td class="r">${d.prevGP != null ? rs(d.prevGP) : "–"}</td></tr>`).join("")}</tbody></table>`;
 }
 function gpCards(cur, prev, R, filterNote) {
+  if (!SEE_MONEY) return "";
   const pName = (k) => shortName((catBySap[k] || stockBySap[k] || qcBySap[k] || { name: k }).name);
   const byD = gpRows(cur, prev, (f) => (f.ch === "gt" ? f.dist : CH_LABEL[f.ch]), (k) => k);
   const byP = gpRows(cur, prev, (f) => (f.product && f.kind !== "note" ? f.sap || f.product : null), pName);
@@ -918,7 +927,15 @@ ACT.seeExcel = async (el) => {
   if (await downloadXlsx(el, aoa, kind === "prod" || kind === "gpProd" ? [44, 12, 10, 10, 14, 12, 10] : [32, 14, 10, 12, 14, 12, 10], `SahiReach ${SEE_TITLES[kind].toLowerCase()} ${R.label} ${st}.xlsx`, SEE_TITLES[kind].slice(0, 30))) toast("Downloaded", "doc");
 };
 /* ---------- behind the number ---------- */
+/* staff do not see profit, margin or TOD: those columns are taken out of every breakdown table */
 function whyTable(head, rows, foot) {
+  if (!SEE_MONEY) {
+    const drop = head.map((h, i) => (/profit|margin|tod/i.test(h) ? i : -1)).filter((i) => i >= 0);
+    if (drop.length) {
+      const cut = (tr) => { const parts = tr.split(/(?=<td)/), lead = parts.shift(); let last = parts[parts.length - 1] || ""; const tail = last.slice(last.lastIndexOf("</td>") + 5); if (parts.length) parts[parts.length - 1] = last.slice(0, last.lastIndexOf("</td>") + 5); return lead + parts.filter((_, i) => !drop.includes(i)).join("") + tail; };
+      head = head.filter((_, i) => !drop.includes(i)); rows = rows.map(cut); if (foot) foot = foot.filter((_, i) => !drop.includes(i));
+    }
+  }
   return `<div class="table-wrap"><table class="t"><thead><tr>${head.map((h, i) => `<th class="${i ? "r" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody>${foot ? `<tfoot><tr>${foot.map((c, i) => `<td class="${i ? "r" : ""}"><b>${c}</b></td>`).join("")}</tr></tfoot>` : ""}</table></div>`;
 }
 const refLabel = (f) => (f.kind === "order" ? "Order" : f.kind === "vyapar" ? "Invoice" : f.kind === "qc" ? "PO" : f.kind === "return" ? "Return" : "Note");
@@ -935,7 +952,7 @@ ACT.whyDist = (el) => {
   const refRow = (x) => { const isOrd = !!orderById(x.ref); return `<tr ${isOrd ? `class="tr-tap" data-act="orderSheet" data-id="${esc(x.ref)}"` : ""}><td>${fmtDate(x.date)} · ${refLabel(x)} <span class="mono" style="font-size:12px">${esc(x.ref || "")}</span>${isOrd ? ` ${ic("chevR", "sm dim")}` : ""}</td><td class="r">${nf(x.crates, 1)}</td><td class="r">${rs(x.v)}</td><td class="r">${x.tod ? rs(x.tod) : "–"}</td><td class="r"><b>${rs(x.gp)}</b></td></tr>`; };
   const pRow = (x) => `<tr class="tr-tap" data-act="whyProd" data-k="${esc(x.k)}"><td>${esc(prodLabel(x.k))} ${ic("chevR", "sm dim")}</td><td class="r">${nf(x.crates, 1)}</td><td class="r">${rs(x.v)}</td><td class="r"><b>${rs(x.gp)}</b></td><td class="r">${x.v + x.tod > 0 ? pct(x.gp / (x.v + x.tod), 1) : "–"}</td></tr>`;
   const d = distByKey[key(k)];
-  openSheet(esc(k), `<div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="tile"><div class="tile-label">Sales · ${esc(R.label)}</div><div class="tile-value">${rs(sales)}</div><div>${pSales > 0 ? growthChip(sales / pSales - 1) : ""}</div><div class="tile-sub">${R.pFrom ? `${esc(R.cmpLabel)}: ${rs(pSales)}` : ""}</div></div><div class="tile"><div class="tile-label">Gross profit</div><div class="tile-value">${rs(gp)}</div><div class="tile-sub">Margin ${m != null ? pct(m, 1) : "–"}${tod ? ` · TOD ${rs(tod)}` : ""}${isQC ? ` · at ${pct(QC_GP_RATE, 0)}` : ""}</div></div><div class="tile"><div class="tile-label">Crates</div><div class="tile-value">${nf(sum(F, (f) => f.crates), 1)}</div><div class="tile-sub">${refs.length} ${isQC ? "PO" : "order"}${refs.length === 1 ? "" : "s"} or invoices</div></div></div>
+  openSheet(esc(k), `<div class="tiles" style="grid-template-columns:repeat(${SEE_MONEY ? 3 : 2},minmax(0,1fr))"><div class="tile"><div class="tile-label">Sales · ${esc(R.label)}</div><div class="tile-value">${rs(sales)}</div><div>${pSales > 0 ? growthChip(sales / pSales - 1) : ""}</div><div class="tile-sub">${R.pFrom ? `${esc(R.cmpLabel)}: ${rs(pSales)}` : ""}</div></div>${SEE_MONEY ? `<div class="tile"><div class="tile-label">Gross profit</div><div class="tile-value">${rs(gp)}</div><div class="tile-sub">Margin ${m != null ? pct(m, 1) : "–"}${tod ? ` · TOD ${rs(tod)}` : ""}${isQC ? ` · at ${pct(QC_GP_RATE, 0)}` : ""}</div></div>` : ""}<div class="tile"><div class="tile-label">Crates</div><div class="tile-value">${nf(sum(F, (f) => f.crates), 1)}</div><div class="tile-sub">${refs.length} ${isQC ? "PO" : "order"}${refs.length === 1 ? "" : "s"} or invoices</div></div></div>
     <div><div class="group-label"><span>${isQC ? "POs delivered" : "Orders and invoices"}</span><span>tap an order to open it</span></div>${whyTable(["Date · reference", "Crates", "Sales", "TOD", "Gross profit"], refs.map(refRow), ["Total", nf(sum(F, (f) => f.crates), 1), rs(sales), tod ? rs(tod) : "–", rs(gp)])}</div>
     <div><div class="group-label"><span>By product</span><span>tap a product</span></div>${whyTable(["Product", "Crates", "Sales", "Gross profit", "Margin"], prods.map(pRow))}</div>`,
     `${whyBack()}${d ? `<button class="btn btn-secondary" data-act="distSheet" data-name="${esc(d.name)}">Distributor details</button>` : ""}<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
@@ -951,7 +968,7 @@ ACT.whyProd = (el) => {
   const dRow = (x) => `<tr class="tr-tap" data-act="whyDist" data-k="${esc(x.k)}"><td>${esc(x.k)} ${ic("chevR", "sm dim")}</td><td class="r">${nf(x.crates, 1)}</td><td class="r">${rs(x.v)}</td><td class="r"><b>${rs(x.gp)}</b></td><td class="r">${x.v + x.tod > 0 ? pct(x.gp / (x.v + x.tod), 1) : "–"}</td></tr>`;
   const lRow = (f) => { const isOrd = !!orderById(f.ref); return `<tr ${isOrd ? `class="tr-tap" data-act="orderSheet" data-id="${esc(f.ref)}"` : ""}><td>${fmtDate(f.date)} · ${esc(f.ch === "gt" ? shortOf(f.dist) : CH_LABEL[f.ch])} <span class="mono" style="font-size:12px">${esc(f.ref || "")}</span>${isOrd ? ` ${ic("chevR", "sm dim")}` : ""}</td><td class="r">${nf(f.crates, 2)}</td><td class="r">${rs(f.value)}</td><td class="r">${rs(factGP(f, est))}</td></tr>`; };
   openSheet(esc(prodLabel(k)), `<div class="row-sub">${esc(prodName(k))}${st && st.trop ? " · " + esc(st.trop) : ""} · SAP ${esc(k)}</div>
-    <div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="tile"><div class="tile-label">Sales · ${esc(R.label)}</div><div class="tile-value">${rs(sales)}</div><div>${pSales > 0 ? growthChip(sales / pSales - 1) : ""}</div><div class="tile-sub">${R.pFrom ? `${esc(R.cmpLabel)}: ${rs(pSales)}` : ""}</div></div><div class="tile"><div class="tile-label">Gross profit</div><div class="tile-value">${rs(gp)}</div><div class="tile-sub">Margin ${m != null ? pct(m, 1) : "–"}${tod ? ` · TOD ${rs(tod)}` : ""}</div></div><div class="tile"><div class="tile-label">Crates sold</div><div class="tile-value">${nf(crates, 1)}</div><div class="tile-sub">${st && st.upc ? `${nf(st.ea / st.upc, 1)} in stock${dl != null ? " · " + nf(dl, 0) + " days" : ""}` : "Not stocked"}</div></div></div>
+    <div class="tiles" style="grid-template-columns:repeat(${SEE_MONEY ? 3 : 2},minmax(0,1fr))"><div class="tile"><div class="tile-label">Sales · ${esc(R.label)}</div><div class="tile-value">${rs(sales)}</div><div>${pSales > 0 ? growthChip(sales / pSales - 1) : ""}</div><div class="tile-sub">${R.pFrom ? `${esc(R.cmpLabel)}: ${rs(pSales)}` : ""}</div></div>${SEE_MONEY ? `<div class="tile"><div class="tile-label">Gross profit</div><div class="tile-value">${rs(gp)}</div><div class="tile-sub">Margin ${m != null ? pct(m, 1) : "–"}${tod ? ` · TOD ${rs(tod)}` : ""}</div></div>` : ""}<div class="tile"><div class="tile-label">Crates sold</div><div class="tile-value">${nf(crates, 1)}</div><div class="tile-sub">${st && st.upc ? `${nf(st.ea / st.upc, 1)} in stock${dl != null ? " · " + nf(dl, 0) + " days" : ""}` : "Not stocked"}</div></div></div>
     <div><div class="group-label"><span>Who bought it</span><span>tap a distributor</span></div>${whyTable(["Distributor", "Crates", "Sales", "Gross profit", "Margin"], ds.map(dRow), ["Total", nf(crates, 1), rs(sales), rs(gp), m != null ? pct(m, 1) : "–"])}</div>
     <div><div class="group-label"><span>Every sale</span><span>${lines.length}</span></div>${whyTable(["Date · who · reference", "Crates", "Sales", "Gross profit"], lines.map(lRow))}</div>`,
     `${whyBack()}${stockBySap[k] || catBySap[k] ? `<button class="btn btn-secondary" data-act="productSheet" data-sap="${esc(k)}">Product details</button>` : ""}<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
@@ -1112,7 +1129,7 @@ function lineInfoHtml(i) {
     ${row("Distributor rate", r.normal != null ? rs2(r.normal) + " / box" : "No list price")}
     ${r.special != null ? row("Special price", rs2(r.special) + " / box") + row("TOD per box", rs2(r.todEA)) : ""}
     ${r.c.mrp ? row("MRP", rs2(r.c.mrp) + " / box") : ""}
-    ${ssRate(r.ln.sap) != null && r.billed != null && CAN_PRICE ? row("Margin", `${rs2(r.billed - ssRate(r.ln.sap))} / box`) : ""}
+    ${ssRate(r.ln.sap) != null && r.billed != null && SEE_MONEY ? row("Margin", `${rs2(r.billed - ssRate(r.ln.sap))} / box`) : ""}
     ${lastL ? `<div class="divider" style="margin:8px 0"></div>` + row("Last ordered", `${fmtDate(lastL.o.time)} · ${nf(lastL.l.qty)} ${((UNIT_LABEL[lastL.l.unit] || "Crates").toLowerCase()).replace(/s$/, +lastL.l.qty === 1 ? "" : "s")}`) : ""}
     ${rp.cls ? `<div style="margin-top:8px">${classPill(rp.cls)}</div>` : ""}`;
 }
@@ -1685,7 +1702,22 @@ function loadScriptOnce(src, test) {
 const XLSX_SRC = (HOST && HOST.xlsxSrc) || "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
 function downloadXlsx(el, aoa, cols, file, sheet, merges) { return downloadBook(el, [{ name: sheet, aoa, cols, merges }], file); }
 /* several sheets in one workbook; the first sheet opens first */
+/* staff downloads: cost, profit, margin and TOD columns (and summary lines) are left out */
+const MONEY_COL = /ss rate|tied up|value to push|gross profit|margin|\btod\b|\bcost\b/i;
+function stripMoney(sh) {
+  let drop = [], firstDrop = null;
+  const isHead = (r) => { const f = r.filter((c) => c !== "" && c != null); return f.length >= 3 && f.every((c) => typeof c === "string"); };
+  const aoa = [];
+  sh.aoa.forEach((r) => {
+    if (!Array.isArray(r)) { aoa.push(r); return; }
+    if (r.length === 2 && typeof r[0] === "string" && MONEY_COL.test(r[0])) return;
+    if (isHead(r)) { drop = r.map((c, i) => (typeof c === "string" && MONEY_COL.test(c) ? i : -1)).filter((i) => i >= 0); if (firstDrop == null && drop.length) firstDrop = drop; }
+    aoa.push(drop.length ? r.filter((_, i) => !drop.includes(i)) : r);
+  });
+  return { ...sh, aoa, cols: firstDrop ? sh.cols.filter((_, i) => !firstDrop.includes(i)) : sh.cols };
+}
 async function downloadBook(el, sheets, file) {
+  if (!SEE_MONEY) sheets = sheets.map(stripMoney);
   if (el) el.disabled = true;
   try { await loadScriptOnce(XLSX_SRC, () => !!window.XLSX); }
   catch (e) { if (el) el.disabled = false; toast("Could not prepare the Excel file. Check your internet and try again.", "alert"); return false; }
@@ -2037,7 +2069,7 @@ function qcStockGrid() {
 function purchasesHtml() {
   const byId = {}; D.purchases.forEach((p) => { const g = (byId[p.id] = byId[p.id] || { id: p.id, inv: p.inv, time: p.time, invDate: p.invDate, supplier: p.supplier, pool: p.pool, lines: [], crates: 0, value: 0 }); g.lines.push(p); g.crates += p.crates || 0; g.value += p.value || 0; });
   const list = Object.values(byId).sort((a, b) => (a.time < b.time ? 1 : -1));
-  return `<div class="group">${list.map((g) => `<button class="row" data-act="purchaseSheet" data-id="${g.id}"><span class="attn-ic tint">${ic("box")}</span><span class="grow"><div class="row-title clip">${g.inv ? "Invoice " + esc(g.inv) : esc(g.supplier)}</div><div class="row-sub clip">${fmtDT(g.time)} · ${esc(g.supplier)} · into ${esc(String(g.pool).toLowerCase())} · ${g.lines.length} lines</div></span><span class="row-end"><span style="text-align:right"><div class="row-value">${rs(g.value)}</div><div class="row-sub num">${nf(g.crates, 1)} crates</div></span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div>`;
+  return `<div class="group">${list.map((g) => `<button class="row" data-act="purchaseSheet" data-id="${g.id}"><span class="attn-ic tint">${ic("box")}</span><span class="grow"><div class="row-title clip">${g.inv ? "Invoice " + esc(g.inv) : esc(g.supplier)}</div><div class="row-sub clip">${fmtDT(g.time)} · ${esc(g.supplier)} · into ${esc(String(g.pool).toLowerCase())} · ${g.lines.length} lines</div></span><span class="row-end"><span style="text-align:right">${SEE_MONEY ? `<div class="row-value">${rs(g.value)}</div>` : ""}<div class="row-sub num">${nf(g.crates, 1)} crates</div></span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div>`;
 }
 function missedHtml() {
   const real = D.oos.filter((o) => typeof o.missed === "number" && o.missed > 0), agg = {};
@@ -2059,7 +2091,7 @@ VIEWS.stock = () => {
     : tab === "purchases" ? purchasesHtml() : missedHtml();
   return `<div class="page">
     <div class="page-head"><div><h1 class="title">Stock</h1><div class="subtitle">What is in Tropicana right now, what came in, and what you ran out of.</div></div><div class="head-actions"><button class="btn btn-primary" data-act="receiveSheet">${ic("plus", "sm")} Receive stock</button></div></div>
-    <div class="tiles"><div class="tile"><div class="tile-label">Own stock</div><div class="tile-value">${nf(crates, 0)}<small>crates</small></div><div class="tile-sub">${inStock} of ${own.length} products in stock</div></div><div class="tile"><div class="tile-label">Own stock at cost</div><div class="tile-value">₹${lakh(cost)}<small>L</small></div><div class="tile-sub">At the super stockist rate</div></div><div class="tile"><div class="tile-label">Quick commerce stock</div><div class="tile-value">${nf(qcCr, 0)}<small>crates</small></div><div class="tile-sub">Shared by Swiggy and Zepto</div></div><button class="tile" data-act="stockLow"><div class="tile-label"><span>Below reorder point</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--bad)">${low}</div><div class="tile-sub">Hero and Core products to reorder</div></button>${(() => { const T = slowSum(slowRows()); return `<button class="tile tile-wide-sm" data-act="slowList"><div class="tile-label"><span>Slow moving</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--warn)">${T.n}</div><div class="tile-sub">₹${lakh(T.value)} L tied up · ${nf(T.crates, 0)} crates to push</div></button>`; })()}</div>
+    <div class="tiles"><div class="tile"><div class="tile-label">Own stock</div><div class="tile-value">${nf(crates, 0)}<small>crates</small></div><div class="tile-sub">${inStock} of ${own.length} products in stock</div></div>${SEE_MONEY ? `<div class="tile"><div class="tile-label">Own stock at cost</div><div class="tile-value">₹${lakh(cost)}<small>L</small></div><div class="tile-sub">At the super stockist rate</div></div>` : ""}<div class="tile"><div class="tile-label">Quick commerce stock</div><div class="tile-value">${nf(qcCr, 0)}<small>crates</small></div><div class="tile-sub">Shared by Swiggy and Zepto</div></div><button class="tile" data-act="stockLow"><div class="tile-label"><span>Below reorder point</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--bad)">${low}</div><div class="tile-sub">Hero and Core products to reorder</div></button>${(() => { const T = slowSum(slowRows()); return `<button class="tile tile-wide-sm" data-act="slowList"><div class="tile-label"><span>Slow moving</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--warn)">${T.n}</div><div class="tile-sub">${SEE_MONEY ? `₹${lakh(T.value)} L tied up · ` : ""}${nf(T.crates, 0)} crates to push</div></button>`; })()}</div>
     ${seg("stockTab", tab, [["own", "Own stock"], ["slow", "Slow moving"], ["qc", "Quick commerce"], ["damaged", "Damaged"], ["purchases", "Purchases"], ["missed", "Missed sales"]])}
     ${body}</div>`;
 };
@@ -2068,11 +2100,11 @@ ACT.stockCat = (el) => { S.stockCat = el.dataset.cat; render(); };
 ACT.stockLow = () => { S.stockTab = "own"; S.stockCat = "Below reorder"; render(); };
 ACT.productSheet = (el) => {
   const sap = el.dataset.sap, s = stockBySap[sap], c = catBySap[sap] || {}, r = replBySap[sap] || {}, name = (s && s.name) || c.name || sap;
-  if (!s) { openSheet(esc(shortName(name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(name)}</div><div class="row-sub">${esc(c.cat || "")} · SAP ${esc(sap)}</div><div class="banner warn" style="margin-top:14px">${ic("info", "sm")}<span>You do not stock this product. Requests for it are logged as demand.</span></div></div>${price(sap) != null ? `<div class="card card-pad"><div class="kv"><div><div class="k">Distributor rate</div><div class="v num">${rs2(price(sap))}</div></div><div><div class="k">SS rate</div><div class="v num">${rs2(ssRate(sap))}</div></div><div><div class="k">Pack</div><div class="v">${c.upc || "–"} boxes / crate</div></div></div></div>` : ""}`, `<button class="btn btn-secondary" data-act="productEdit" data-sap="${esc(sap)}">${ic("pencil", "sm")} Edit product</button>`); return; }
+  if (!s) { openSheet(esc(shortName(name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(name)}</div><div class="row-sub">${esc(c.cat || "")} · SAP ${esc(sap)}</div><div class="banner warn" style="margin-top:14px">${ic("info", "sm")}<span>You do not stock this product. Requests for it are logged as demand.</span></div></div>${price(sap) != null ? `<div class="card card-pad"><div class="kv"><div><div class="k">Distributor rate</div><div class="v num">${rs2(price(sap))}</div></div>${SEE_MONEY ? `<div><div class="k">SS rate</div><div class="v num">${rs2(ssRate(sap))}</div></div>` : ""}<div><div class="k">Pack</div><div class="v">${c.upc || "–"} boxes / crate</div></div></div></div>` : ""}`, `<button class="btn btn-secondary" data-act="productEdit" data-sap="${esc(sap)}">${ic("pencil", "sm")} Edit product</button>`); return; }
   const cr = cratesOf(s), recent = D.orders.filter((o) => o.status !== "Cancelled").sort((a, b) => (a.time < b.time ? 1 : -1)).flatMap((o) => (linesByOrder[o.id] || []).filter((l) => l.sap === sap)).slice(0, 6);
   openSheet(esc(shortName(name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(s.name)}</div><div class="row-sub">${esc(s.cat || "")}</div><div class="hstack gap-8 wrap" style="margin-top:10px">${classPill(r.cls)}${s.tier ? `<span class="pill plain">${esc(s.tier)}</span>` : ""}<span class="pill plain mono">SAP ${esc(s.sap)}</span>${s.trop ? `<span class="pill plain mono">${esc(s.trop)}</span>` : ""}</div>
       <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">In stock</div><div class="v num" ${cr <= 0 ? 'style="color:var(--bad)"' : ""}>${nf(cr, 2)} crates</div></div><div><div class="k">Boxes</div><div class="v num">${nf(s.ea)}</div></div><div><div class="k">Pieces</div><div class="v num">${nf(s.ea * (s.ppe || 1))}</div></div><div><div class="k">Pack</div><div class="v">${s.upc} boxes / crate · ${s.ppe} pcs / box</div></div></div></div>
-    <div><div class="group-label"><span>Price per box</span></div><div class="card card-pad"><div class="kv"><div><div class="k">MRP</div><div class="v num">${rs2(s.mrp)}</div></div><div><div class="k">Your cost (SS rate)</div><div class="v num">${rs2(s.cost)}</div></div><div><div class="k">Selling price</div><div class="v num">${rs2(s.price)}</div></div><div><div class="k">Margin</div><div class="v num">${rs2(s.margin)}${s.price ? ` <span class="muted" style="font-weight:500">(${pct(s.margin / s.price, 1)})</span>` : ""}</div></div></div></div></div>
+    <div><div class="group-label"><span>Price per box</span></div><div class="card card-pad"><div class="kv"><div><div class="k">MRP</div><div class="v num">${rs2(s.mrp)}</div></div>${SEE_MONEY ? `<div><div class="k">Your cost (SS rate)</div><div class="v num">${rs2(s.cost)}</div></div>` : ""}<div><div class="k">Selling price</div><div class="v num">${rs2(s.price)}</div></div>${SEE_MONEY ? `<div><div class="k">Margin</div><div class="v num">${rs2(s.margin)}${s.price ? ` <span class="muted" style="font-weight:500">(${pct(s.margin / s.price, 1)})</span>` : ""}</div></div>` : ""}</div></div></div>
     ${r.sap ? `<div><div class="group-label"><span>Replenishment</span></div><div class="card card-pad"><div class="kv"><div><div class="k">Sells per day</div><div class="v num">${nf(r.perDay, 2)} crates</div></div><div><div class="k">Days of stock</div><div class="v num">${r.perDay > 0 ? (cr / r.perDay).toFixed(1) : "–"}</div></div><div><div class="k">Reorder point</div><div class="v num">${nf(r.rop, 1)} crates</div></div><div><div class="k">Target stock</div><div class="v num">${nf(r.target, 1)} crates</div></div><div><div class="k">On order</div><div class="v num">${nf(r.onOrder, 1)} crates</div></div><div><div class="k">Missed, 28 days</div><div class="v num">${nf(r.missed, 1)} crates</div></div></div></div></div>` : ""}
     ${(() => { const w = slowRows().find((x) => x.sap === sap); return w ? `<button class="banner warn" style="text-align:left;width:100%" data-act="slowSheet" data-sap="${esc(sap)}">${ic("info", "sm")}<span><b>Slow moving.</b> ${w.still ? "No sales in the last 4 weeks." : "Stock lasts " + coverTxt(w) + " at the current pace."} Push about ${nf(w.push, 1)} crates. Tap to see who bought it before.</span></button>` : ""; })()}
     ${s.move ? `<div class="banner info">${ic("clock", "sm")}<span><b>Last movement.</b> ${esc(s.move)}</span></div>` : ""}
@@ -2080,8 +2112,8 @@ ACT.productSheet = (el) => {
 };
 ACT.purchaseSheet = (el) => {
   const lines = D.purchases.filter((p) => p.id === el.dataset.id), g = lines[0];
-  openSheet(g.inv ? "Invoice " + esc(g.inv) : esc(g.supplier), `<div class="card card-pad"><div class="kv"><div><div class="k">Supplier</div><div class="v">${esc(g.supplier)}</div></div><div><div class="k">Invoice date</div><div class="v">${fmtDate(g.invDate)}</div></div><div><div class="k">Added to</div><div class="v">${esc(g.pool)}</div></div><div><div class="k">Value excl. GST</div><div class="v num">${rs2(lines.reduce((a, l) => a + (l.value || 0), 0))}</div></div></div><div class="row-sub mono" style="margin-top:12px">${esc(g.id)} · saved ${fmtDT(g.time)}</div></div>
-    <div><div class="group-label"><span>${lines.length} lines</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0), 1)} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crates · ${nf(l.ea)} boxes × ${rs2(l.rate)}${l.batch ? " · batch " + esc(l.batch) : ""}${l.isNew === "Yes" ? " · new SKU" : ""}</div></span><span class="row-end"><span class="row-value">${rs(l.value)}</span></span></div>`).join("")}</div></div>`);
+  openSheet(g.inv ? "Invoice " + esc(g.inv) : esc(g.supplier), `<div class="card card-pad"><div class="kv"><div><div class="k">Supplier</div><div class="v">${esc(g.supplier)}</div></div><div><div class="k">Invoice date</div><div class="v">${fmtDate(g.invDate)}</div></div><div><div class="k">Added to</div><div class="v">${esc(g.pool)}</div></div>${SEE_MONEY ? `<div><div class="k">Value excl. GST</div><div class="v num">${rs2(lines.reduce((a, l) => a + (l.value || 0), 0))}</div></div>` : ""}</div><div class="row-sub mono" style="margin-top:12px">${esc(g.id)} · saved ${fmtDT(g.time)}</div></div>
+    <div><div class="group-label"><span>${lines.length} lines</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0), 1)} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crates · ${nf(l.ea)} boxes${SEE_MONEY ? ` × ${rs2(l.rate)}` : ""}${l.batch ? " · batch " + esc(l.batch) : ""}${l.isNew === "Yes" ? " · new SKU" : ""}</div></span>${SEE_MONEY ? `<span class="row-end"><span class="row-value">${rs(l.value)}</span></span>` : ""}</div>`).join("")}</div></div>`);
 };
 function receiveBody() {
   const R = S.recv, res = R.q && R.q.length > 1 ? searchProducts(R.q, 8).filter((x) => x.st) : [];
@@ -2089,7 +2121,7 @@ function receiveBody() {
     <div class="recv-up"><span class="attn-ic tint">${ic("doc")}</span><span class="grow"><div class="row-title">Have the invoice as Excel?</div><div class="row-sub">Upload it and every line is added for you to check. Products are matched by SAP code first, then by name.</div></span><label class="btn btn-secondary" for="rc-file" style="cursor:pointer">${ic("doc", "sm")} Upload Excel</label><input id="rc-file" type="file" accept=".xlsx,.xls,.csv" hidden data-in="recvFile"></div>
     <div id="rc-up-msg">${recvUpMsg()}</div>
     <div class="stack gap-10"><div class="search">${ic("search", "sm")}<input class="input" id="rc-q" type="search" placeholder="Add a product from the invoice" value="${esc(R.q)}" data-in="recvQ" autocomplete="off"></div><div id="rc-results">${res.length ? `<div class="results">${res.map((x) => `<button class="res" data-act="recvAdd" data-sap="${x.c.sap}"><span class="grow"><div class="row-title clip">${esc(x.c.name)}</div><div class="row-sub">${nf(x.crates, 1)} crates in stock now</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div>` : ""}</div>
-    <div class="group">${R.lines.length ? R.lines.map((l, i) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.name))}</div><div class="row-sub">${l.raw ? `<span class="${l.conf === "check" ? "pill warn" : "dim"}" style="${l.conf === "check" ? "height:20px;font-size:11.5px" : ""}">${l.conf === "check" ? "Check: " : "From the file: "}${esc(l.raw)}</span> · ` : ""}${l.upc} boxes per crate · ${rs2(ssRate(l.sap) || (stockBySap[l.sap] || {}).cost)} per box${l.boxes != null ? ` · ${nf(l.boxes)} boxes` : ""}</div></span><span class="row-end"><input class="input sm num-in" style="width:80px" type="number" min="0" step="any" value="${l.crates}" id="rc-c-${i}" data-in="recvCrates" data-i="${i}" aria-label="Crates"><span class="muted" style="font-size:13px">crates</span><button class="icon-btn" data-act="recvRm" data-i="${i}" aria-label="Remove">${ic("trash", "sm")}</button></span></div>`).join("") : `<div class="empty">Add the products on the invoice. Stock goes up when you save.</div>`}</div></div>`;
+    <div class="group">${R.lines.length ? R.lines.map((l, i) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.name))}</div><div class="row-sub">${l.raw ? `<span class="${l.conf === "check" ? "pill warn" : "dim"}" style="${l.conf === "check" ? "height:20px;font-size:11.5px" : ""}">${l.conf === "check" ? "Check: " : "From the file: "}${esc(l.raw)}</span> · ` : ""}${l.upc} boxes per crate${SEE_MONEY ? ` · ${rs2(ssRate(l.sap) || (stockBySap[l.sap] || {}).cost)} per box` : ""}${l.boxes != null ? ` · ${nf(l.boxes)} boxes` : ""}</div></span><span class="row-end"><input class="input sm num-in" style="width:80px" type="number" min="0" step="any" value="${l.crates}" id="rc-c-${i}" data-in="recvCrates" data-i="${i}" aria-label="Crates"><span class="muted" style="font-size:13px">crates</span><button class="icon-btn" data-act="recvRm" data-i="${i}" aria-label="Remove">${ic("trash", "sm")}</button></span></div>`).join("") : `<div class="empty">Add the products on the invoice. Stock goes up when you save.</div>`}</div></div>`;
 }
 ACT.receiveSheet = () => { S.recv = { inv: "", pool: "Own Stock", q: "", lines: [], unmatched: [], file: null }; openSheet("Receive stock", receiveBody(), `<button class="btn btn-primary" data-act="recvSave">Save purchase</button>`); };
 IN.recvField = (el) => { S.recv[el.dataset.f] = el.value; };
@@ -2112,7 +2144,7 @@ function truckHtml() {
   const R = D.repl, T = replTotals(), free = R.truck - T.total;
   return `<div class="hstack between wrap gap-12"><div><div class="card-title">This truck</div><div class="row-sub">Hangyo sends a truck from ${R.truck} crates, own stock and quick commerce together</div></div><div class="tile-value">${nf(T.total)}<small>of ${R.truck} crates</small></div></div>
     <div class="truck-bar" style="margin-top:14px"><i class="own" style="width:${(T.own / R.truck) * 100}%"></i><i class="qc" style="width:${(T.qc / R.truck) * 100}%"></i></div>
-    <div class="hstack between wrap gap-12" style="margin-top:10px"><div class="legend"><span><i style="background:var(--s-gt)"></i>Own stock ${nf(T.own)}</span><span><i style="background:var(--s-zepto)"></i>Quick commerce ${nf(T.qc)}</span><span>${free >= 0 ? nf(free) + " crates free" : nf(-free) + " over the truck"}</span></div><div class="row-sub num">${rs(T.value)} at the SS rate</div></div>`;
+    <div class="hstack between wrap gap-12" style="margin-top:10px"><div class="legend"><span><i style="background:var(--s-gt)"></i>Own stock ${nf(T.own)}</span><span><i style="background:var(--s-zepto)"></i>Quick commerce ${nf(T.qc)}</span><span>${free >= 0 ? nf(free) + " crates free" : nf(-free) + " over the truck"}</span></div>${SEE_MONEY ? `<div class="row-sub num">${rs(T.value)} at the SS rate</div>` : ""}</div>`;
 }
 function deltaTag(r) {
   if (!r.delta) return "";
@@ -2149,7 +2181,7 @@ function replGrid() {
 }
 function poLogHtml() {
   const byPO = {}; D.hpoLog.forEach((l) => { const g = (byPO[l.po] = byPO[l.po] || { po: l.po, placed: l.placed, pool: l.pool, lines: [], crates: 0, value: 0, toCome: 0 }); g.lines.push(l); g.crates += l.crates || 0; g.value += l.value || 0; g.toCome += l.toCome || 0; });
-  return `<div class="group">${Object.values(byPO).sort((a, b) => (a.placed < b.placed ? 1 : -1)).map((g) => { const cnt = (s) => g.lines.filter((l) => l.status === s).length, open = g.toCome > 0 || cnt("Open") > 0; return `<button class="row" data-act="poSheet" data-po="${g.po}"><span class="attn-ic ${open ? "info" : "tint"}">${ic(open ? "truck" : "check")}</span><span class="grow"><div class="row-title mono" style="font-size:14.5px">${esc(g.po)}</div><div class="row-sub clip">Placed ${fmtDT(g.placed)} · ${esc(g.pool)} · ${g.lines.length} lines · ${cnt("Received")} received${cnt("Part received") ? ", " + cnt("Part received") + " part" : ""}${cnt("Closed short") ? ", " + cnt("Closed short") + " closed short" : ""}${cnt("Open") ? ", " + cnt("Open") + " still to come" : ""}</div></span><span class="row-end"><span style="text-align:right"><div class="row-value">${nf(g.crates)} crates</div><div class="row-sub num">${rs(g.value)}</div></span>${ic("chevR", "sm chev")}</span></button>`; }).join("")}</div>`;
+  return `<div class="group">${Object.values(byPO).sort((a, b) => (a.placed < b.placed ? 1 : -1)).map((g) => { const cnt = (s) => g.lines.filter((l) => l.status === s).length, open = g.toCome > 0 || cnt("Open") > 0; return `<button class="row" data-act="poSheet" data-po="${g.po}"><span class="attn-ic ${open ? "info" : "tint"}">${ic(open ? "truck" : "check")}</span><span class="grow"><div class="row-title mono" style="font-size:14.5px">${esc(g.po)}</div><div class="row-sub clip">Placed ${fmtDT(g.placed)} · ${esc(g.pool)} · ${g.lines.length} lines · ${cnt("Received")} received${cnt("Part received") ? ", " + cnt("Part received") + " part" : ""}${cnt("Closed short") ? ", " + cnt("Closed short") + " closed short" : ""}${cnt("Open") ? ", " + cnt("Open") + " still to come" : ""}</div></span><span class="row-end"><span style="text-align:right"><div class="row-value">${nf(g.crates)} crates</div>${SEE_MONEY ? `<div class="row-sub num">${rs(g.value)}</div>` : ""}</span>${ic("chevR", "sm chev")}</span></button>`; }).join("")}</div>`;
 }
 /* ===== linked products (old pack / old code counted as the one you order) and adding products to the plan ===== */
 function sameTargets(r) { return D.repl.rows.filter((x) => x !== r && !x.same && x.sap !== r.sap).sort((a, b) => a.name.localeCompare(b.name)); }
@@ -2190,7 +2222,7 @@ function replAddRes() {
   const q = key(S.replAddQ || ""); if (q.length < 2) return `<div class="row-sub">Type at least two letters.</div>`;
   const words = q.split(" "), list = D.catalog.filter((c) => c.sap && words.every((w) => key(c.name + " " + c.sap + " " + (c.cat || "")).includes(w))).slice(0, 15);
   if (!list.length) return `<div class="group"><div class="empty">Nothing matches.</div></div>`;
-  return `<div class="group">${list.map((c) => { const on = !!replBySap[c.sap]; return `<button class="row" ${on ? "disabled style=\"opacity:.55\"" : `data-act="replAddDo" data-sap="${esc(c.sap)}"`}><span class="grow"><div class="row-title">${esc(c.name)}</div><div class="row-sub">${esc(c.cat || "")} · SAP ${esc(c.sap)} · ${c.upc ? c.upc + " boxes / crate" : "not stocked yet"}${price(c.sap) != null ? " · " + rs2(ssRate(c.sap) || 0) + " SS rate" : ""}</div></span><span class="row-end">${on ? `<span class="pill plain">On the plan</span>` : ic("plus", "sm dim")}</span></button>`; }).join("")}</div>`;
+  return `<div class="group">${list.map((c) => { const on = !!replBySap[c.sap]; return `<button class="row" ${on ? "disabled style=\"opacity:.55\"" : `data-act="replAddDo" data-sap="${esc(c.sap)}"`}><span class="grow"><div class="row-title">${esc(c.name)}</div><div class="row-sub">${esc(c.cat || "")} · SAP ${esc(c.sap)} · ${c.upc ? c.upc + " boxes / crate" : "not stocked yet"}${SEE_MONEY && price(c.sap) != null ? " · " + rs2(ssRate(c.sap) || 0) + " SS rate" : ""}</div></span><span class="row-end">${on ? `<span class="pill plain">On the plan</span>` : ic("plus", "sm dim")}</span></button>`; }).join("")}</div>`;
 }
 IN.replAddQ = (el) => { S.replAddQ = el.value; part("ra-res", replAddRes()); };
 ACT.replAddDo = (el) => {
@@ -2281,7 +2313,7 @@ ACT.makePO = () => {
   const qcCr = qls.reduce((a, q) => a + q.final, 0), qcVal = qls.reduce((a, q) => a + q.final * (q.upc || 0) * (ssRate(q.sap) || 0), 0);
   const tbl = (rows, get) => `<div class="table-wrap"><table class="t"><thead><tr><th>Product</th><th>Type</th><th class="r">Per crate</th><th class="r">Crates</th><th class="r">Boxes</th></tr></thead><tbody>${rows.map((r) => { const c = get(r); return `<tr><td>${esc(shortName(r.name))}<div class="row-sub mono">${esc(r.sap)}</div></td><td>${esc(r.cat || "")}</td><td class="r">${r.upc}</td><td class="r"><b>${nf(c)}</b></td><td class="r">${nf(c * (r.upc || 0))}</td></tr>`; }).join("")}</tbody></table></div>`;
   const typedNote = D.repl.qcCrates != null && D.repl.qcCrates !== "" && +D.repl.qcCrates !== qcCr ? `<div class="banner warn">${ic("alert", "sm")}<span>You typed ${nf(+D.repl.qcCrates)} quick commerce crates for the truck, but the products below add up to ${nf(qcCr)}. Set them per product on the Swiggy &amp; Zepto tab.</span></div>` : "";
-  openSheet("Hangyo purchase order", `<div class="card card-pad"><div class="kv"><div><div class="k">Own stock</div><div class="v num">${nf(T.own)} crates</div></div><div><div class="k">Quick commerce</div><div class="v num">${nf(qcCr)} crates</div></div><div><div class="k">Total</div><div class="v num">${nf(T.own + qcCr)} of ${nf(D.repl.truck)}</div></div><div><div class="k">Value at SS rate</div><div class="v num">${rs(T.value + qcVal)}</div></div></div></div>
+  openSheet("Hangyo purchase order", `<div class="card card-pad"><div class="kv"><div><div class="k">Own stock</div><div class="v num">${nf(T.own)} crates</div></div><div><div class="k">Quick commerce</div><div class="v num">${nf(qcCr)} crates</div></div><div><div class="k">Total</div><div class="v num">${nf(T.own + qcCr)} of ${nf(D.repl.truck)}</div></div>${SEE_MONEY ? `<div><div class="k">Value at SS rate</div><div class="v num">${rs(T.value + qcVal)}</div></div>` : ""}</div></div>
     <div class="group-label" style="padding-bottom:0"><span>Own stock · ${lines.length} lines</span></div>${lines.length ? tbl(lines, (r) => r.final) : `<div class="group"><div class="empty">Nothing for own stock.</div></div>`}
     <div class="group-label" style="padding-bottom:0"><span>Quick commerce stock · ${qls.length} lines</span></div>${typedNote}${qls.length ? tbl(qls, (q) => q.final) : `<div class="group"><div class="empty">Nothing for Swiggy / Zepto.</div></div>`}
     <div class="row-sub">The Hangyo portal takes boxes. Place the order there, then mark it as placed so the next plan does not order it twice.</div>`,
@@ -2314,7 +2346,7 @@ function qcReplHtml() {
 IN.qcYours = (el) => { const q = qcBySap[el.dataset.sap]; q.yours = el.value === "" ? null : Math.max(0, Math.round(+el.value)); recomputeRepl(); const f = $("#qf-" + q.sap); if (f) f.textContent = nf(q.final); const tt = $("#qf-total"); if (tt) tt.textContent = nf(D.qcStock.reduce((a, x) => a + (x.final || 0), 0)); };
 ACT.poSheet = (el) => {
   const lines = D.hpoLog.filter((l) => l.po === el.dataset.po), g = lines[0];
-  openSheet(esc(g.po), `<div class="card card-pad"><div class="kv"><div><div class="k">Placed</div><div class="v">${fmtDT(g.placed)}</div></div><div><div class="k">Stock pool</div><div class="v">${esc(g.pool)}</div></div><div><div class="k">Crates</div><div class="v num">${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))}</div></div><div><div class="k">Value at SS rate</div><div class="v num">${rs(lines.reduce((a, l) => a + (l.value || 0), 0))}</div></div></div></div>
+  openSheet(esc(g.po), `<div class="card card-pad"><div class="kv"><div><div class="k">Placed</div><div class="v">${fmtDT(g.placed)}</div></div><div><div class="k">Stock pool</div><div class="v">${esc(g.pool)}</div></div><div><div class="k">Crates</div><div class="v num">${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))}</div></div>${SEE_MONEY ? `<div><div class="k">Value at SS rate</div><div class="v num">${rs(lines.reduce((a, l) => a + (l.value || 0), 0))}</div></div>` : ""}</div></div>
     <div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates)} crates · ${nf(l.boxes)} boxes${l.received ? " · " + nf(l.received) + " boxes received" : ""}${l.notes ? " · " + esc(l.notes) : ""}</div></span><span class="row-end">${statusPill(l.status)}</span></div>`).join("")}</div>`);
 };
 
@@ -2358,9 +2390,9 @@ function slowHtml() {
   const head = `<div class="banner info">${ic("info", "sm")}<span>Own stock that is sitting: products with <b>no sales in the last 4 weeks</b>, or more crates than you sell in <b>${days} days</b> at the last 4 weeks' pace. "To push" is the stock above ${days} days of sales. Tap a product to see who bought it before.</span></div>
   <div class="hstack between wrap gap-12"><div class="hstack gap-8 wrap"><span class="row-sub">Slow means more than</span><div class="chips" style="margin:0">${SLOW_STEPS.map((d) => `<button class="chip" data-act="slowDays" data-d="${d}" aria-pressed="${days === d}">${d} days</button>`).join("")}</div></div>${rows.length ? `<button class="btn btn-sm btn-secondary" data-act="slowExcel">${ic("doc", "sm")} Download Excel</button>` : ""}</div>`;
   if (!rows.length) return head + `<div class="group"><div class="empty"><div class="big">Nothing is sitting</div>Every product in stock sells through within ${days} days.</div></div>`;
-  const tiles = `<div class="tiles"><div class="tile"><div class="tile-label">Slow-moving products</div><div class="tile-value">${T.n}</div><div class="tile-sub">${T.still} with no sales in 4 weeks</div></div><div class="tile"><div class="tile-label">Crates to push</div><div class="tile-value">${nf(T.crates, 0)}<small>crates</small></div><div class="tile-sub">Above ${days} days of sales</div></div><div class="tile"><div class="tile-label">Money tied up</div><div class="tile-value">₹${lakh(T.value)}<small>L</small></div><div class="tile-sub">All their stock, at the SS rate</div></div><div class="tile"><div class="tile-label">Of which to push</div><div class="tile-value">₹${lakh(T.pushValue)}<small>L</small></div><div class="tile-sub">The extra stock, at the SS rate</div></div></div>`;
-  const grid = `<div class="dg" style="--cols:minmax(0,2fr) 80px 90px 100px 110px 90px 110px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r">In stock</span><span class="r c-hide">Sold, 4 wks</span><span class="r c-hide">Lasts</span><span class="c-hide">Last sold</span><span class="r">To push</span><span class="r c-hide">Tied up</span></div>
-  ${rows.map((r) => `<button class="dg-row" data-act="slowSheet" data-sap="${r.sap}"><span><div class="strong clip">${esc(shortName(r.name))}</div><div class="row-sub clip">${r.buyers.length ? "Bought by " + esc(r.buyers.slice(0, 2).map((b) => shortOf(b.name)).join(", ")) + (r.buyers.length > 2 ? ` +${r.buyers.length - 2}` : "") : "No one has bought it in 90 days"}${r.onTruck > 0 ? ` · <span style="color:var(--warn);font-weight:600">${nf(r.onTruck)} more on the next truck</span>` : ""}</div></span><span class="r num">${nf(r.crates, 1)}</span><span class="r c-hide num">${r.s28 ? nf(r.s28, 1) : `<span class="dim">0</span>`}</span><span class="r c-hide">${r.still ? `<span class="pill bad">No sales</span>` : `<span class="num" style="color:${r.cover > days * 2 ? "var(--bad)" : "var(--warn)"};font-weight:600">${coverTxt(r)}</span>`}</span><span class="c-hide row-sub">${lastTxt(r)}</span><span class="r strong num">${nf(r.push, 1)}</span><span class="r c-hide num">${rs(r.value)}</span></button>`).join("")}</div>`;
+  const tiles = `<div class="tiles"><div class="tile"><div class="tile-label">Slow-moving products</div><div class="tile-value">${T.n}</div><div class="tile-sub">${T.still} with no sales in 4 weeks</div></div><div class="tile"><div class="tile-label">Crates to push</div><div class="tile-value">${nf(T.crates, 0)}<small>crates</small></div><div class="tile-sub">Above ${days} days of sales</div></div>${SEE_MONEY ? `<div class="tile"><div class="tile-label">Money tied up</div><div class="tile-value">₹${lakh(T.value)}<small>L</small></div><div class="tile-sub">All their stock, at the SS rate</div></div><div class="tile"><div class="tile-label">Of which to push</div><div class="tile-value">₹${lakh(T.pushValue)}<small>L</small></div><div class="tile-sub">The extra stock, at the SS rate</div></div>` : ""}</div>`;
+  const grid = `<div class="dg" style="--cols:minmax(0,2fr) 80px 90px 100px 110px 90px${SEE_MONEY ? " 110px" : ""};--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r">In stock</span><span class="r c-hide">Sold, 4 wks</span><span class="r c-hide">Lasts</span><span class="c-hide">Last sold</span><span class="r">To push</span>${SEE_MONEY ? `<span class="r c-hide">Tied up</span>` : ""}</div>
+  ${rows.map((r) => `<button class="dg-row" data-act="slowSheet" data-sap="${r.sap}"><span><div class="strong clip">${esc(shortName(r.name))}</div><div class="row-sub clip">${r.buyers.length ? "Bought by " + esc(r.buyers.slice(0, 2).map((b) => shortOf(b.name)).join(", ")) + (r.buyers.length > 2 ? ` +${r.buyers.length - 2}` : "") : "No one has bought it in 90 days"}${r.onTruck > 0 ? ` · <span style="color:var(--warn);font-weight:600">${nf(r.onTruck)} more on the next truck</span>` : ""}</div></span><span class="r num">${nf(r.crates, 1)}</span><span class="r c-hide num">${r.s28 ? nf(r.s28, 1) : `<span class="dim">0</span>`}</span><span class="r c-hide">${r.still ? `<span class="pill bad">No sales</span>` : `<span class="num" style="color:${r.cover > days * 2 ? "var(--bad)" : "var(--warn)"};font-weight:600">${coverTxt(r)}</span>`}</span><span class="c-hide row-sub">${lastTxt(r)}</span><span class="r strong num">${nf(r.push, 1)}</span>${SEE_MONEY ? `<span class="r c-hide num">${rs(r.value)}</span>` : ""}</button>`).join("")}</div>`;
   return head + tiles + grid;
 }
 ACT.slowDays = (el) => { slowCfg().days = +el.dataset.d; render(); };
@@ -2369,8 +2401,8 @@ ACT.slowSheet = (el) => {
   const r = slowRows().find((x) => x.sap === el.dataset.sap); if (!r) return ACT.productSheet(el);
   const days = +slowCfg().days || 45;
   openSheet(esc(shortName(r.name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(r.name)}</div><div class="row-sub">${esc(r.cat || "")} · ${esc(r.trop || "No Tropicana code")}</div>
-      <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">In stock</div><div class="v num">${nf(r.crates, 1)} crates · ${nf(r.ea)} boxes</div></div><div><div class="k">Sold, last 4 weeks</div><div class="v num">${nf(r.s28, 1)} crates</div></div><div><div class="k">Stock lasts</div><div class="v">${coverTxt(r)}</div></div><div><div class="k">Last sold</div><div class="v">${r.last ? fmtDate(r.last) + " · " + lastTxt(r) : "Not since 1 Sep"}</div></div><div><div class="k">Last received</div><div class="v">${r.recv ? fmtDate(r.recv) : "–"}</div></div><div><div class="k">Tied up (SS rate)</div><div class="v num">${rs(r.value)}</div></div></div></div>
-    <div class="banner warn">${ic("info", "sm")}<span><b>Push about ${nf(r.push, 1)} crates</b> (${rs(r.pushValue)}). ${r.still ? "Nothing has sold in 4 weeks, so all of it is extra." : `That is the stock above ${days} days of sales at the current pace.`}${r.onTruck > 0 ? ` The truck plan still has ${nf(r.onTruck)} more crates of it. Set its order rule to "Don't order" in Replenishment if you want to stop.` : ""}</span></div>
+      <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">In stock</div><div class="v num">${nf(r.crates, 1)} crates · ${nf(r.ea)} boxes</div></div><div><div class="k">Sold, last 4 weeks</div><div class="v num">${nf(r.s28, 1)} crates</div></div><div><div class="k">Stock lasts</div><div class="v">${coverTxt(r)}</div></div><div><div class="k">Last sold</div><div class="v">${r.last ? fmtDate(r.last) + " · " + lastTxt(r) : "Not since 1 Sep"}</div></div><div><div class="k">Last received</div><div class="v">${r.recv ? fmtDate(r.recv) : "–"}</div></div>${SEE_MONEY ? `<div><div class="k">Tied up (SS rate)</div><div class="v num">${rs(r.value)}</div></div>` : ""}</div></div>
+    <div class="banner warn">${ic("info", "sm")}<span><b>Push about ${nf(r.push, 1)} crates</b>${SEE_MONEY ? ` (${rs(r.pushValue)})` : ""}. ${r.still ? "Nothing has sold in 4 weeks, so all of it is extra." : `That is the stock above ${days} days of sales at the current pace.`}${r.onTruck > 0 ? ` The truck plan still has ${nf(r.onTruck)} more crates of it. Set its order rule to "Don't order" in Replenishment if you want to stop.` : ""}</span></div>
     <div><div class="group-label"><span>Who to offer it to</span><span>Last 90 days</span></div><div class="group">${r.buyers.length ? r.buyers.slice(0, 8).map((b) => { const d = distByKey[key(b.name)] || {}; return `<div class="row"><span class="avatar soft">${esc(initials(b.name))}</span><span class="grow"><div class="row-title clip">${esc(b.name)}</div><div class="row-sub">${esc(d.district || "")}${d.phone ? " · " + esc(d.phone) : ""} · last bought ${fmtDate(b.last)}</div></span><span class="row-end"><span class="row-value">${nf(b.crates, 1)} crate${b.crates === 1 ? "" : "s"}</span></span></div>`; }).join("") : `<div class="empty">No distributor bought it in the last 90 days. Try your biggest buyers in the same range.</div>`}</div></div>`,
     `<button class="btn btn-secondary" data-act="productSheet" data-sap="${esc(r.sap)}">${ic("box", "sm")} Product details</button>`);
 };
@@ -2574,7 +2606,7 @@ function distGrid() {
 }
 function catalogGrid() {
   const q = key(S.setupQ), all = D.catalog.filter((c) => !q || q.split(" ").every((w) => key(c.name + " " + c.sap + " " + c.cat).includes(w))), list = all.slice(0, 80);
-  return `<div class="row-sub" style="margin-bottom:8px">Showing ${list.length} of ${all.length} products from the Hangyo South Kerala list${all.length > list.length ? ". Search to narrow it down." : "."}</div><div class="dg" style="--cols:minmax(0,2.2fr) 90px 90px 100px 90px 96px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">MRP / box</span><span class="r c-hide">SS rate</span><span class="r">Distributor rate</span><span class="r c-hide">Dealer</span><span class="c-hide">Range</span></div>${list.map((c) => { const p = D.prices[c.sap] || []; return `<button class="dg-row" data-act="productSheet" data-sap="${c.sap}"><span><div class="strong clip">${esc(c.name)}</div><div class="row-sub clip">${esc(c.cat || "")} · SAP ${esc(c.sap || "–")}</div></span><span class="r c-hide">${c.mrp != null ? rs(c.mrp) : "–"}</span><span class="r c-hide">${p[0] != null ? rs2(p[0]) : "–"}</span><span class="r strong">${p[1] != null ? rs2(p[1]) : "–"}</span><span class="r c-hide">${p[2] != null ? rs2(p[2]) : "–"}</span><span class="c-hide">${c.stocked ? `<span class="pill plain good">Stocked</span>` : `<span class="pill plain">Not stocked</span>`}</span></button>`; }).join("")}</div>`;
+  return `<div class="row-sub" style="margin-bottom:8px">Showing ${list.length} of ${all.length} products from the Hangyo South Kerala list${all.length > list.length ? ". Search to narrow it down." : "."}</div><div class="dg" style="--cols:minmax(0,2.2fr) 90px${SEE_MONEY ? " 90px" : ""} 100px 90px 96px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">MRP / box</span>${SEE_MONEY ? `<span class="r c-hide">SS rate</span>` : ""}<span class="r">Distributor rate</span><span class="r c-hide">Dealer</span><span class="c-hide">Range</span></div>${list.map((c) => { const p = D.prices[c.sap] || []; return `<button class="dg-row" data-act="productSheet" data-sap="${c.sap}"><span><div class="strong clip">${esc(c.name)}</div><div class="row-sub clip">${esc(c.cat || "")} · SAP ${esc(c.sap || "–")}</div></span><span class="r c-hide">${c.mrp != null ? rs(c.mrp) : "–"}</span>${SEE_MONEY ? `<span class="r c-hide">${p[0] != null ? rs2(p[0]) : "–"}</span>` : ""}<span class="r strong">${p[1] != null ? rs2(p[1]) : "–"}</span><span class="r c-hide">${p[2] != null ? rs2(p[2]) : "–"}</span><span class="c-hide">${c.stocked ? `<span class="pill plain good">Stocked</span>` : `<span class="pill plain">Not stocked</span>`}</span></button>`; }).join("")}</div>`;
 }
 function specialHtml() {
   const sp = D.distributors.filter((d) => d.special), n = Object.keys(D.special.prices).length;
@@ -2582,7 +2614,7 @@ function specialHtml() {
     <div class="group">${D.distributors.map((d) => `<div class="row"><span class="avatar soft">${esc(initials(d.name))}</span><span class="grow"><div class="row-title clip">${esc(d.name)}</div><div class="row-sub">${esc(d.district || "")}${d.freezer ? " · " + esc(d.freezer) : ""}</div></span><span class="row-end">${d.special ? `<span class="pill plain tint">${Math.round(D.special.pct * 100)}% off</span>` : ""}<button class="toggle" role="switch" aria-checked="${!!d.special}" data-act="toggleSpecial" data-name="${esc(d.name)}" aria-label="Special prices for ${esc(d.name)}"></button></span></div>`).join("")}</div>`;
 }
 function activityHtml() {
-  const list = D.activity.slice(0, 70), tone = (a) => (/cancel/i.test(a) ? "bad" : /dispatch|delivered|received/i.test(a) ? "good" : /edited|hand/i.test(a) ? "warn" : "tint");
+  const list = D.activity.filter((a) => SEE_MONEY || !/tod|trip|price|cost|ss rate/i.test(a.action)).slice(0, 70), tone = (a) => (/cancel/i.test(a) ? "bad" : /dispatch|delivered|received/i.test(a) ? "good" : /edited|hand/i.test(a) ? "warn" : "tint");
   return `<div class="card card-pad"><div class="timeline">${list.map((a) => `<div class="tl"><span class="tl-dot ${tone(a.action)}"></span><div><div><b>${esc(a.action)}</b>${a.ref ? ` <span class="mono dim">${esc(a.ref)}</span>` : ""}</div><div class="row-sub">${esc(a.detail || "")}</div><div class="row-sub dim">${fmtDT(a.time)}${a.by ? " · " + esc(a.by) : ""}</div></div></div>`).join("")}</div></div>`;
 }
 VIEWS.setup = () => {
@@ -2611,23 +2643,61 @@ ACT.orderFor = (el) => { S.draft = newDraft(); S.draft.dist = el.dataset.name; c
 
 /* ===== MORE (phone) ===== */
 VIEWS.more = () => `<div class="page narrow"><div class="page-head"><h1 class="title">More</h1></div>
-  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["logistics", "Logistics", "Trips, transport cost and its share of sales", "truck", unloggedRuns().length], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
+  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["logistics", "Logistics", "Trips, transport cost and its share of sales", "truck", unloggedRuns().length], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].filter((x) => ROUTES[x[0]]).map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
   <div class="group"><button class="row" data-act="cmd"><span class="attn-ic info">${ic("search")}</span><span class="grow"><div class="row-title">Search everything</div><div class="row-sub">Distributors, products, orders</div></span>${ic("chevR", "sm chev")}</button>${HOST ? `<button class="row" data-act="account"><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow"><div class="row-title">${esc(ME.name)}</div><div class="row-sub">Account, team and sign out</div></span>${ic("chevR", "sm chev")}</button>` : ""}</div></div>`;
 
 /* ===== ACCOUNT (only on the staff-login page) ===== */
+const ROLE_WHAT = {
+  owner: "Everything, including costs and profit. Can invite people and change their access.",
+  staff: "Orders, dispatch, pick lists, stock and quick commerce. Costs, profit, TOD and logistics are hidden.",
+  viewer: "Can see everything, including costs and profit, but cannot change anything.",
+};
 ACT.account = () => {
   if (!HOST) return;
-  const owner = ME.role === "owner";
-  openSheet("Account", `<div class="card card-pad"><div class="hstack gap-12"><span class="avatar lg soft">${esc(initials(ME.name))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(ME.name)}</div><div class="row-sub">${owner ? "Owner" : "Staff"} · SahiReach LLP</div></div></div></div>
-    <div style="margin-top:22px"><div class="group-label"><span>Team</span></div><div class="group" id="team-list"><div class="row"><span class="row-sub">Loading…</span></div></div></div>
-    ${owner ? `<div id="invite-box" style="margin-top:18px"><button class="btn btn-secondary" data-act="inviteStaff">${ic("plus", "sm")} Invite a teammate</button><div class="row-sub" style="margin-top:8px">Creates a one-time setup code. Your teammate opens sahireach.com/staff-login, chooses “Set up your account” and enters it.</div></div>` : ""}`,
+  const owner = ROLE === "owner";
+  S.inviteRole = S.inviteRole || "staff";
+  openSheet("Account", `<div class="card card-pad"><div class="hstack gap-12"><span class="avatar lg soft">${esc(initials(ME.name))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(ME.name)}</div><div class="row-sub">${ROLE_LABEL[ROLE]} · SahiReach LLP</div></div></div><div class="row-sub" style="margin-top:12px">${esc(ROLE_WHAT[ROLE])}</div></div>
+    <div style="margin-top:22px"><div class="group-label"><span>Team</span>${owner ? `<span>change a role or remove access</span>` : ""}</div><div class="group" id="team-list"><div class="row"><span class="row-sub">Loading…</span></div></div></div>
+    ${owner ? `<div style="margin-top:22px"><div class="group-label"><span>Invite a teammate</span></div><div class="card card-pad" id="invite-box">${inviteBoxHtml()}</div></div>` : ""}`,
     `<button class="btn btn-secondary" data-act="signOut">${ic("logout", "sm")} Sign out</button>`);
-  HOST.team().then((rows) => part("team-list", rows.map((r) => `<div class="row"><span class="avatar soft">${esc(initials(r.name).slice(0, 1) || "S")}</span><span class="grow"><div class="row-title">${esc(r.name)}</div></span><span class="row-sub">${r.role === "owner" ? "Owner" : "Staff"}</span></div>`).join("") || `<div class="row"><span class="row-sub">Just you so far.</span></div>`))
-    .catch(() => part("team-list", `<div class="row"><span class="row-sub">Could not load the team. Check your connection.</span></div>`));
+  loadTeam();
+};
+function inviteBoxHtml() {
+  const r = S.inviteRole || "staff";
+  return `<div class="row-sub" style="margin-bottom:8px">What can they do?</div><div class="chips" style="margin:0 0 6px">${["staff", "viewer", "owner"].map((x) => `<button class="chip" data-act="inviteRole" data-r="${x}" aria-pressed="${r === x}">${ROLE_LABEL[x]}</button>`).join("")}</div>
+    <div class="row-sub" style="margin-bottom:14px">${esc(ROLE_WHAT[r])}</div>
+    <button class="btn btn-primary" data-act="inviteStaff">${ic("plus", "sm")} Create a setup code for ${ROLE_LABEL[r].toLowerCase()}</button>
+    <div class="row-sub" style="margin-top:8px">Your teammate opens sahireach.com/staff-login, chooses “Set up your account” and enters the code. You can change their role later.</div>`;
+}
+ACT.inviteRole = (el) => { S.inviteRole = el.dataset.r; part("invite-box", inviteBoxHtml()); };
+function loadTeam() {
+  const owner = ROLE === "owner", get = owner && HOST.teamFull ? HOST.teamFull() : HOST.team();
+  get.then((rows) => {
+    S.team = rows || [];
+    part("team-list", S.team.map((r) => owner ? teamRowHtml(r) : `<div class="row"><span class="avatar soft">${esc(initials(r.name).slice(0, 1) || "S")}</span><span class="grow"><div class="row-title">${esc(r.name)}</div></span><span class="row-sub">${ROLE_LABEL[r.role] || "Staff"}</span></div>`).join("") || `<div class="row"><span class="row-sub">Just you so far.</span></div>`);
+  }).catch(() => part("team-list", `<div class="row"><span class="row-sub">Could not load the team. Check your connection.</span></div>`));
+}
+function teamRowHtml(r) {
+  const seen = r.last_sign_in ? "last signed in " + fmtDate(String(r.last_sign_in).slice(0, 10)) : "has not signed in yet";
+  return `<div class="row" style="flex-wrap:wrap;gap:10px${r.active ? "" : ";opacity:.6"}"><span class="avatar soft">${esc(initials(r.name).slice(0, 1) || "S")}</span><span class="grow" style="min-width:160px"><div class="row-title clip">${esc(r.name)}${r.me ? ` <span class="pill plain" style="height:20px;font-size:11px">You</span>` : ""}</div><div class="row-sub clip">${r.email ? esc(r.email) + " · " : ""}${r.active ? seen : "no access"}</div></span>
+    ${r.me ? `<span class="row-sub">${ROLE_LABEL[r.role]}</span>` : r.active ? `<select class="select sm" style="width:auto" data-in="teamRole" data-id="${esc(r.id)}" aria-label="Role for ${esc(r.name)}">${["owner", "staff", "viewer"].map((x) => `<option value="${x}" ${r.role === x ? "selected" : ""}>${ROLE_LABEL[x]}</option>`).join("")}</select><button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="0">Remove access</button>` : `<span class="row-sub">${ROLE_LABEL[r.role]}</span><button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="1">Give access back</button>`}</div>`;
+}
+const teamName = (id) => ((S.team || []).find((x) => x.id === id) || {}).name || "They";
+IN.teamRole = (el) => {
+  const id = el.dataset.id, role = el.value; el.disabled = true;
+  HOST.setRole(id, role).then(() => { toast(`${teamName(id)} is now ${ROLE_LABEL[role].toLowerCase()}. It applies the next time they open the tool`, "check"); loadTeam(); })
+    .catch((e) => { el.disabled = false; toast((e && e.message) || "Could not change the role", "alert"); loadTeam(); });
+};
+ACT.teamAccess = (el) => {
+  const id = el.dataset.id, on = el.dataset.on === "1";
+  if (!on && el.dataset.sure !== "1") { el.dataset.sure = "1"; el.textContent = "Tap again to remove"; el.classList.add("btn-danger"); setTimeout(() => { if (el.isConnected && el.dataset.sure === "1") { el.dataset.sure = ""; el.textContent = "Remove access"; el.classList.remove("btn-danger"); } }, 4000); return; }
+  el.disabled = true;
+  HOST.setActive(id, on).then(() => { toast(on ? `${teamName(id)} has access again` : `${teamName(id)} can no longer sign in`, on ? "check" : "info"); loadTeam(); })
+    .catch((e) => { el.disabled = false; toast((e && e.message) || "Could not change access", "alert"); });
 };
 ACT.inviteStaff = (el) => {
-  el.disabled = true;
-  HOST.invite().then((code) => part("invite-box", `<div class="card card-pad"><div class="row-sub">Setup code · works once · expires in 7 days</div><div class="mono" id="invite-code" style="font-size:21px;font-weight:650;letter-spacing:0.04em;margin:6px 0 12px;color:var(--ink)">${esc(code)}</div><button class="btn btn-primary btn-sm" data-act="copyInvite" data-code="${esc(code)}">${ic("copy", "sm")} Copy invite message</button></div>`))
+  const role = S.inviteRole || "staff"; el.disabled = true;
+  HOST.invite(role).then((code) => part("invite-box", `<div class="row-sub">Setup code for ${ROLE_LABEL[role].toLowerCase()} · works once · expires in 7 days</div><div class="mono" id="invite-code" style="font-size:21px;font-weight:650;letter-spacing:0.04em;margin:6px 0 12px;color:var(--ink)">${esc(code)}</div><div class="hstack gap-8 wrap"><button class="btn btn-primary btn-sm" data-act="copyInvite" data-code="${esc(code)}">${ic("copy", "sm")} Copy invite message</button><button class="btn btn-secondary btn-sm" data-act="inviteRole" data-r="${role}">Make another code</button></div>`))
     .catch((e) => { el.disabled = false; toast((e && e.message) || "Could not create a code", "alert"); });
 };
 ACT.copyInvite = (el) => copyText(`Set up your SahiReach staff login:\n1. Open https://sahireach.com/staff-login\n2. Choose "Set up your account"\n3. Enter this setup code: ${el.dataset.code}\nThe code works once and expires in 7 days.`, "Invite copied");
@@ -2637,10 +2707,10 @@ ACT.signOut = () => { if (HOST) HOST.signOut(); };
 let cmdItems = [], cmdSel = 0;
 function cmdResults(q) {
   const k = key(q), out = [];
-  const screens = [["new-order", "New order", "plus"], ["home", "Home", "home"], ["orders", "Orders", "orders"], ["dispatch", "Dispatch", "truck"], ["quick", "Quick commerce", "bolt"], ["stock", "Stock", "box"], ["replenish", "Replenishment", "cycle"], ["tod", "TOD & notes", "rupee"], ["logistics", "Logistics", "truck"], ["setup", "Setup", "gear"]];
+  const screens = [["new-order", "New order", "plus"], ["home", "Home", "home"], ["orders", "Orders", "orders"], ["dispatch", "Dispatch", "truck"], ["quick", "Quick commerce", "bolt"], ["stock", "Stock", "box"], ["replenish", "Replenishment", "cycle"], ["tod", "TOD & notes", "rupee"], ["logistics", "Logistics", "truck"], ["setup", "Setup", "gear"]].filter((x) => ROUTES[x[0]] && (CAN_EDIT || x[0] !== "new-order"));
   screens.filter((s) => !k || key(s[1]).includes(k)).forEach((s) => out.push({ sec: "Go to", icon: s[2], label: s[1], run: () => { if (s[0] === "new-order") ACT.newOrder(); else go(s[0]); } }));
   if (k) {
-    D.distributors.filter((d) => key(d.name + " " + d.short).includes(k)).slice(0, 5).forEach((d) => out.push({ sec: "Distributors", icon: "people", label: "New order for " + d.name, hint: d.district, run: () => ACT.orderFor({ dataset: { name: d.name } }) }));
+    D.distributors.filter((d) => key(d.name + " " + d.short).includes(k)).slice(0, 5).forEach((d) => out.push(!CAN_EDIT ? { sec: "Distributors", icon: "people", label: d.name, hint: d.district, run: () => ACT.distSheet({ dataset: { name: d.name } }) } : { sec: "Distributors", icon: "people", label: "New order for " + d.name, hint: d.district, run: () => ACT.orderFor({ dataset: { name: d.name } }) }));
     searchProducts(q, 5).forEach((x) => out.push({ sec: "Products", icon: "box", label: x.c.name, hint: x.crates == null ? "not stocked" : nf(x.crates, 1) + " crates", run: () => ACT.productSheet({ dataset: { sap: x.c.sap } }) }));
     D.orders.filter((o) => key(o.id + " " + o.dist).includes(k)).slice(-4).reverse().forEach((o) => out.push({ sec: "Orders", icon: "orders", label: o.dist + " · " + fmtDate(o.time), hint: o.status, run: () => showOrder(o.id) }));
   }
@@ -2659,8 +2729,24 @@ ACT.cmdRun = (el) => { const it = cmdItems[+el.dataset.i]; closeCmd(); if (it) i
 
 /* ===== boot ===== */
 function afterRender() { bindCharts(); }
-document.addEventListener("click", (e) => { const el = e.target.closest("[data-act]"); if (!el) return; const fn = ACT[el.dataset.act]; if (fn) fn(el, e); });
-document.addEventListener("input", (e) => { const el = e.target.closest("[data-in]"); if (!el) return; const fn = IN[el.dataset.in]; if (fn) fn(el, e); });
+/* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
+const VIEW_ACTS = new Set("account backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_INS = new Set("cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
+const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
+function viewOnlyMark(root) {
+  if (CAN_EDIT || !root || !root.querySelectorAll) return;
+  const els = [...root.querySelectorAll("[data-act],[data-in],form input,form select,form textarea")]; if (root.matches && root.matches("[data-act],[data-in]")) els.push(root);
+  els.forEach((el) => {
+    if (el.dataset.act || el.dataset.in ? viewOK(el) : false) return;
+    if (/^(BUTTON|INPUT|SELECT|TEXTAREA)$/.test(el.tagName) && !(el.closest(".search") && el.dataset.in && VIEW_INS.has(el.dataset.in))) { el.disabled = true; el.classList.add("vo-off"); el.title = "View only"; }
+  });
+}
+if (!CAN_EDIT) {
+  const st = document.createElement("style"); st.textContent = ".vo-off{opacity:.4!important;cursor:not-allowed!important}"; document.head.appendChild(st);
+  new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1) viewOnlyMark(n); }))).observe(document.body, { childList: true, subtree: true });
+}
+document.addEventListener("click", (e) => { const el = e.target.closest("[data-act]"); if (!el) return; if (!viewOK(el)) { e.preventDefault(); toast("View only: you can look, but not change anything", "info"); return; } const fn = ACT[el.dataset.act]; if (fn) fn(el, e); });
+document.addEventListener("input", (e) => { const el = e.target.closest("[data-in]"); if (!el) return; if (!viewOK(el)) return; const fn = IN[el.dataset.in]; if (fn) fn(el, e); });
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if ($("#cmd")) closeCmd(); else ACT.cmd(); return; }
   if ($("#cmd")) {
@@ -2675,7 +2761,7 @@ document.addEventListener("keydown", (e) => {
 window.addEventListener("hashchange", () => { const r = location.hash.slice(1); if (r && r !== S.route && ROUTES[r]) go(r); });
 
 /* ===== EDITING MASTERS: distributors, products and prices, quick commerce and company details ===== */
-const CAN_PRICE = !HOST || ME.role === "owner";
+const CAN_PRICE = ROLE === "owner";
 const numOrNull = (v) => (v === "" || v == null || isNaN(+v) ? null : +v);
 const r4 = (v) => (v == null ? null : Math.round(v * 10000) / 10000);
 function fld(id, label, value, opts = {}) {
@@ -2761,7 +2847,7 @@ ACT.productEdit = (el) => {
     </div></div>
     <div class="card card-pad"><div class="card-title" style="margin-bottom:4px">Prices per box, excl. GST</div><div class="row-sub" style="margin-bottom:12px">${lock ? "Only the owner can change prices." : "From the Hangyo South Kerala price list. The distributor rate is what orders are billed at."}</div><div class="form-grid">
       ${fld("pf-dist", "Distributor rate (₹)", r4(p[1] != null ? p[1] : st && st.price), { type: "number", disabled: lock })}
-      ${fld("pf-ss", "Your cost, SS rate (₹)", r4(p[0] != null ? p[0] : st && st.cost), { type: "number", disabled: lock })}
+      ${SEE_MONEY ? fld("pf-ss", "Your cost, SS rate (₹)", r4(p[0] != null ? p[0] : st && st.cost), { type: "number", disabled: lock }) : ""}
       ${fld("pf-dealer", "Dealer price (₹)", r4(p[2]), { type: "number", disabled: lock })}
       ${fld("pf-mrp", "MRP per box (₹)", p[3] != null ? p[3] : c.mrp, { type: "number", disabled: lock })}
       ${fld("pf-special", `Special price (₹)`, r4(sp), { type: "number", disabled: lock, hint: `For distributors on special prices. Leave empty to bill them the normal rate. ${Math.round(D.special.pct * 100)}% off would be ${p[1] ? rs2(p[1] * (1 - D.special.pct)) : "–"}.`, full: true })}
@@ -3173,7 +3259,7 @@ function tripCalc(T) {
   const tr = transporterOf(T.transporter), A = tripAuto(T);
   if (A) { if (!T.own.sellers) T.sellers = A.sellers; if (!T.own.crates) T.crates = A.crates; if (!T.own.revenue) T.revenue = A.revenue; if (!T.own.type) T.type = A.type; }
   if (T.odoStart != null && T.odoEnd != null && T.odoEnd >= T.odoStart && !T.own.km) T.km = T.odoEnd - T.odoStart;
-  if (tr && tr.mode === "km" && !T.own.cost) T.cost = T.km != null ? Math.round(T.km * (tr.rate || 0)) : null;
+  if (tr && tr.mode === "km" && !T.own.cost) T.cost = T.km != null && tr.rate != null ? Math.round(T.km * tr.rate) : null; /* staff are not sent the rate: the database works the cost out */
   if (!T.own.route) T.route = T.type === "QC" ? null : T.km != null ? (T.km >= 260 ? "Long" : "Short") : T.route || null;
   return { tr, A };
 }
@@ -3209,17 +3295,17 @@ function tripBody() {
       <div class="field"><label class="label">Crates ${auto("crates")}</label>${num("crates", T.crates, "0")}</div>
       <div class="field"><label class="label">Invoiced revenue, excl. GST ${auto("revenue")}</label>${num("revenue", T.revenue, "0.00")}</div>
     </div></div></div>
-    <div><div class="group-label"><span>3 · Kilometres and cost</span><span>${tr && tr.mode === "km" ? `${esc(tr.name)}: ₹${tr.rate} per km` : "Amount paid for this trip"}</span></div><div class="card card-pad"><div class="form-grid">
+    <div><div class="group-label"><span>3 · Kilometres${SEE_MONEY || !(tr && tr.mode === "km") ? " and cost" : ""}</span><span>${tr && tr.mode === "km" ? (SEE_MONEY ? `${esc(tr.name)}: ₹${tr.rate} per km` : "Cost is worked out from the km") : "Amount paid for this trip"}</span></div><div class="card card-pad"><div class="form-grid">
       <div class="field"><label class="label">Odometer at start</label>${num("odoStart", T.odoStart, "Reading at the start")}</div>
       <div class="field"><label class="label">Odometer at end</label>${num("odoEnd", T.odoEnd, "Reading at the end")}</div>
       <div class="field"><label class="label">Km, both ways</label>${num("km", T.km, "0")}</div>
-      <div class="field"><label class="label">Logistics cost (₹)${tr && tr.mode === "km" && !T.own.cost ? ` <span class="pill plain" style="height:20px;font-size:11px">km × ₹${tr.rate}</span>` : ""}</label>${num("cost", T.cost, tr && tr.mode === "km" ? "Fills in from the km" : "What you paid")}</div>
+      ${!SEE_MONEY && tr && tr.mode === "km" ? "" : `<div class="field"><label class="label">Logistics cost (₹)${tr && tr.mode === "km" && !T.own.cost ? ` <span class="pill plain" style="height:20px;font-size:11px">km × ₹${tr.rate}</span>` : ""}</label>${num("cost", T.cost, tr && tr.mode === "km" ? "Fills in from the km" : "What you paid")}</div>`}
       <div class="field"><label class="label">Halting time, hours after the first free hour</label>${num("halting", T.halting, "0")}</div>
       <div class="field"><label class="label">Note</label><input class="input" value="${esc(T.note || "")}" data-in="tripF" data-f="note" placeholder="Optional"></div>
     </div>
-    <div class="hstack gap-12 wrap" style="margin-top:14px" id="trip-sum">${tripSum(T)}</div></div></div>`;
+    ${SEE_MONEY ? `<div class="hstack gap-12 wrap" style="margin-top:14px" id="trip-sum">${tripSum(T)}</div>` : `<div id="trip-sum"></div>`}</div></div>`;
 }
-const tripSum = (T) => { const p = T.revenue > 0 && T.cost != null ? T.cost / T.revenue : null; return `<span class="pill ${p == null ? "plain" : p > 0.06 ? "bad" : p > 0.045 ? "warn" : "good"}">${p != null ? pct(p, 2) + " of revenue" : "Add revenue and cost to see the %"}</span>${T.crates > 0 && T.cost != null ? `<span class="pill plain">${rs2(T.cost / T.crates)} per crate</span>` : ""}${T.km > 0 && T.cost != null ? `<span class="pill plain">${rs2(T.cost / T.km)} per km</span>` : ""}`; };
+const tripSum = (T) => { if (!SEE_MONEY) return ""; const p = T.revenue > 0 && T.cost != null ? T.cost / T.revenue : null; return `<span class="pill ${p == null ? "plain" : p > 0.06 ? "bad" : p > 0.045 ? "warn" : "good"}">${p != null ? pct(p, 2) + " of revenue" : "Add revenue and cost to see the %"}</span>${T.crates > 0 && T.cost != null ? `<span class="pill plain">${rs2(T.cost / T.crates)} per crate</span>` : ""}${T.km > 0 && T.cost != null ? `<span class="pill plain">${rs2(T.cost / T.km)} per km</span>` : ""}`; };
 const tripRedraw = () => { const sc = $("#sheet .sheet-body") || $("#sheet"), y = sc ? sc.scrollTop : 0; part("trip-body", tripBody()); if (sc) sc.scrollTop = y; };
 IN.tripF = (el) => {
   const T = S.trip, f = el.dataset.f, v = el.value;
@@ -3246,7 +3332,7 @@ ACT.tripSave = () => {
   const i = L.trips.findIndex((x) => x.id === rec.id); if (i >= 0) { rec.source = L.trips[i].source || rec.source; L.trips[i] = rec; } else L.trips.push(rec);
   logActivity(i >= 0 ? "Trip updated" : "Trip logged", fmtDate(rec.date), `${rec.sellers} · ${rec.cost != null ? rs(rec.cost) : "cost not added"}${tripPct(rec) != null ? " · " + pct(tripPct(rec), 1) : ""}`);
   S.trip = null; closeSheet(); if (S.route === "logistics") render(); else render();
-  toast(rec.cost != null ? `Trip saved · ${tripPct(rec) != null ? pct(tripPct(rec), 1) + " of revenue" : rs(rec.cost)}` : "Trip saved. Add the cost when you have it", "truck");
+  toast(!SEE_MONEY ? "Trip saved" : rec.cost != null ? `Trip saved · ${tripPct(rec) != null ? pct(tripPct(rec), 1) + " of revenue" : rs(rec.cost)}` : "Trip saved. Add the cost when you have it", "truck");
 };
 ACT.tripDelAsk = () => { part("trip-sum", `<div class="confirm" style="width:100%"><span><b>Delete this trip?</b> Its orders go back to "no trip logged".</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="tripDelNo">Keep it</button><button class="btn btn-sm btn-danger" data-act="tripDel">Delete</button></span></div>`); };
 ACT.tripDelNo = () => part("trip-sum", tripSum(S.trip));
@@ -3284,6 +3370,7 @@ ACT.logiExcel = async (el) => {
 /* ---------- 1. products with no SS rate (cost price): profit cannot be worked out ---------- */
 let MP_CACHE = { t: 0, v: [] };
 function missingPrices(fresh) {
+  if (!SEE_MONEY) return []; /* staff are not sent cost prices, so there is nothing for them to fix */
   if (!fresh && Date.now() - MP_CACHE.t < 2500) return MP_CACHE.v;
   const since = addDays(ymd(NOW()), -120), out = {};
   const add = (sap, name, v) => { if (!sap || unitCost(sap) != null) return; const x = (out[sap] = out[sap] || { sap, name: (catBySap[sap] || stockBySap[sap] || {}).name || name || sap, sold: 0, last: null }); x.sold += v || 0; };
@@ -3312,7 +3399,7 @@ function priceNudgeHome() {
     ${CAN_PRICE ? `<div class="hstack between wrap gap-12" style="margin-top:12px"><span class="row-sub" id="mp-msg">The distributor rate is filled in from the last order where there was one.</span><button class="btn btn-primary" data-act="mpSave">${ic("check", "sm")} Save prices</button></div>` : ""}</div>`;
 }
 function priceStrip() {
-  if (S.route === "home") return "";
+  if (S.route === "home" || !CAN_PRICE) return "";
   const list = missingPrices(); if (!list.length) return "";
   return `<button class="nudge-strip" data-act="priceNudge">${ic("alert", "sm")}<span class="grow"><b>${list.length} product${list.length > 1 ? "s have" : " has"} no SS rate.</b> Profit and margin figures are off until ${list.length > 1 ? "they are" : "it is"} added.</span><span class="nudge-strip-go">Add now ${ic("chevR", "sm")}</span></button>`;
 }
@@ -3384,9 +3471,9 @@ ACT.pendingBackSheet = (el) => {
     ${item("home")}
     <div class="nav-label">Sell</div>${item("orders")}${item("dispatch", `<span class="nav-badge hot" id="badge-dispatch" hidden></span>`)}${item("quick", `<span class="nav-badge" id="badge-quick" hidden></span>`)}
     <div class="nav-label">Stock</div>${item("stock")}${item("replenish")}
-    <div class="nav-label">Money</div>${item("tod")}${item("logistics")}
+    ${SEE_MONEY ? `<div class="nav-label">Money</div>${item("tod")}${item("logistics")}` : ""}
     <div class="nav-label">Manage</div>${item("setup")}
-    <div class="side-foot"><button class="nav-item" data-act="cmd">${ic("search")}<span>Search</span><span class="nav-badge">⌘K</span></button><${HOST ? 'button class="me me-btn" data-act="account" aria-label="Account"' : 'div class="me"'}><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow" style="text-align:left;min-width:0"><span class="clip" style="display:block;font-weight:600;font-size:14px">${esc(ME.name)}</span><span class="brand-sub" style="display:block">SahiReach LLP</span></span>${HOST ? ic("chevR", "sm chev") : ""}</${HOST ? "button" : "div"}></div>`;
+    <div class="side-foot"><button class="nav-item" data-act="cmd">${ic("search")}<span>Search</span><span class="nav-badge">⌘K</span></button><${HOST ? 'button class="me me-btn" data-act="account" aria-label="Account"' : 'div class="me"'}><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow" style="text-align:left;min-width:0"><span class="clip" style="display:block;font-weight:600;font-size:14px">${esc(ME.name)}</span><span class="brand-sub" style="display:block">${ROLE === "owner" ? "SahiReach LLP" : ROLE_LABEL[ROLE] + (CAN_EDIT ? "" : " · view only")}</span></span>${HOST ? ic("chevR", "sm chev") : ""}</${HOST ? "button" : "div"}></div>`;
   const tab = (r, label) => `<button class="tab" data-act="nav" data-to="${r}" data-nav="${r}">${ic(ROUTES[r].icon)}<span>${label}</span></button>`;
   $("#tabbar").innerHTML = tab("home", "Home") + tab("orders", "Orders") + tab("dispatch", "Dispatch") + tab("stock", "Stock") + tab("more", "More");
 })();
@@ -3408,6 +3495,7 @@ function snapshot() {
 const SAVE = { on: false, why: "", version: null, last: null, busy: false, again: false, timer: 0, state: "", conflict: false };
 (function initSave() {
   if (!HOST) return;
+  if (!CAN_EDIT) { SAVE.why = "view"; return; }
   if (!HOST.save || HOST.version == null) { SAVE.why = "setup"; return; }
   if (DATA_OLD) { SAVE.why = "old"; return; }
   SAVE.on = true; SAVE.version = HOST.version; SAVE.last = snapshot();
@@ -3466,4 +3554,4 @@ async function checkLatest() {
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkLatest(); });
 setInterval(checkLatest, 60000);
 
-if (HOST && !SAVE.on) setSaveState("off", SAVE.why === "setup" ? "Saving is off · database step needed" : "Load the new data file to start saving");
+if (HOST && !SAVE.on) setSaveState("off", SAVE.why === "view" ? "View only" : SAVE.why === "setup" ? "Saving is off · database step needed" : "Load the new data file to start saving");

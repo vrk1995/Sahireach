@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/staff-login/app.css?v=f2f261b641">
+<link rel="stylesheet" href="/staff-login/app.css?v=af48903a4e">
 <style>
 /* Sign-in screen. Everything behind it (the tool and its data) only arrives after sign-in. */
 .app[hidden], .tabbar[hidden] { display: none !important; }
@@ -189,7 +189,10 @@
       save: function (json, version) { return authed("/rest/v1/rpc/staff_workspace_save", '{"p_version":' + Number(version) + ',"p_data":' + json + "}"); },
       latest: function () { return authed("/rest/v1/rpc/staff_workspace_version", {}); }, xlsxSrc: "/staff-login/vendor/xlsx-0.18.5.full.min.js",
       signOut: function () { signOut(false); },
-      invite: function () { return authed("/rest/v1/rpc/staff_invite_create", {}); },
+      invite: function (role) { return authed("/rest/v1/rpc/staff_invite_create", { p_role: role || "staff" }); },
+      teamFull: function () { return authed("/rest/v1/rpc/staff_team", {}); },
+      setRole: function (id, role) { return authed("/rest/v1/rpc/staff_set_role", { p_user: id, p_role: role }); },
+      setActive: function (id, on) { return authed("/rest/v1/rpc/staff_set_active", { p_user: id, p_active: !!on }); },
       sendEmail: function (m) { return authed("/functions/v1/send-email", m); },
       readOrder: function (m) { return authed("/functions/v1/read-order", m); },
       team: function () { return authed("/rest/v1/staff?select=name,role&active=is.true&order=created_at", null, "GET"); },
@@ -202,7 +205,7 @@
     };
     /* the screens' code comes from this site (it holds no business data); the data came from the database above */
     await new Promise(function (ok, bad) {
-      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=f2f261b641";
+      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=af48903a4e";
       s.onload = function () { $("gate").remove(); $("app").hidden = false; $("tabbar").hidden = false; ok(); };
       s.onerror = function () { bad(new Error("Could not load the tool. Check your internet connection and try again.")); };
       document.body.appendChild(s);
