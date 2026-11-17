@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/staff-login/app.css?v=af48903a4e">
+<link rel="stylesheet" href="/staff-login/app.css?v=a104b24245">
 <style>
 /* Sign-in screen. Everything behind it (the tool and its data) only arrives after sign-in. */
 .app[hidden], .tabbar[hidden] { display: none !important; }
@@ -49,6 +49,8 @@
 .gate-alt { text-align: center; color: var(--ink-2); font-size: 14px; margin-top: 18px; }
 .linkish { color: var(--tint); font-weight: 600; font-size: inherit; }
 .linkish:hover { text-decoration: underline; }
+.gate-forgot { text-align: right; margin: 8px 2px 0; font-size: 13.5px; }
+.gate-ok { margin-top: 18px; background: var(--good-soft); color: var(--good); border-radius: var(--r-md); padding: 11px 14px; font-size: 14px; font-weight: 500; }
 .gate-error { margin-top: 18px; background: var(--bad-soft); color: var(--bad); border-radius: var(--r-md); padding: 11px 14px; font-size: 14px; font-weight: 500; }
 .gate-state { padding: 26px 0 8px; color: var(--ink-2); font-size: 15px; }
 .gate-state .btn { margin-top: 18px; }
@@ -85,6 +87,7 @@
       <div class="gate-error" id="si-err" role="alert" hidden></div>
       <label class="fld"><span>Email</span><input class="input" id="si-email" name="email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" required></label>
       <label class="fld"><span>Password</span><span class="pw"><input class="input" id="si-pass" name="password" type="password" autocomplete="current-password" required><button type="button" class="pw-toggle" data-for="si-pass" aria-label="Show password">Show</button></span></label>
+      <p class="gate-forgot"><button type="button" class="linkish" data-mode="forgot">Forgot password?</button></p>
       <button class="btn btn-primary btn-lg gate-go" type="submit" id="si-go">Sign in</button>
       <p class="gate-alt">First time here? <button type="button" class="linkish" data-mode="setup">Set up your account</button></p>
     </form>
@@ -99,6 +102,27 @@
       <label class="fld"><span>Setup code</span><input class="input" id="su-code" name="setup-code" type="text" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="24" required></label>
       <button class="btn btn-primary btn-lg gate-go" type="submit" id="su-go">Create account</button>
       <p class="gate-alt">Already set up? <button type="button" class="linkish" data-mode="signin">Sign in</button></p>
+    </form>
+
+    <form id="g-forgot" hidden novalidate>
+      <h1>Reset your password</h1>
+      <p class="gate-sub">Enter the email you sign in with. We will send you a link to choose a new password.</p>
+      <div class="gate-error" id="fp-err" role="alert" hidden></div>
+      <div class="gate-ok" id="fp-ok" role="status" hidden></div>
+      <label class="fld"><span>Email</span><input class="input" id="fp-email" name="email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" required></label>
+      <button class="btn btn-primary btn-lg gate-go" type="submit" id="fp-go">Send reset link</button>
+      <p class="gate-alt">Remembered it? <button type="button" class="linkish" data-mode="signin">Sign in</button></p>
+    </form>
+
+    <form id="g-reset" hidden novalidate>
+      <h1>Choose a new password</h1>
+      <p class="gate-sub">You will be signed in straight after.</p>
+      <div class="gate-error" id="rp-err" role="alert" hidden></div>
+      <input type="text" name="username" autocomplete="username" hidden>
+      <label class="fld"><span>New password</span><span class="pw"><input class="input" id="rp-pass" name="new-password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><button type="button" class="pw-toggle" data-for="rp-pass" aria-label="Show password">Show</button></span><span class="hint">At least 8 characters.</span></label>
+      <label class="fld"><span>Type it again</span><input class="input" id="rp-pass2" name="confirm-password" type="password" autocomplete="new-password" maxlength="72" required></label>
+      <button class="btn btn-primary btn-lg gate-go" type="submit" id="rp-go">Save new password</button>
+      <p class="gate-alt"><button type="button" class="linkish" data-mode="forgot">Send me a new link</button> · <button type="button" class="linkish" data-mode="signin">Sign in</button></p>
     </form>
   </div>
   <a class="gate-back" href="/">← Back to sahireach.com</a>
@@ -161,14 +185,17 @@
   }
 
   /* ---------- screens ---------- */
-  var PANELS = ["g-wait", "g-retry", "g-load", "g-signin", "g-setup"];
+  var PANELS = ["g-wait", "g-retry", "g-load", "g-signin", "g-setup", "g-forgot", "g-reset"];
   function panel(id) { PANELS.forEach(function (p) { $(p).hidden = p !== id; }); }
   function wait(msg) { $("g-wait-msg").textContent = msg; panel("g-wait"); }
   function showError(id, msg) { var el = $(id); el.textContent = msg || ""; el.hidden = !msg; }
+  var FORMS = { signin: ["g-signin", "si-err"], setup: ["g-setup", "su-err"], forgot: ["g-forgot", "fp-err"], reset: ["g-reset", "rp-err"] };
   function form(mode, msg) {
-    panel(mode === "setup" ? "g-setup" : "g-signin");
-    showError("si-err", mode === "signin" ? msg : ""); showError("su-err", mode === "setup" ? msg : "");
-    var first = mode === "setup" ? $("su-name") : ($("si-email").value ? $("si-pass") : $("si-email"));
+    if (!FORMS[mode]) mode = "signin";
+    panel(FORMS[mode][0]);
+    Object.keys(FORMS).forEach(function (k) { showError(FORMS[k][1], k === mode ? msg : ""); });
+    if (mode === "forgot") { $("fp-ok").hidden = true; $("fp-go").style.display = ""; if (!$("fp-email").value) $("fp-email").value = $("si-email").value; }
+    var first = mode === "setup" ? $("su-name") : mode === "forgot" ? $("fp-email") : mode === "reset" ? $("rp-pass") : ($("si-email").value ? $("si-pass") : $("si-email"));
     if (window.matchMedia("(hover: hover)").matches) { try { first.focus(); } catch (e) {} }
   }
   function busy(btn, on, label) { btn.disabled = on; if (label) btn.textContent = label; }
@@ -192,6 +219,8 @@
       invite: function (role) { return authed("/rest/v1/rpc/staff_invite_create", { p_role: role || "staff" }); },
       teamFull: function () { return authed("/rest/v1/rpc/staff_team", {}); },
       setRole: function (id, role) { return authed("/rest/v1/rpc/staff_set_role", { p_user: id, p_role: role }); },
+      changePassword: function (pw) { return authed("/auth/v1/user", { password: pw }, "PUT"); },
+      sendReset: function (email) { return authed("/functions/v1/password-reset", { email: email }); },
       setActive: function (id, on) { return authed("/rest/v1/rpc/staff_set_active", { p_user: id, p_active: !!on }); },
       sendEmail: function (m) { return authed("/functions/v1/send-email", m); },
       readOrder: function (m) { return authed("/functions/v1/read-order", m); },
@@ -205,7 +234,7 @@
     };
     /* the screens' code comes from this site (it holds no business data); the data came from the database above */
     await new Promise(function (ok, bad) {
-      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=af48903a4e";
+      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=a104b24245";
       s.onload = function () { $("gate").remove(); $("app").hidden = false; $("tabbar").hidden = false; ok(); };
       s.onerror = function () { bad(new Error("Could not load the tool. Check your internet connection and try again.")); };
       document.body.appendChild(s);
@@ -250,6 +279,33 @@
     busy(btn, false, "Create account"); $("su-pass").value = ""; $("su-code").value = ""; go();
   });
 
+  /* ---------- forgotten password: email a link, then choose a new password ---------- */
+  $("g-forgot").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var email = $("fp-email").value.trim(), btn = $("fp-go");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { showError("fp-err", "Enter a valid email address."); return; }
+    showError("fp-err", ""); busy(btn, true, "Sending…");
+    try { await call("/functions/v1/password-reset", { email: email }); }
+    catch (e) { busy(btn, false, "Send reset link"); showError("fp-err", e.message); return; }
+    busy(btn, false, "Send reset link"); btn.style.display = "none";
+    $("fp-ok").textContent = "If " + email + " has a staff account, a reset link is on its way. Check your inbox (and spam). The link works once and expires in 1 hour."; $("fp-ok").hidden = false;
+  });
+  var resetToken = null, resetSigned = false;
+  $("g-reset").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var p1 = $("rp-pass").value, p2 = $("rp-pass2").value, btn = $("rp-go");
+    if (p1.length < 8) { showError("rp-err", "Choose a password with at least 8 characters."); return; }
+    if (p1 !== p2) { showError("rp-err", "The two passwords are not the same."); return; }
+    showError("rp-err", ""); busy(btn, true, "Saving…");
+    if (!resetSigned) {
+      try { keep(await call("/auth/v1/verify", { type: "recovery", token_hash: resetToken })); resetSigned = true; }
+      catch (e) { busy(btn, false, "Save new password"); showError("rp-err", e.network ? e.message : "This link has expired or was already used. Send yourself a new one."); return; }
+    }
+    try { await call("/auth/v1/user", { password: p1 }, session.access_token, "PUT"); }
+    catch (e) { busy(btn, false, "Save new password"); showError("rp-err", e.code === "same_password" ? "That is your current password. Choose a different one." : e.code === "weak_password" ? "That password is too easy to guess. Choose a longer one." : e.message); return; }
+    busy(btn, false, "Save new password"); $("rp-pass").value = $("rp-pass2").value = ""; resetToken = null; resetSigned = false; go();
+  });
+
   /* ---------- small controls ---------- */
   document.addEventListener("click", function (ev) {
     var t = ev.target.closest ? ev.target.closest("[data-mode], .pw-toggle") : null;
@@ -280,8 +336,18 @@
   $("g-retry-go").addEventListener("click", function () { if (session) go(); else form("signin"); });
   $("g-retry-out").addEventListener("click", function () { signOut(true).then(function () { form("signin"); }); });
 
-  session = load();
-  if (session && session.refresh_token) go(); else form(/[?&]setup\b/.test(location.search) ? "setup" : "signin");
+  /* a password-reset link: #reset=<token> (read once, then taken out of the address bar) */
+  function takeReset() {
+    var rm = /^#reset=([^&]+)/.exec(location.hash); if (!rm) return false;
+    resetToken = decodeURIComponent(rm[1]); resetSigned = false;
+    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { location.hash = ""; }
+    save(null); form("reset"); return true;
+  }
+  window.addEventListener("hashchange", function () { if (/^#reset=/.test(location.hash)) { if ($("gate")) takeReset(); else location.reload(); } });
+  if (takeReset()) {} else {
+    session = load();
+    if (session && session.refresh_token) go(); else form(/[?&]setup\b/.test(location.search) ? "setup" : "signin");
+  }
 })();
 </script>
 </body>

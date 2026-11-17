@@ -52,6 +52,7 @@ const ICONS = {
   people: '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8"/><circle cx="17" cy="9.5" r="2.3"/><path d="M16.5 14.4c2.2.2 3.6 1.7 4 4.1"/>',
   tag: '<path d="M3.5 12.2V4.5h7.7l9.3 9.3-7.7 7.7z"/><circle cx="8" cy="9" r="1.3"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M5 12h14"/>',
@@ -2656,11 +2657,28 @@ ACT.account = () => {
   if (!HOST) return;
   const owner = ROLE === "owner";
   S.inviteRole = S.inviteRole || "staff";
-  openSheet("Account", `<div class="card card-pad"><div class="hstack gap-12"><span class="avatar lg soft">${esc(initials(ME.name))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(ME.name)}</div><div class="row-sub">${ROLE_LABEL[ROLE]} · SahiReach LLP</div></div></div><div class="row-sub" style="margin-top:12px">${esc(ROLE_WHAT[ROLE])}</div></div>
+  openSheet("Account", `<div class="card card-pad"><div class="hstack gap-12"><span class="avatar lg soft">${esc(initials(ME.name))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(ME.name)}</div><div class="row-sub">${ROLE_LABEL[ROLE]} · SahiReach LLP</div></div></div><div class="row-sub" style="margin-top:12px">${esc(ROLE_WHAT[ROLE])}</div><div id="pw-box" style="margin-top:14px">${pwBoxHtml(false)}</div></div>
     <div style="margin-top:22px"><div class="group-label"><span>Team</span>${owner ? `<span>change a role or remove access</span>` : ""}</div><div class="group" id="team-list"><div class="row"><span class="row-sub">Loading…</span></div></div></div>
     ${owner ? `<div style="margin-top:22px"><div class="group-label"><span>Invite a teammate</span></div><div class="card card-pad" id="invite-box">${inviteBoxHtml()}</div></div>` : ""}`,
     `<button class="btn btn-secondary" data-act="signOut">${ic("logout", "sm")} Sign out</button>`);
   loadTeam();
+};
+/* change your own password while signed in (a forgotten one is reset from the sign-in page) */
+function pwBoxHtml(open) {
+  if (!HOST || !HOST.changePassword) return "";
+  if (!open) return `<button class="btn btn-secondary btn-sm" data-act="pwOpen">${ic("lock", "sm")} Change password</button>`;
+  return `<div class="form-grid"><div class="field"><label class="label" for="pw-new">New password</label><input class="input" id="pw-new" type="password" autocomplete="new-password" minlength="8" maxlength="72"><div class="row-sub" style="margin-top:4px">At least 8 characters.</div></div><div class="field"><label class="label" for="pw-new2">Type it again</label><input class="input" id="pw-new2" type="password" autocomplete="new-password" maxlength="72"></div></div>
+    <div id="pw-msg"></div><div class="hstack gap-8" style="margin-top:12px"><button class="btn btn-secondary btn-sm" data-act="pwCancel">Cancel</button><button class="btn btn-primary btn-sm" data-act="pwSave">Save new password</button></div>`;
+}
+ACT.pwOpen = () => { part("pw-box", pwBoxHtml(true)); const i = $("#pw-new"); if (i) i.focus(); };
+ACT.pwCancel = () => part("pw-box", pwBoxHtml(false));
+ACT.pwSave = (el) => {
+  const a = ($("#pw-new") || {}).value || "", b = ($("#pw-new2") || {}).value || "", msg = (t) => part("pw-msg", `<div class="banner bad" style="margin-top:12px">${ic("alert", "sm")}<span>${esc(t)}</span></div>`);
+  if (a.length < 8) return msg("Choose a password with at least 8 characters.");
+  if (a !== b) return msg("The two passwords are not the same.");
+  el.disabled = true;
+  HOST.changePassword(a).then(() => { part("pw-box", `<div class="banner good">${ic("check", "sm")}<span>Password changed. Use the new one next time you sign in.</span></div>`); toast("Password changed", "check"); })
+    .catch((e) => { el.disabled = false; msg(e && e.code === "same_password" ? "That is your current password. Choose a different one." : e && e.code === "weak_password" ? "That password is too easy to guess. Choose a longer one." : (e && e.message) || "Could not change the password."); });
 };
 function inviteBoxHtml() {
   const r = S.inviteRole || "staff";
@@ -2680,7 +2698,7 @@ function loadTeam() {
 function teamRowHtml(r) {
   const seen = r.last_sign_in ? "last signed in " + fmtDate(String(r.last_sign_in).slice(0, 10)) : "has not signed in yet";
   return `<div class="row" style="flex-wrap:wrap;gap:10px${r.active ? "" : ";opacity:.6"}"><span class="avatar soft">${esc(initials(r.name).slice(0, 1) || "S")}</span><span class="grow" style="min-width:160px"><div class="row-title clip">${esc(r.name)}${r.me ? ` <span class="pill plain" style="height:20px;font-size:11px">You</span>` : ""}</div><div class="row-sub clip">${r.email ? esc(r.email) + " · " : ""}${r.active ? seen : "no access"}</div></span>
-    ${r.me ? `<span class="row-sub">${ROLE_LABEL[r.role]}</span>` : r.active ? `<select class="select sm" style="width:auto" data-in="teamRole" data-id="${esc(r.id)}" aria-label="Role for ${esc(r.name)}">${["owner", "staff", "viewer"].map((x) => `<option value="${x}" ${r.role === x ? "selected" : ""}>${ROLE_LABEL[x]}</option>`).join("")}</select><button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="0">Remove access</button>` : `<span class="row-sub">${ROLE_LABEL[r.role]}</span><button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="1">Give access back</button>`}</div>`;
+    ${r.me ? `<span class="row-sub">${ROLE_LABEL[r.role]}</span>` : r.active ? `<select class="select sm" style="width:auto" data-in="teamRole" data-id="${esc(r.id)}" aria-label="Role for ${esc(r.name)}">${["owner", "staff", "viewer"].map((x) => `<option value="${x}" ${r.role === x ? "selected" : ""}>${ROLE_LABEL[x]}</option>`).join("")}</select>${r.email && HOST.sendReset ? `<button class="btn btn-sm btn-secondary" data-act="teamReset" data-email="${esc(r.email)}" title="Email ${esc(r.name)} a link to choose a new password">Send reset link</button>` : ""}<button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="0">Remove access</button>` : `<span class="row-sub">${ROLE_LABEL[r.role]}</span><button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="1">Give access back</button>`}</div>`;
 }
 const teamName = (id) => ((S.team || []).find((x) => x.id === id) || {}).name || "They";
 IN.teamRole = (el) => {
@@ -2694,6 +2712,11 @@ ACT.teamAccess = (el) => {
   el.disabled = true;
   HOST.setActive(id, on).then(() => { toast(on ? `${teamName(id)} has access again` : `${teamName(id)} can no longer sign in`, on ? "check" : "info"); loadTeam(); })
     .catch((e) => { el.disabled = false; toast((e && e.message) || "Could not change access", "alert"); });
+};
+ACT.teamReset = (el) => {
+  el.disabled = true; const was = el.textContent; el.textContent = "Sending…";
+  HOST.sendReset(el.dataset.email).then((r) => { el.textContent = "Link sent"; toast((r && r.message) || "Reset link sent", "check"); })
+    .catch((e) => { el.disabled = false; el.textContent = was; toast((e && e.message) || "Could not send the link", "alert"); });
 };
 ACT.inviteStaff = (el) => {
   const role = S.inviteRole || "staff"; el.disabled = true;
@@ -2730,7 +2753,7 @@ ACT.cmdRun = (el) => { const it = cmdItems[+el.dataset.i]; closeCmd(); if (it) i
 /* ===== boot ===== */
 function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
-const VIEW_ACTS = new Set("account backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_ACTS = new Set("account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {
