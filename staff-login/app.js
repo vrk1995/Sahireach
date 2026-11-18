@@ -669,6 +669,7 @@ function attention(facts) {
   const bis = typeof backInStock === "function" ? backInStock() : [];
   if (bis.length) out.push({ ic: "box", cls: "good", act: "backInStock", title: `${bis.length} distributor${bis.length > 1 ? "s" : ""} waiting for stock that is back`, sub: [...new Set(bis.flatMap((g) => g.items.map((i) => shortName(i.name).split("(")[0].trim())))].slice(0, 2).join(", ") + " · tap to let them know" });
   { const pb = pendingBack(); if (pb.length) out.push({ ic: "box", cls: "good", act: "pendingBackSheet", title: `${pb.length} pending order${pb.length > 1 ? "s" : ""} can get products that were out of stock`, sub: pb.slice(0, 2).map((g) => shortOf(g.o.dist)).join(", ") + " · tap to refresh the order" }); }
+  if (typeof xferAttention === "function") out.push(...xferAttention());
   if (!SEE_MONEY) return out;
   const runs = typeof unloggedRuns === "function" ? unloggedRuns() : [];
   if (runs.length) out.push({ ic: "truck", cls: "warn", go: "logistics", title: `${runs.length} dispatch${runs.length > 1 ? "es" : ""} without a trip logged`, sub: runs.slice(0, 2).map((r) => fmtDate(r.date) + ": " + runLabel(r)).join(" · ") + " · add km and cost" });
@@ -1636,7 +1637,9 @@ function buildPick() {
   const orders = pickedOrders().sort((a, b) => (a.time > b.time ? 1 : -1)), prod = {};
   orders.forEach((o, ci) => (linesByOrder[o.id] || []).forEach((l) => { if (!(l.crates > 0)) return; const p = (prod[l.sap] = prod[l.sap] || { name: l.product, sap: l.sap, cells: {}, total: 0 }); p.cells[ci] = (p.cells[ci] || 0) + l.crates; p.total += l.crates; }));
   const rows = Object.values(prod).sort((a, b) => a.name.localeCompare(b.name));
-  return { orders, rows, total: rows.reduce((a, r) => a + r.total, 0), made: NOW(), dispatchOn: S.pickDate || addDays(ymd(NOW()), 1) };
+  if (!S.pickQC) { S.pickQC = {}; rows.forEach((r) => { const st = stockBySap[r.sap], q = qcBySap[r.sap]; if (st && st.upc && st.ea < -1e-9 && q && q.crates >= 1) S.pickQC[r.sap] = Math.min(Math.ceil(-st.ea / st.upc - 1e-9), Math.floor(q.crates), Math.floor(r.total)); }); }
+  const qc = {}; rows.forEach((r) => { const q = qcBySap[r.sap], v = Math.min(+(S.pickQC[r.sap] || 0), r.total, q ? Math.floor(q.crates || 0) : 0); if (v > 0) qc[r.sap] = v; });
+  return { orders, rows, total: rows.reduce((a, r) => a + r.total, 0), made: NOW(), dispatchOn: S.pickDate || addDays(ymd(NOW()), 1), qc };
 }
 /* expected dispatch date: tomorrow unless changed; it goes on the Excel, the email and the WhatsApp text */
 const dmyK = (k) => `${k.slice(8, 10)}-${k.slice(5, 7)}-${k.slice(0, 4)}`;
@@ -1647,7 +1650,7 @@ IN.qcPickDate = (el) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(el.value)) return; S.q
 const tropCode = (sap) => (stockBySap[sap] || {}).trop || "";
 function pickTable(P, editing) {
   return `<div class="table-wrap"><table class="t matrix"><thead><tr><th class="sticky-col">Product</th>${P.orders.map((o) => `<th class="vert">${esc(shortOf(o.dist))}<span class="dim" style="font-weight:500"> · ${fmtDate(o.time)}</span></th>`).join("")}<th class="r">Total</th></tr></thead><tbody>
-    ${P.rows.map((r) => `<tr><td class="sticky-col"><div class="clip" style="max-width:240px">${esc(shortName(r.name))}</div><div class="row-sub">${esc(tropCode(r.sap))}</div></td>${P.orders.map((o, ci) => editing && r.cells[ci] ? `<td class="r edit-cell"><input class="pick-in" type="number" inputmode="decimal" min="0" step="1" value="${+r.cells[ci].toFixed(2)}" data-in="pickCell" data-sap="${esc(r.sap)}" data-ci="${ci}" data-was="${r.cells[ci]}" aria-label="${esc(shortName(r.name))}, ${esc(shortOf(o.dist))}"></td>` : `<td class="r">${r.cells[ci] ? nf(r.cells[ci], 2) : `<span class="dim">·</span>`}</td>`).join("")}<td class="r"><b>${nf(r.total, 2)}</b></td></tr>`).join("")}
+    ${P.rows.map((r) => `<tr><td class="sticky-col"><div class="clip" style="max-width:240px">${esc(shortName(r.name))}</div><div class="row-sub">${esc(tropCode(r.sap))}</div></td>${P.orders.map((o, ci) => editing && r.cells[ci] ? `<td class="r edit-cell"><input class="pick-in" type="number" inputmode="decimal" min="0" step="1" value="${+r.cells[ci].toFixed(2)}" data-in="pickCell" data-sap="${esc(r.sap)}" data-ci="${ci}" data-was="${r.cells[ci]}" aria-label="${esc(shortName(r.name))}, ${esc(shortOf(o.dist))}"></td>` : `<td class="r">${r.cells[ci] ? nf(r.cells[ci], 2) : `<span class="dim">·</span>`}</td>`).join("")}<td class="r"><b>${nf(r.total, 2)}</b>${P.qc && P.qc[r.sap] ? `<div class="pill warn" style="height:20px;font-size:11px;margin-top:3px">${nf(P.qc[r.sap])} from QC stock</div>` : ""}</td></tr>`).join("")}
     <tr class="total"><td class="sticky-col">Total crates</td>${P.orders.map((o) => `<td class="r">${nf(o.crates, 2)}</td>`).join("")}<td class="r">${nf(P.total, 2)}</td></tr></tbody></table></div>`;
 }
 function showPick(editing) {
@@ -1658,10 +1661,10 @@ function showPick(editing) {
   const foot = editing
     ? `<button class="btn btn-secondary" data-act="pickEditCancel">Cancel</button><button class="btn btn-primary" data-act="pickEditSave">${ic("check", "sm")} Save changes</button>`
     : `<button class="btn btn-secondary" data-act="pickEdit">${ic("pencil", "sm")} Edit</button><button class="btn btn-secondary" data-act="pickExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="emailPick">${ic("arrowR", "sm")} Email</button><button class="btn btn-secondary" data-act="copyPick">${ic("copy", "sm")} WhatsApp</button><button class="btn btn-primary" data-act="dispatchNow">${ic("truck", "sm")} Mark dispatched</button>`;
-  openSheet(editing ? "Edit pick list" : "Pick list for Tropicana", head + (editing ? note : "") + pickTable(P, editing) + (editing ? "" : note), foot, true);
+  openSheet(editing ? "Edit pick list" : "Pick list for Tropicana", `<div id="xfer-confirm"></div>` + head + (editing ? note : "") + pickTable(P, editing) + (editing ? "" : note + pickQCHtml(P)), foot, true);
 }
 ACT.makePick = () => {
-  S.pickDate = null; const P = buildPick(); if (!P.orders.length) return;
+  S.pickDate = null; S.pickQC = null; const P = buildPick(); if (!P.orders.length) return;
   S.pickList = P;
   logActivity("Pick list made", `${P.orders.length} order(s)`, `${P.rows.length} products, ${nf(P.total, 2)} crates`);
   showPick(false);
@@ -1735,19 +1738,19 @@ async function downloadBook(el, sheets, file) {
 }
 const stampOf = (d) => `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)}-${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 function pickAoa(P, opt) {
-  const stampTxt = stampOf(P.made || NOW()), names = P.orders.map((o) => shortOf(o.dist));
+  const stampTxt = stampOf(P.made || NOW()), names = P.orders.map((o) => shortOf(o.dist)), hasQC = P.qc && Object.keys(P.qc).length > 0;
   const aoa = [
     ["PICK LIST FOR TROPICANA LOGISTICS, WILLINGDON ISLAND  (SahiReach LLP)"],
     ["Orders in this pick list", `${P.orders.length} order(s): ${P.orders.map((o) => o.id).join(", ")}   |   generated ${stampTxt}`],
     ["Expected dispatch date", dmyK(P.dispatchOn || addDays(ymd(NOW()), 1))],
-    [],
-    ["Tropicana Code", "SKU"].concat(names, ["TOTAL CRATES"]),
+    hasQC ? ["NOTE", "Some crates are picked from QUICK COMMERCE STOCK, not SahiReach stock: see the last two columns."] : [],
+    ["Tropicana Code", "SKU"].concat(names, ["TOTAL CRATES"], hasQC ? ["OF WHICH FROM QC STOCK", "QC STOCK CODE"] : []),
     ["", "Order date/time"].concat(P.orders.map((o) => { const d = toDate(o.time); return `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }), [""]),
   ];
-  P.rows.forEach((r) => aoa.push([tropCode(r.sap), r.name].concat(P.orders.map((o, ci) => (r.cells[ci] ? +r.cells[ci].toFixed(2) : null)), [+r.total.toFixed(2)])));
-  aoa.push(["", "TOTAL CRATES"].concat(P.orders.map((o) => +o.crates.toFixed(2)), [+P.total.toFixed(2)]));
+  P.rows.forEach((r) => aoa.push([tropCode(r.sap), r.name].concat(P.orders.map((o, ci) => (r.cells[ci] ? +r.cells[ci].toFixed(2) : null)), [+r.total.toFixed(2)], hasQC ? [P.qc[r.sap] || null, P.qc[r.sap] ? (qcBySap[r.sap] || {}).trop || "" : ""] : [])));
+  aoa.push(["", "TOTAL CRATES"].concat(P.orders.map((o) => +o.crates.toFixed(2)), [+P.total.toFixed(2)], hasQC ? [Object.values(P.qc).reduce((a, x) => a + x, 0), ""] : []));
   if (!(opt && opt.noVehicle)) { aoa.push([]); aoa.push(["Vehicle", (vehicleFor(P.total) || "").replace(/\s*\(.*\)/, "")]); }
-  return { rows: aoa, cols: [14, 46].concat(names.map((n) => Math.max(9, Math.min(22, n.length + 2))), [14]), stampTxt, names };
+  return { rows: aoa, cols: [14, 46].concat(names.map((n) => Math.max(9, Math.min(22, n.length + 2))), [14], hasQC ? [16, 18] : []), stampTxt, names };
 }
 ACT.pickExcel = async (el) => {
   const P = S.pickList; if (!P) return;
@@ -1758,7 +1761,7 @@ ACT.pickExcel = async (el) => {
 };
 ACT.copyPick = () => {
   const P = S.pickList; if (!P) return;
-  const txt = `SahiReach pick list (${fmtDT(NOW())})\nExpected dispatch: ${dateLong(P.dispatchOn)}\n${P.orders.length} orders, ${nf(P.total, 2)} crates\n\n` + P.orders.map((o, ci) => `*${shortOf(o.dist)}* (${nf(o.crates, 2)} crates)\n` + P.rows.filter((r) => r.cells[ci]).map((r) => `  ${nf(r.cells[ci], 2)} x ${shortName(r.name)}`).join("\n")).join("\n\n");
+  const txt = `SahiReach pick list (${fmtDT(NOW())})\nExpected dispatch: ${dateLong(P.dispatchOn)}\n${P.orders.length} orders, ${nf(P.total, 2)} crates\n\n` + P.orders.map((o, ci) => `*${shortOf(o.dist)}* (${nf(o.crates, 2)} crates)\n` + P.rows.filter((r) => r.cells[ci]).map((r) => `  ${nf(r.cells[ci], 2)} x ${shortName(r.name)}`).join("\n")).join("\n\n") + (P.qc && Object.keys(P.qc).length ? `\n\n*PICK THESE FROM QUICK COMMERCE STOCK* (not SahiReach stock):\n` + Object.keys(P.qc).map((sap) => `  ${nf(P.qc[sap])} x ${shortName((stockBySap[sap] || qcBySap[sap] || { name: sap }).name)}${(qcBySap[sap] || {}).trop ? " (" + qcBySap[sap].trop + ")" : ""}`).join("\n") : "");
   copyText(txt, "Pick list copied. Paste it into WhatsApp");
 };
 ACT.dispatchAsk = () => { const sel = pickedOrders(); part("dispatch-confirm", `<div class="confirm" style="margin-top:12px;background:var(--tint-soft);color:var(--tint)"><span><b>Has the truck left?</b> ${sel.length} order${sel.length > 1 ? "s" : ""} will be locked.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="dispatchNo">Not yet</button><button class="btn btn-sm btn-primary" data-act="dispatchNow">Yes, dispatched</button></span></div>`); };
@@ -1844,7 +1847,7 @@ function showQCPick(editing) {
   const foot = editing
     ? `<button class="btn btn-secondary" data-act="qcPickReset">Use the suggested crates</button><button class="btn btn-secondary" data-act="qcPick">Cancel</button><button class="btn btn-primary" data-act="qcPickSave">${ic("check", "sm")} Save changes</button>`
     : `<button class="btn btn-secondary" data-act="qcPickEdit">${ic("pencil", "sm")} Edit</button><button class="btn btn-secondary" data-act="qcPickExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="emailQCPick">${ic("arrowR", "sm")} Email</button><button class="btn btn-secondary" data-act="qcPickCopy">${ic("copy", "sm")} WhatsApp</button><button class="btn btn-primary" data-act="qcDeliver" ${Dl.crates ? "" : "disabled"}>${ic("truck", "sm")} Mark delivered</button>`;
-  openSheet(editing ? `Edit ${esc(S.qcPlatform)} pick list` : `${esc(S.qcPlatform)} pick list for Tropicana`, head + note + qcPickTable(Dl, editing), foot, true);
+  openSheet(editing ? `Edit ${esc(S.qcPlatform)} pick list` : `${esc(S.qcPlatform)} pick list for Tropicana`, `<div id="xfer-confirm"></div>` + head + note + qcPickTable(Dl, editing), foot, true);
 }
 ACT.qcPick = () => { showQCPick(false); };
 ACT.qcPickEdit = () => showQCPick(true);
@@ -1870,11 +1873,11 @@ function qcPickAoa(Dl) {
     ["Expected dispatch date", dmyK(qcDispatchOn())],
     ["Generated", stampTxt],
     [],
-    ["Tropicana Code", "Product", "SAP Code", "Pieces Ordered", "Pieces per Crate", "From QC Stock (crates)", "From SahiReach Stock (crates)", "Crates to Send", "Pieces to Send", "Not Sent (pieces)", "Value to Send excl. GST (Rs)"],
+    ["Tropicana SKU Code", "Product", "Crates from QC Stock", "Crates from SahiReach Stock", "Total Crates to Pick and Send"],
   ];
-  Dl.rows.forEach((r) => aoa.push([tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "", r.name, r.sap, r.pcs, r.ppc, r.fromQC, r.fromOwn, r.send, r.sendPcs, r.notSent, Math.round(r.sendValue * 100) / 100]));
-  aoa.push(["", "TOTAL", "", Dl.rows.reduce((a, r) => a + r.pcs, 0), "", Dl.rows.reduce((a, r) => a + r.fromQC, 0), Dl.rows.reduce((a, r) => a + r.fromOwn, 0), Dl.crates, Dl.rows.reduce((a, r) => a + r.sendPcs, 0), Dl.rows.reduce((a, r) => a + r.notSent, 0), Math.round(Dl.value * 100) / 100]);
-  return { rows: aoa, cols: [16, 44, 11, 10, 10, 14, 16, 10, 10, 10, 16], stampTxt };
+  Dl.rows.filter((r) => r.send).forEach((r) => aoa.push([tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "", r.name, r.fromQC, r.fromOwn, r.send]));
+  aoa.push(["", "TOTAL", Dl.rows.reduce((a, r) => a + r.fromQC, 0), Dl.rows.reduce((a, r) => a + r.fromOwn, 0), Dl.crates]);
+  return { rows: aoa, cols: [18, 46, 14, 18, 18], stampTxt };
 }
 ACT.qcPickExcel = async (el) => {
   const Dl = qcDelivery(), A = qcPickAoa(Dl);
@@ -2094,7 +2097,7 @@ VIEWS.stock = () => {
   const cats = ["All", "In stock", "Below reorder", "Out of stock", ...Array.from(new Set(own.map((s) => s.cat).filter(Boolean))).sort()];
   const tab = S.stockTab;
   const body = tab === "own" ? `<div class="hstack gap-12 wrap"><div class="search">${ic("search", "sm")}<input class="input" id="stock-q" type="search" placeholder="Search by name, SAP or Tropicana code" value="${esc(S.stockQ)}" data-in="stockQ" autocomplete="off"></div></div><div class="chips">${cats.map((c) => `<button class="chip" data-act="stockCat" data-cat="${esc(c)}" aria-pressed="${S.stockCat === c}">${esc(c)}</button>`).join("")}</div><div id="stock-grid">${ownStockGrid()}</div>`
-    : tab === "qc" ? `<div class="banner info">${ic("info", "sm")}<span>One stock shared by Swiggy and Zepto, in crates. Deliveries take it down, QC purchases add to it.</span></div>${qcStockGrid()}`
+    : tab === "qc" ? `<div class="banner info">${ic("info", "sm")}<span>One stock shared by Swiggy and Zepto, in crates. Deliveries take it down, QC purchases add to it.</span></div>${(D.transfers || []).length ? `<button class="row" style="border-radius:var(--r-lg);background:var(--surface)" data-act="xferSheet"><span class="attn-ic ${xferPending().length ? "warn" : "tint"}">${ic("doc")}</span><span class="grow"><div class="row-title">Stock moved between SahiReach and quick commerce</div><div class="row-sub">${xferPending().length ? xferPending().length + " credit note / purchase invoice pending" : "All credit notes and purchase invoices entered"} · ${(D.transfers || []).length} in all</div></span>${ic("chevR", "sm chev")}</button>` : ""}${qcStockGrid()}`
     : tab === "damaged" ? `<div class="group"><div class="empty"><div class="big">No damaged stock</div>Returns marked Damaged wait here until you send them back to Hangyo or claim them.</div></div>`
     : tab === "slow" ? slowHtml()
     : tab === "purchases" ? purchasesHtml() : missedHtml();
@@ -2942,7 +2945,7 @@ ACT.cmdRun = (el) => { const it = cmdItems[+el.dataset.i]; closeCmd(); if (it) i
 /* ===== boot ===== */
 function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
-const VIEW_ACTS = new Set("stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_ACTS = new Set("xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {
@@ -3247,7 +3250,8 @@ function bisEmail(g) {
 }
 /* ---------- 4. pick lists to Tropicana ---------- */
 const pickKey = (P) => P.orders.map((o) => o.id).sort().join("|");
-const pickHash = (P) => JSON.stringify(P.rows.map((r) => [r.sap, Object.values(r.cells).map((c) => +c.toFixed(2))])) + (P.dispatchOn || "");
+const pickHash = (P) => JSON.stringify(P.rows.map((r) => [r.sap, Object.values(r.cells).map((c) => +c.toFixed(2))])) + (P.dispatchOn || "") + (P.qc && Object.keys(P.qc).length ? JSON.stringify(P.qc) : "");
+const pickQCList = (P) => Object.keys(P.qc || {}).map((sap) => ({ sap, n: P.qc[sap], name: (stockBySap[sap] || qcBySap[sap] || { name: sap }).name, code: (qcBySap[sap] || {}).trop || "" }));
 function pickEmail(P, xlsxB64) {
   D.pickSent = D.pickSent || {};
   const prev = D.pickSent[pickKey(P)], revised = !!prev && prev.hash !== pickHash(P), made = P.made || NOW();
@@ -3256,10 +3260,11 @@ function pickEmail(P, xlsxB64) {
     heading: revised ? "Revised pick list" : "Pick list for dispatch",
     paras: ["Hi Tropicana team,", revised ? `<b>This replaces the pick list we sent on ${fmtDT(prev.at)}.</b> Please pick from this one.` : `Please pick the following for dispatch. The Excel sheet is attached.`],
     blocks: [factsE([["Expected dispatch", escE(dateLong(P.dispatchOn || ymd(made)))], ["Orders", nf(P.orders.length)], ["Crates", nf(P.total, 2)]]),
+      ...(pickQCList(P).length ? [`<div style="margin:0 0 6px;padding:10px 12px;border-radius:10px;background:#fff4e5;color:#8a4b00;font:600 14px/1.45 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">Please pick these from QUICK COMMERCE stock, not SahiReach stock:</div>` + tableE(["Product", "QC stock code", "Crates from QC stock"], pickQCList(P).map((x) => [escE(shortName(x.name)), escE(x.code || "–"), `<b>${nf(x.n)}</b>`]))] : []),
       ...P.orders.map((o, ci) => `<div style="margin:0 0 6px;font:700 14px/1.4 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${EM.ink}">${escE(shortOf(o.dist))} <span style="font-weight:400;color:${EM.ink3}">· ${nf(o.crates, 2)} crates</span></div>` + tableE(["Product", "Code", "Crates"], P.rows.filter((r) => r.cells[ci]).map((r) => [escE(shortName(r.name)), escE(tropCode(r.sap) || "–"), `<b>${nf(r.cells[ci], 2)}</b>`])))],
     signoff: "Thank you,",
   });
-  return { kind: "pick_list", ref: pickKey(P).slice(0, 120), to: emails(D.qcPick.tropEmail), cc: [], subject: `${revised ? "REVISED · " : ""}SahiReach pick list for dispatch ${dmyK(P.dispatchOn || ymd(made)).slice(0, 5)} · ${P.orders.length} orders · ${nf(P.total, 2)} crates`, html, text: textOf(["Hi Tropicana team,", "", revised ? "REVISED pick list, replaces the earlier one." : "Pick list for dispatch (Excel attached):", `Expected dispatch: ${dateLong(P.dispatchOn || ymd(made))}`, "", ...P.orders.map((o, ci) => `${shortOf(o.dist)} (${nf(o.crates, 2)} crates)\n` + P.rows.filter((r) => r.cells[ci]).map((r) => `  ${nf(r.cells[ci], 2)} x ${shortName(r.name)} ${tropCode(r.sap) ? "(" + tropCode(r.sap) + ")" : ""}`).join("\n")), "", "Team SahiReach"]), attachments: xlsxB64 ? [{ filename: `SahiReach pick list ${stampOf(made).replace(":", "")}.xlsx`, content: xlsxB64 }] : [], revised, onSent: () => { D.pickSent[pickKey(P)] = { at: iso(NOW()), hash: pickHash(P) }; } };
+  return { kind: "pick_list", ref: pickKey(P).slice(0, 120), to: emails(D.qcPick.tropEmail), cc: [], subject: `${revised ? "REVISED · " : ""}SahiReach pick list for dispatch ${dmyK(P.dispatchOn || ymd(made)).slice(0, 5)} · ${P.orders.length} orders · ${nf(P.total, 2)} crates`, html, text: textOf(["Hi Tropicana team,", "", revised ? "REVISED pick list, replaces the earlier one." : "Pick list for dispatch (Excel attached):", `Expected dispatch: ${dateLong(P.dispatchOn || ymd(made))}`, ...(pickQCList(P).length ? ["", "PICK FROM QUICK COMMERCE STOCK (not SahiReach stock):", ...pickQCList(P).map((x) => `  ${nf(x.n)} x ${shortName(x.name)}${x.code ? " (" + x.code + ")" : ""}`)] : []), "", ...P.orders.map((o, ci) => `${shortOf(o.dist)} (${nf(o.crates, 2)} crates)\n` + P.rows.filter((r) => r.cells[ci]).map((r) => `  ${nf(r.cells[ci], 2)} x ${shortName(r.name)} ${tropCode(r.sap) ? "(" + tropCode(r.sap) + ")" : ""}`).join("\n")), "", "Team SahiReach"]), attachments: xlsxB64 ? [{ filename: `SahiReach pick list ${stampOf(made).replace(":", "")}.xlsx`, content: xlsxB64 }] : [], revised, onSent: () => { D.pickSent[pickKey(P)] = { at: iso(NOW()), hash: pickHash(P) }; } };
 }
 function qcPickEmail(Dl, xlsxB64) {
   const to = S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo, now = NOW();
@@ -3679,6 +3684,109 @@ ACT.pendingBackSheet = (el) => {
     <div class="group">${groups.map((g) => `<div class="row" style="align-items:flex-start"><span class="grow"><div class="row-title clip">${esc(g.o.dist)}</div><div class="row-sub"><span class="mono">${esc(g.o.id)}</span> · saved ${fmtDate(g.o.time)}</div><div class="row-sub" style="margin-top:4px">${g.items.map((i) => esc(shortName(i.name)) + (i.want != null ? ` (${nf(i.want, 1)} cr missed)` : "")).join(", ")}</div></span><span class="row-end"><button class="btn btn-sm btn-primary" data-act="refreshOrder" data-id="${esc(g.o.id)}">Refresh order</button></span></div>`).join("")}</div>`,
     backInStock().length ? `<button class="btn btn-secondary" data-act="closeSheet">Later</button><button class="btn btn-secondary" data-act="backInStock">Next: tell other distributors</button>` : `<button class="btn btn-secondary" data-act="closeSheet">Later</button>`);
 };
+
+/* ===== STOCK MOVED BETWEEN SAHIREACH STOCK AND QUICK COMMERCE STOCK =====
+   SahiReach stock sent with a Swiggy/Zepto delivery  -> a CREDIT NOTE has to be made.
+   Quick commerce stock used for distributor orders    -> a PURCHASE INVOICE is pending.
+   Both ask for confirmation before the pick list goes out, and stay on Home until the document is entered. */
+const XFER = {
+  credit: { doc: "Credit note", what: "SahiReach stock sent with Swiggy / Zepto deliveries", from: "SahiReach stock", to: "quick commerce" },
+  purchase: { doc: "Purchase invoice", what: "Quick commerce stock used for distributor orders", from: "quick commerce stock", to: "SahiReach" },
+};
+const xferPending = (kind) => (D.transfers || []).filter((t) => t.status === "Pending" && (!kind || t.kind === kind));
+const xferEst = (t) => t.lines.reduce((a, l) => { const st = stockBySap[l.sap] || qcBySap[l.sap] || {}, r = ssRate(l.sap); return a + (r != null ? l.crates * (st.upc || 0) * r : 0); }, 0);
+function xferAdd(kind, ref, lines) {
+  D.transfers = D.transfers || [];
+  const base = "TRF-" + stamp(NOW()); let id = base, k = 1; while (D.transfers.some((t) => t.id === id)) id = base + "-" + ++k;
+  const t = { id, time: iso(NOW()), kind, ref, lines: lines.map((l) => ({ sap: l.sap, name: l.name, crates: l.crates })), crates: lines.reduce((a, l) => a + l.crates, 0), status: "Pending" };
+  D.transfers.unshift(t);
+  logActivity(kind === "credit" ? "Credit note needed" : "Purchase invoice pending", id, `${nf(t.crates)} crates of ${XFER[kind].from} · ${ref}`);
+  return t;
+}
+function xferAttention() {
+  return ["credit", "purchase"].map((kind) => {
+    const L = xferPending(kind); if (!L.length) return null;
+    const cr = L.reduce((a, t) => a + t.crates, 0);
+    return { ic: "doc", cls: "warn", act: "xferSheet", title: kind === "credit" ? `Make the credit note: ${nf(cr)} crate${cr === 1 ? "" : "s"} of SahiReach stock went to Swiggy / Zepto` : `Purchase invoice pending: ${nf(cr)} crate${cr === 1 ? "" : "s"} of quick commerce stock used for distributors`, sub: `${L.length} pending since ${fmtDate(L[L.length - 1].time)} · tap to enter the ${XFER[kind].doc.toLowerCase()}` };
+  }).filter(Boolean);
+}
+function xferCard(t) {
+  const est = SEE_MONEY ? xferEst(t) : 0, today = ymd(NOW());
+  return `<div class="card card-pad"><div class="hstack between wrap gap-8"><div><div class="card-title">${XFER[t.kind].doc} ${t.status === "Pending" ? `<span class="pill warn" style="height:22px;font-size:12px">Pending</span>` : `<span class="pill good" style="height:22px;font-size:12px">Done</span>`}</div><div class="row-sub">${esc(XFER[t.kind].what)} · ${fmtDT(t.time)} · ${esc(t.ref || "")}</div></div><div class="row-value">${nf(t.crates)} crates</div></div>
+    <div class="row-sub" style="margin-top:8px">${t.lines.map((l) => `${nf(l.crates)} × ${esc(shortName(l.name))}`).join(" · ")}${SEE_MONEY && est ? ` · about <b>${rs(est)}</b> at the SS rate` : ""}</div>
+    ${t.status === "Pending" ? `<div class="form-grid" style="margin-top:12px"><div class="field"><label class="label" for="xf-no-${t.id}">${XFER[t.kind].doc} number</label><input class="input" id="xf-no-${t.id}" placeholder="e.g. ${t.kind === "credit" ? "CN-0012" : "PI-0045"}"></div><div class="field"><label class="label" for="xf-dt-${t.id}">Date</label><input class="input" type="date" id="xf-dt-${t.id}" value="${today}"></div>${SEE_MONEY ? `<div class="field"><label class="label" for="xf-amt-${t.id}">Amount (₹)</label><input class="input num-in" type="number" min="0" step="0.01" inputmode="decimal" id="xf-amt-${t.id}" placeholder="${est ? Math.round(est * 100) / 100 : "0.00"}"></div>` : ""}</div>
+      <div id="xf-err-${t.id}"></div><div style="margin-top:12px"><button class="btn btn-primary btn-sm" data-act="xferSave" data-id="${t.id}">${ic("check", "sm")} Save ${XFER[t.kind].doc.toLowerCase()}</button></div>`
+    : `<div class="row-sub" style="margin-top:8px">${esc(XFER[t.kind].doc)} <b>${esc(t.docNo || "")}</b> · ${t.docDate ? fmtDate(t.docDate) : ""}${SEE_MONEY && t.amount != null ? " · " + rs2(t.amount) : ""}${t.doneBy ? " · entered by " + esc(t.doneBy) : ""}</div>`}</div>`;
+}
+ACT.xferSheet = () => {
+  const all = D.transfers || [], pend = all.filter((t) => t.status === "Pending"), done = all.filter((t) => t.status !== "Pending").slice(0, 15);
+  openSheet("Stock moved between SahiReach and quick commerce", `<div class="banner info">${ic("info", "sm")}<span><b>SahiReach stock → Swiggy / Zepto:</b> make a credit note. <b>Quick commerce stock → distributors:</b> a purchase invoice is pending. Enter each one here and it comes off the Home page.</span></div>
+    ${pend.length ? `<div class="stack gap-12">${pend.map(xferCard).join("")}</div>` : `<div class="group"><div class="empty"><div class="big">Nothing pending</div>Every credit note and purchase invoice has been entered.</div></div>`}
+    ${done.length ? `<div><div class="group-label"><span>Done</span></div><div class="stack gap-12">${done.map(xferCard).join("")}</div></div>` : ""}`, `<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
+};
+ACT.xferSave = (el) => {
+  const t = (D.transfers || []).find((x) => x.id === el.dataset.id); if (!t) return;
+  const no = (($("#xf-no-" + t.id) || {}).value || "").trim(), dt = ($("#xf-dt-" + t.id) || {}).value || "", amtEl = $("#xf-amt-" + t.id), amt = amtEl ? numOrNull(amtEl.value) : null;
+  const err = (m) => part("xf-err-" + t.id, `<div class="banner bad" style="margin-top:10px">${ic("alert", "sm")}<span>${esc(m)}</span></div>`);
+  if (!no) return err(`Enter the ${XFER[t.kind].doc.toLowerCase()} number.`);
+  if (!dt) return err("Enter the date.");
+  if (amtEl && !(amt > 0)) return err("Enter the amount.");
+  Object.assign(t, { status: "Done", docNo: no, docDate: dt, amount: amt, doneAt: iso(NOW()), doneBy: ME.name });
+  logActivity(t.kind === "credit" ? "Credit note entered" : "Purchase invoice entered", no, `${nf(t.crates)} crates · ${t.ref || ""}`);
+  render(); ACT.xferSheet(); toast(`${XFER[t.kind].doc} ${no} saved`);
+};
+
+/* ---------- distributor pick list: take some crates from quick commerce stock ---------- */
+function pickQCHtml(P) {
+  const rows = P.rows.map((r) => { const st = stockBySap[r.sap], q = qcBySap[r.sap]; return { r, st, q, qcCr: q ? Math.floor(q.crates || 0) : 0, short: st && st.upc && st.ea < -1e-9 ? -st.ea / st.upc : 0 }; }).filter((x) => x.qcCr >= 1);
+  if (!rows.length) return "";
+  const shortN = rows.filter((x) => x.short > 0).length, open = S.pickQCAll || shortN || Object.keys(P.qc || {}).length, shown = S.pickQCAll ? rows : rows.filter((x) => x.short > 0 || (P.qc || {})[x.r.sap]);
+  return `<div class="card card-pad" style="margin-top:4px"><div class="hstack between wrap gap-8"><div><div class="card-title">Take from quick commerce stock</div><div class="row-sub">Crates taken here come off quick commerce stock and go to these distributors. A purchase invoice to SahiReach is then pending.</div></div>${!S.pickQCAll ? `<button class="btn btn-sm btn-secondary" data-act="pickQCAll">${open ? "Show all" : "Choose products"} (${rows.length})</button>` : ""}</div>
+    ${shortN ? `<div class="banner warn" style="margin-top:12px">${ic("alert", "sm")}<span>SahiReach stock is short for ${shortN} product${shortN > 1 ? "s" : ""}. Quick commerce stock is filled in for ${shortN > 1 ? "them" : "it"}; change it if needed.</span></div>` : ""}
+    ${shown.length ? `<div class="group" style="margin-top:12px">${shown.map((x) => `<div class="row" style="flex-wrap:wrap;gap:10px"><span class="grow" style="min-width:180px"><div class="row-title clip">${esc(shortName(x.r.name))}</div><div class="row-sub">Needed ${nf(x.r.total, 2)} · quick commerce has ${nf(x.qcCr)}${x.short > 0 ? ` · <span style="color:var(--warn);font-weight:600">SahiReach short by ${nf(x.short, 2)}</span>` : ""}${x.q.trop ? " · " + esc(x.q.trop) : ""}</div></span><span class="row-end"><input class="input sm num-in" style="width:76px" type="number" min="0" max="${Math.min(x.qcCr, Math.floor(x.r.total))}" step="1" value="${(P.qc || {})[x.r.sap] || 0}" data-in="pickQC" data-sap="${esc(x.r.sap)}" aria-label="Crates of ${esc(shortName(x.r.name))} from quick commerce stock"><span class="muted" style="font-size:13px">from QC</span></span></div>`).join("")}</div>` : ""}</div>`;
+}
+ACT.pickQCAll = () => { S.pickQCAll = true; showPick(false); };
+IN.pickQC = (el) => {
+  S.pickQC = S.pickQC || {}; const max = +el.max || 0; let v = Math.max(0, Math.floor(+el.value || 0)); if (v > max) { v = max; el.value = max; }
+  S.pickQC[el.dataset.sap] = v; const keepDate = S.pickList && S.pickList.dispatchOn; S.pickList = buildPick(); if (keepDate) S.pickList.dispatchOn = keepDate;
+  const t = $("#sheet .table-wrap"); if (t) t.outerHTML = pickTable(S.pickList, false);
+};
+
+/* ---------- confirm before a pick list goes out when stock crosses over ---------- */
+function xferList(kind) {
+  if (kind === "gt") { const P = S.pickList; return P && pickKey(P) === pickedOrders().map((o) => o.id).sort().join("|") ? pickQCList(P).map((x) => ({ name: x.name, n: x.n })) : []; }
+  return qcDelivery().rows.filter((r) => r.fromOwn > 0).map((r) => ({ name: r.name, n: r.fromOwn }));
+}
+function xferGuard(kind, next) {
+  const list = xferList(kind); if (!list.length) return true;
+  const sig = kind + JSON.stringify(list); if (S.xferOK === sig) return true;
+  const target = ["xfer-confirm", "qc-confirm", "dispatch-confirm"].find((id) => document.getElementById(id) && (id !== "xfer-confirm" || sheetOpen)); if (!target) return true;
+  const n = list.reduce((a, x) => a + x.n, 0);
+  part(target, `<div class="banner warn" style="flex-wrap:wrap;margin-bottom:12px"><span class="grow" style="min-width:220px">${ic("alert", "sm")} <b>${kind === "qc" ? `${nf(n)} crate${n === 1 ? "" : "s"} will come from SahiReach stock` : `${nf(n)} crate${n === 1 ? "" : "s"} will come from quick commerce stock`}:</b> ${list.map((x) => `${nf(x.n)} × ${esc(shortName(x.name))}`).join(", ")}. ${kind === "qc" ? "A credit note will have to be made, and Home will remind you until it is entered." : "A purchase invoice will be pending, and Home will remind you until it is entered."}</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="xferNo" data-t="${target}">Go back</button><button class="btn btn-sm btn-primary" data-act="xferOK" data-sig="${esc(sig)}" data-next="${next}" data-t="${target}">Yes, continue</button></span></div>`);
+  const el = document.getElementById(target); if (el) el.scrollIntoView({ block: "nearest" });
+  return false;
+}
+ACT.xferNo = (el) => part(el.dataset.t, "");
+ACT.xferOK = (el) => { S.xferOK = el.dataset.sig; part(el.dataset.t, ""); const f = ACT[el.dataset.next]; if (f) f({ dataset: {} }); };
+/* what happens when the stock actually moves */
+{
+  const dn = ACT.dispatchNow;
+  ACT.dispatchNow = (el, e) => {
+    const sel = pickedOrders(), P = S.pickList, moves = P && P.qc && pickKey(P) === sel.map((o) => o.id).sort().join("|") ? pickQCList(P) : [];
+    dn(el, e);
+    if (!moves.length) return;
+    moves.forEach((m) => { const q = qcBySap[m.sap], st = stockBySap[m.sap]; if (q) { q.crates = (q.crates || 0) - m.n; q.ea = q.crates * (q.upc || 1); q.move = `${nf(m.n)} crates used for distributor dispatch`; } if (st && st.upc) { st.ea += m.n * st.upc; st.crates = st.ea / st.upc; st.pcs = st.ea * (st.ppe || 1); st.move = `${nf(m.n)} crates taken from quick commerce stock for dispatch`; } });
+    xferAdd("purchase", `Dispatch to ${sel.map((o) => shortOf(o.dist)).join(", ")}`, moves.map((m) => ({ sap: m.sap, name: m.name, crates: m.n })));
+    S.pickQC = null; S.xferOK = null; render();
+  };
+  const qd = ACT.qcDeliver;
+  ACT.qcDeliver = (el, e) => {
+    const Dl = qcDelivery(), own = Dl.rows.filter((r) => r.fromOwn > 0).map((r) => ({ sap: r.sap, name: r.name, crates: r.fromOwn })), plat = S.qcPlatform, pos = Dl.pos.map((p) => p.po).join(", ");
+    qd(el, e);
+    if (own.length && Dl.crates) { xferAdd("credit", `${plat} delivery · PO ${pos}`, own); S.xferOK = null; render(); }
+  };
+  [["emailPick", "gt"], ["copyPick", "gt"], ["dispatchNow", "gt"], ["emailQCPick", "qc"], ["qcPickCopy", "qc"], ["qcDeliver", "qc"], ["qcDeliverAsk", "qc"]].forEach(([a, k]) => { const f = ACT[a]; if (!f) return; ACT[a] = (el, e) => { if (!xferGuard(k, a)) return; return f(el, e); }; });
+}
 
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
 (function buildShell() {
