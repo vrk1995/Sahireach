@@ -2091,7 +2091,7 @@ VIEWS.stock = () => {
     : tab === "slow" ? slowHtml()
     : tab === "purchases" ? purchasesHtml() : missedHtml();
   return `<div class="page">
-    <div class="page-head"><div><h1 class="title">Stock</h1><div class="subtitle">What is in Tropicana right now, what came in, and what you ran out of.</div></div><div class="head-actions"><button class="btn btn-primary" data-act="receiveSheet">${ic("plus", "sm")} Receive stock</button></div></div>
+    <div class="page-head"><div><h1 class="title">Stock</h1><div class="subtitle">What is in Tropicana right now, what came in, and what you ran out of.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="stockNewProd">${ic("plus", "sm")} Add product</button><button class="btn btn-primary" data-act="receiveSheet">${ic("plus", "sm")} Receive stock</button></div></div>
     <div class="tiles"><div class="tile"><div class="tile-label">Own stock</div><div class="tile-value">${nf(crates, 0)}<small>crates</small></div><div class="tile-sub">${inStock} of ${own.length} products in stock</div></div>${SEE_MONEY ? `<div class="tile"><div class="tile-label">Own stock at cost</div><div class="tile-value">₹${lakh(cost)}<small>L</small></div><div class="tile-sub">At the super stockist rate</div></div>` : ""}<div class="tile"><div class="tile-label">Quick commerce stock</div><div class="tile-value">${nf(qcCr, 0)}<small>crates</small></div><div class="tile-sub">Shared by Swiggy and Zepto</div></div><button class="tile" data-act="stockLow"><div class="tile-label"><span>Below reorder point</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--bad)">${low}</div><div class="tile-sub">Hero and Core products to reorder</div></button>${(() => { const T = slowSum(slowRows()); return `<button class="tile tile-wide-sm" data-act="slowList"><div class="tile-label"><span>Slow moving</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--warn)">${T.n}</div><div class="tile-sub">${SEE_MONEY ? `₹${lakh(T.value)} L tied up · ` : ""}${nf(T.crates, 0)} crates to push</div></button>`; })()}</div>
     ${seg("stockTab", tab, [["own", "Own stock"], ["slow", "Slow moving"], ["qc", "Quick commerce"], ["damaged", "Damaged"], ["purchases", "Purchases"], ["missed", "Missed sales"]])}
     ${body}</div>`;
@@ -2116,25 +2116,57 @@ ACT.purchaseSheet = (el) => {
   openSheet(g.inv ? "Invoice " + esc(g.inv) : esc(g.supplier), `<div class="card card-pad"><div class="kv"><div><div class="k">Supplier</div><div class="v">${esc(g.supplier)}</div></div><div><div class="k">Invoice date</div><div class="v">${fmtDate(g.invDate)}</div></div><div><div class="k">Added to</div><div class="v">${esc(g.pool)}</div></div>${SEE_MONEY ? `<div><div class="k">Value excl. GST</div><div class="v num">${rs2(lines.reduce((a, l) => a + (l.value || 0), 0))}</div></div>` : ""}</div><div class="row-sub mono" style="margin-top:12px">${esc(g.id)} · saved ${fmtDT(g.time)}</div></div>
     <div><div class="group-label"><span>${lines.length} lines</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0), 1)} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crates · ${nf(l.ea)} boxes${SEE_MONEY ? ` × ${rs2(l.rate)}` : ""}${l.batch ? " · batch " + esc(l.batch) : ""}${l.isNew === "Yes" ? " · new SKU" : ""}</div></span>${SEE_MONEY ? `<span class="row-end"><span class="row-value">${rs(l.value)}</span></span>` : ""}</div>`).join("")}</div></div>`);
 };
+/* the price per box used for a received line: the invoice's own rate when the file had one, else your SS rate */
+const recvRate = (l) => (l.fileRate != null ? l.fileRate : ssRate(l.sap) != null ? ssRate(l.sap) : (stockBySap[l.sap] || {}).cost != null ? stockBySap[l.sap].cost : null);
+const recvBoxes = (l) => (l.boxes != null ? l.boxes : Math.round(l.crates * (l.upc || 0) * 100) / 100);
+function recvTotals() {
+  const L = S.recv.lines.filter((l) => l.crates > 0);
+  return { n: L.length, crates: L.reduce((a, l) => a + l.crates, 0), boxes: L.reduce((a, l) => a + recvBoxes(l), 0), value: L.reduce((a, l) => a + recvBoxes(l) * (recvRate(l) || 0), 0), noRate: L.filter((l) => recvRate(l) == null).length };
+}
+function recvSumHtml() {
+  const T = recvTotals(), un = (S.recv.unmatched || []).length;
+  if (!S.recv.lines.length) return "";
+  return `<div class="card card-pad recv-sum"><div class="kv"><div><div class="k">Products</div><div class="v num">${T.n}</div></div><div><div class="k">Total crates</div><div class="v num">${nf(T.crates, 2)}</div></div><div><div class="k">Total boxes</div><div class="v num">${nf(T.boxes)}</div></div>${SEE_MONEY ? `<div><div class="k">Purchase value, excl. GST</div><div class="v num">${rs2(T.value)}</div></div>` : ""}</div>
+    ${SEE_MONEY && T.noRate ? `<div class="row-sub" style="margin-top:10px;color:var(--warn)">${T.noRate} product${T.noRate > 1 ? "s have" : " has"} no price yet, so ${T.noRate > 1 ? "they are" : "it is"} not in the value.</div>` : ""}${un ? `<div class="row-sub" style="margin-top:10px;color:var(--warn)">${un} line${un > 1 ? "s" : ""} from the file ${un > 1 ? "are" : "is"} not added yet (see above).</div>` : ""}</div>`;
+}
+function recvResHtml(q) {
+  if (!q || q.length < 2) return "";
+  const res = searchProducts(q, 8);
+  return `<div class="results">${res.map((x) => x.st ? `<button class="res" data-act="recvAdd" data-sap="${x.c.sap}"><span class="grow"><div class="row-title clip">${esc(x.c.name)}</div><div class="row-sub">${nf(x.crates, 1)} crates in stock now</div></span>${ic("plus", "sm dim")}</button>` : `<button class="res" data-act="recvNewProd" data-sap="${x.c.sap}"><span class="grow"><div class="row-title clip">${esc(x.c.name)}</div><div class="row-sub">In the Hangyo list, not one of your products yet · tap to start stocking it</div></span>${ic("plus", "sm dim")}</button>`).join("")}<button class="res" data-act="recvNewProd" data-q="${esc(q)}"><span class="grow"><div class="row-title clip">Add a new product “${esc(q)}”</div><div class="row-sub">Not in the list? Type its details from the invoice</div></span>${ic("plus", "sm dim")}</button></div>`;
+}
+function recvLineSub(l) {
+  const r = recvRate(l), ss = ssRate(l.sap), diff = SEE_MONEY && l.fileRate != null && ss != null && Math.abs(l.fileRate - ss) > Math.max(0.5, ss * 0.01);
+  return `${l.upc} boxes per crate · ${nf(recvBoxes(l))} boxes${SEE_MONEY ? ` · ${r != null ? `${rs2(r)} per box${l.fileRate != null ? " (invoice)" : ""} = <b>${rs2(recvBoxes(l) * r)}</b>` : `<span style="color:var(--warn)">no price yet</span>`}${diff ? ` <span class="pill warn" style="height:20px;font-size:11.5px">your SS rate is ${rs2(ss)}</span>` : ""}` : ""}`;
+}
 function receiveBody() {
-  const R = S.recv, res = R.q && R.q.length > 1 ? searchProducts(R.q, 8).filter((x) => x.st) : [];
+  const R = S.recv;
   return `<div class="card card-pad"><div class="form-grid"><div class="field"><label class="label" for="rc-inv">Hangyo invoice number</label><input class="input" id="rc-inv" placeholder="SI0018712" value="${esc(R.inv)}" data-in="recvField" data-f="inv"></div><div class="field"><label class="label" for="rc-date">Invoice date</label><input class="input" id="rc-date" type="date" value="${esc(R.date || iso(NOW()).slice(0, 10))}" data-in="recvField" data-f="date"></div><div class="field full"><label class="label">Add stock to</label>${`<div class="seg"><button data-act="recvPool" data-v="Own Stock" aria-pressed="${R.pool === "Own Stock"}">Own stock</button><button data-act="recvPool" data-v="QC Stock" aria-pressed="${R.pool === "QC Stock"}">Quick commerce stock</button></div>`}</div></div></div>
     <div class="recv-up"><span class="attn-ic tint">${ic("doc")}</span><span class="grow"><div class="row-title">Have the invoice as Excel?</div><div class="row-sub">Upload it and every line is added for you to check. Products are matched by SAP code first, then by name.</div></span><label class="btn btn-secondary" for="rc-file" style="cursor:pointer">${ic("doc", "sm")} Upload Excel</label><input id="rc-file" type="file" accept=".xlsx,.xls,.csv" hidden data-in="recvFile"></div>
     <div id="rc-up-msg">${recvUpMsg()}</div>
-    <div class="stack gap-10"><div class="search">${ic("search", "sm")}<input class="input" id="rc-q" type="search" placeholder="Add a product from the invoice" value="${esc(R.q)}" data-in="recvQ" autocomplete="off"></div><div id="rc-results">${res.length ? `<div class="results">${res.map((x) => `<button class="res" data-act="recvAdd" data-sap="${x.c.sap}"><span class="grow"><div class="row-title clip">${esc(x.c.name)}</div><div class="row-sub">${nf(x.crates, 1)} crates in stock now</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div>` : ""}</div>
-    <div class="group">${R.lines.length ? R.lines.map((l, i) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.name))}</div><div class="row-sub">${l.raw ? `<span class="${l.conf === "check" ? "pill warn" : "dim"}" style="${l.conf === "check" ? "height:20px;font-size:11.5px" : ""}">${l.conf === "check" ? "Check: " : "From the file: "}${esc(l.raw)}</span> · ` : ""}${l.upc} boxes per crate${SEE_MONEY ? ` · ${rs2(ssRate(l.sap) || (stockBySap[l.sap] || {}).cost)} per box` : ""}${l.boxes != null ? ` · ${nf(l.boxes)} boxes` : ""}</div></span><span class="row-end"><input class="input sm num-in" style="width:80px" type="number" min="0" step="any" value="${l.crates}" id="rc-c-${i}" data-in="recvCrates" data-i="${i}" aria-label="Crates"><span class="muted" style="font-size:13px">crates</span><button class="icon-btn" data-act="recvRm" data-i="${i}" aria-label="Remove">${ic("trash", "sm")}</button></span></div>`).join("") : `<div class="empty">Add the products on the invoice. Stock goes up when you save.</div>`}</div></div>`;
+    <div class="stack gap-10"><div class="search">${ic("search", "sm")}<input class="input" id="rc-q" type="search" placeholder="Add a product from the invoice" value="${esc(R.q)}" data-in="recvQ" autocomplete="off"></div><div id="rc-results">${recvResHtml(R.q)}</div>
+    <div class="group">${R.lines.length ? R.lines.map((l, i) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.name))}</div><div class="row-sub">${l.raw ? `<span class="${l.conf === "check" ? "pill warn" : "dim"}" style="${l.conf === "check" ? "height:20px;font-size:11.5px" : ""}">${l.conf === "check" ? "Check: " : "From the file: "}${esc(l.raw)}</span> · ` : ""}<span id="rc-l-${i}">${recvLineSub(l)}</span></div></span><span class="row-end"><input class="input sm num-in" style="width:80px" type="number" min="0" step="any" value="${l.crates}" id="rc-c-${i}" data-in="recvCrates" data-i="${i}" aria-label="Crates"><span class="muted" style="font-size:13px">crates</span><button class="icon-btn" data-act="recvRm" data-i="${i}" aria-label="Remove">${ic("trash", "sm")}</button></span></div>`).join("") : `<div class="empty">Add the products on the invoice. Stock goes up when you save.</div>`}</div><div id="rc-sum">${recvSumHtml()}</div></div>`;
 }
-ACT.receiveSheet = () => { S.recv = { inv: "", pool: "Own Stock", q: "", lines: [], unmatched: [], file: null }; openSheet("Receive stock", receiveBody(), `<button class="btn btn-primary" data-act="recvSave">Save purchase</button>`); };
+const recvFoot = () => `<button class="btn btn-primary" data-act="recvSave">${ic("check", "sm")} Check and save</button>`;
+function openRecv() { S.recv.confirm = false; openSheet("Receive stock", receiveBody(), recvFoot()); }
+function recvRefresh() { S.recv.confirm = false; part("sheet-body", receiveBody()); part("sheet-foot", recvFoot()); }
+ACT.receiveSheet = () => { S.recv = { inv: "", pool: "Own Stock", q: "", lines: [], unmatched: [], file: null }; openRecv(); };
 IN.recvField = (el) => { S.recv[el.dataset.f] = el.value; };
-IN.recvQ = (el) => { S.recv.q = el.value; const res = el.value.length > 1 ? searchProducts(el.value, 8).filter((x) => x.st) : []; part("rc-results", res.length ? `<div class="results">${res.map((x) => `<button class="res" data-act="recvAdd" data-sap="${x.c.sap}"><span class="grow"><div class="row-title clip">${esc(x.c.name)}</div><div class="row-sub">${nf(x.crates, 1)} crates in stock now</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div>` : ""); };
-IN.recvCrates = (el) => { const l = S.recv.lines[+el.dataset.i]; l.crates = Math.max(0, +el.value || 0); l.boxes = null; };
-ACT.recvPool = (el) => { S.recv.pool = el.dataset.v; part("sheet-body", receiveBody()); };
-ACT.recvAdd = (el) => { const s = stockBySap[el.dataset.sap]; if (!S.recv.lines.find((l) => l.sap === s.sap)) S.recv.lines.push({ sap: s.sap, name: s.name, upc: s.upc, crates: 1 }); S.recv.q = ""; part("sheet-body", receiveBody()); };
-ACT.recvRm = (el) => { S.recv.lines.splice(+el.dataset.i, 1); part("sheet-body", receiveBody()); };
-ACT.recvSave = () => {
+IN.recvQ = (el) => { S.recv.q = el.value; part("rc-results", recvResHtml(el.value)); };
+IN.recvCrates = (el) => { const i = +el.dataset.i, l = S.recv.lines[i]; l.crates = Math.max(0, +el.value || 0); l.boxes = null; part("rc-l-" + i, recvLineSub(l)); part("rc-sum", recvSumHtml()); if (S.recv.confirm) { S.recv.confirm = false; part("sheet-foot", recvFoot()); } };
+ACT.recvPool = (el) => { S.recv.pool = el.dataset.v; recvRefresh(); };
+ACT.recvAdd = (el) => { const s = stockBySap[el.dataset.sap]; if (!S.recv.lines.find((l) => l.sap === s.sap)) S.recv.lines.push({ sap: s.sap, name: s.name, upc: s.upc, crates: 1 }); S.recv.q = ""; recvRefresh(); };
+ACT.recvRm = (el) => { S.recv.lines.splice(+el.dataset.i, 1); recvRefresh(); };
+ACT.recvBack = () => { S.recv.confirm = false; part("sheet-foot", recvFoot()); };
+ACT.recvSave = (el) => {
   const R = S.recv, lines = R.lines.filter((l) => l.crates > 0); if (!lines.length) { toast("Add at least one product", "info"); return; }
+  if (!(el && el.dataset && el.dataset.sure === "1")) {
+    /* show the totals to double-check before anything changes */
+    const T = recvTotals(), un = (R.unmatched || []).length; R.confirm = true;
+    part("sheet-foot", `<div class="confirm" style="width:100%;flex-wrap:wrap;background:var(--tint-soft);color:var(--tint)"><span class="grow" style="min-width:200px"><b>Add ${nf(T.crates, 2)} crates (${nf(T.boxes)} boxes)${SEE_MONEY ? ` worth ${rs2(T.value)}` : ""} to ${R.pool === "Own Stock" ? "own stock" : "quick commerce stock"}?</b><br><span class="row-sub">${T.n} product${T.n > 1 ? "s" : ""}${R.inv ? " · invoice " + esc(R.inv) : ""}${un ? ` · <span style="color:var(--warn)">${un} line${un > 1 ? "s" : ""} from the file left out</span>` : ""}</span></span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="recvBack">Go back</button><button class="btn btn-sm btn-primary" data-act="recvSave" data-sure="1">${ic("check", "sm")} Confirm and save</button></span></div>`);
+    return;
+  }
   const now = NOW(), id = "PUR-" + stamp(now), invDate = R.date ? R.date + "T00:00" : iso(now);
-  lines.forEach((l) => { const s = stockBySap[l.sap], rate = ssRate(l.sap) || s.cost || 0, ea = l.boxes != null ? l.boxes : Math.round(l.crates * l.upc * 100) / 100; if (R.pool === "Own Stock") { s.ea += ea; s.crates = s.ea / s.upc; s.move = `${id}: +${nf(ea)} boxes`; } else if (qcBySap[l.sap]) { qcBySap[l.sap].crates += l.crates; } D.purchases.push({ time: iso(now), id, inv: R.inv, invDate, supplier: "Hangyo", pool: R.pool, product: l.name, sap: l.sap, unit: l.boxes != null ? "EA (Box)" : "Crate", qty: l.boxes != null ? l.boxes : l.crates, ea, crates: l.crates, batch: l.batch || "", rate, value: ea * rate, isNew: "No" }); });
+  lines.forEach((l) => { const s = stockBySap[l.sap], rate = recvRate(l) || 0, ea = recvBoxes(l); if (R.pool === "Own Stock") { s.ea += ea; s.crates = s.ea / s.upc; s.move = `${id}: +${nf(ea)} boxes`; } else if (qcBySap[l.sap]) { qcBySap[l.sap].crates += l.crates; } D.purchases.push({ time: iso(now), id, inv: R.inv, invDate, supplier: "Hangyo", pool: R.pool, product: l.name, sap: l.sap, unit: l.boxes != null ? "EA (Box)" : "Crate", qty: l.boxes != null ? l.boxes : l.crates, ea, crates: l.crates, batch: l.batch || "", rate, value: ea * rate, isNew: "No" }); });
   lines.forEach((l) => { let left = l.crates * l.upc; D.hpoLog.filter((h) => h.sap === l.sap && (R.pool === "Own Stock" ? /own/i.test(h.pool) : /QC/i.test(h.pool)) && (h.status === "Open" || h.status === "Part received")).sort((a, b) => (a.placed > b.placed ? 1 : -1)).forEach((h) => { if (left <= 0) return; const want = Math.max(0, (h.boxes || h.crates * h.upc) - (h.received || 0)), take = Math.min(want, left); h.received = (h.received || 0) + take; left -= take; h.toCome = Math.max(0, h.crates - h.received / (h.upc || 1)); h.status = h.toCome > 1e-9 ? "Part received" : "Received"; h.changed = iso(now); h.receivedOn = iso(now); h.purchases = ((h.purchases ? h.purchases + ", " : "") + id); }); });
   logActivity("Purchase saved", id, `${lines.length} lines into ${R.pool}`); closeSheet(); S.stockTab = "purchases"; render(); toast("Stock received and added"); setTimeout(() => { if (pendingBack().length) ACT.pendingBackSheet({ dataset: { next: 1 } }); else if (backInStock().length) ACT.backInStock(); }, 450);
 };
@@ -2530,14 +2562,15 @@ function recvMatch(x) {
 function recvUpMsg() {
   const R = S.recv; if (!R || !R.file) return "";
   const un = R.unmatched || [];
-  return `<div class="banner ${un.length ? "warn" : "good"}" style="align-items:flex-start">${ic(un.length ? "alert" : "check", "sm")}<span class="grow"><b>${esc(R.file.name)}:</b> ${R.file.added} line${R.file.added === 1 ? "" : "s"} added${R.file.check ? `, ${R.file.check} to check (marked below)` : ""}${R.file.unitGuess ? ". The file did not say crates or boxes, so quantities were read as <b>crates</b>. Change them if they were boxes" : ""}.${un.length ? ` <b>${un.length} could not be matched</b>, choose the product for each:` : " Check the crates, then save."}</span></div>
-    ${un.length ? `<div class="group">${un.map((u, i) => `<div class="row" style="flex-wrap:wrap;gap:8px"><span class="grow" style="min-width:180px"><div class="row-title clip">${esc(u.name || u.code)}</div><div class="row-sub">${u.code ? "Code " + esc(u.code) + " · " : ""}${nf(u.qty)} ${u.unit === "EA (Box)" ? "boxes" : "crates"}${u.why ? " · " + esc(u.why) : ""}</div></span><select class="select sm" style="width:auto;max-width:100%" data-in="recvPick" data-i="${i}"><option value="">Choose the product…</option>${(u.cands || []).filter((s) => stockBySap[s]).map((s) => `<option value="${esc(s)}">${esc(stockBySap[s].name)}</option>`).join("")}${D.stock.filter((s) => !(u.cands || []).includes(s.sap)).sort((a, b) => a.name.localeCompare(b.name)).map((s) => `<option value="${esc(s.sap)}">${esc(s.name)}</option>`).join("")}</select><button class="icon-btn" data-act="recvSkip" data-i="${i}" aria-label="Skip this line">${ic("trash", "sm")}</button></div>`).join("")}</div>` : ""}`;
+  return `<div class="banner ${un.length ? "warn" : "good"}" style="align-items:flex-start">${ic(un.length ? "alert" : "check", "sm")}<span class="grow"><b>${esc(R.file.name)}:</b> ${R.file.added} line${R.file.added === 1 ? "" : "s"} added${R.file.check ? `, ${R.file.check} to check (marked below)` : ""}${R.file.unitGuess ? ". The file did not say crates or boxes, so quantities were read as <b>crates</b>. Change them if they were boxes" : ""}.${un.length ? ` <b>${un.length} ${un.length === 1 ? "is" : "are"} not one of your products yet.</b> Add ${un.length === 1 ? "it" : "each"} as a product, or choose the right one:` : " Check the crates, then save."}</span></div>
+    ${un.length ? `<div class="group">${un.map((u, i) => `<div class="row" style="flex-wrap:wrap;gap:8px"><span class="grow" style="min-width:180px"><div class="row-title clip">${esc(u.name || u.code)}</div><div class="row-sub">${u.code ? "Code " + esc(u.code) + " · " : ""}${nf(u.qty)} ${u.unit === "EA (Box)" ? "boxes" : "crates"}${u.why ? " · " + esc(u.why) : ""}</div></span><select class="select sm" style="width:auto;max-width:100%" data-in="recvPick" data-i="${i}"><option value="">Choose one of your products…</option>${(u.cands || []).filter((s) => stockBySap[s]).map((s) => `<option value="${esc(s)}">${esc(stockBySap[s].name)}</option>`).join("")}${D.stock.filter((s) => !(u.cands || []).includes(s.sap)).sort((a, b) => a.name.localeCompare(b.name)).map((s) => `<option value="${esc(s.sap)}">${esc(s.name)}</option>`).join("")}</select><button class="btn btn-sm btn-primary" data-act="recvNewProd" data-i="${i}">${ic("plus", "sm")} ${u.catSap && catBySap[u.catSap] ? "Start stocking it" : "Add as new product"}</button><button class="icon-btn" data-act="recvSkip" data-i="${i}" aria-label="Skip this line">${ic("trash", "sm")}</button></div>`).join("")}</div>` : ""}`;
 }
 function recvPush(sap, x, conf) {
   const st = stockBySap[sap], boxes = x.unit === "EA (Box)" ? x.qty : null, crates = boxes != null ? Math.round((boxes / st.upc) * 100) / 100 : x.qty;
   const ex = S.recv.lines.find((l) => l.sap === sap && (l.batch || "") === (x.batch || ""));
   if (ex) { if (ex.boxes != null || boxes != null) ex.boxes = (ex.boxes != null ? ex.boxes : ex.crates * st.upc) + (boxes != null ? boxes : x.qty * st.upc); ex.crates = Math.round(((ex.boxes != null ? ex.boxes / st.upc : ex.crates + crates)) * 100) / 100; return; }
-  S.recv.lines.push({ sap, name: st.name, upc: st.upc, crates, boxes, batch: x.batch || "", raw: `${x.code ? x.code + " " : ""}${x.name}`.trim(), conf });
+  const fileRate = x.rate > 0 ? Math.round((x.unit === "EA (Box)" ? x.rate : x.rate / st.upc) * 10000) / 10000 : null;
+  S.recv.lines.push({ sap, name: st.name, upc: st.upc, crates, boxes, batch: x.batch || "", raw: `${x.code ? x.code + " " : ""}${x.name}`.trim(), conf, fileRate });
 }
 IN.recvFile = async (el) => {
   const f = el.files && el.files[0]; if (!f) return; const R = S.recv, sig = [f.name, f.size, f.lastModified].join("|");
@@ -2554,16 +2587,94 @@ IN.recvFile = async (el) => {
       if (!x.unit) x.unit = "Crate";
       const m = recvMatch(x);
       if (!m.sap) { R.unmatched.push({ ...x, cands: m.cands || [] }); return; }
-      if (!stockBySap[m.sap]) { R.unmatched.push({ ...x, cands: m.cands || [], why: "not set up as a stocked product: add it in Setup, or choose" }); return; }
+      if (!stockBySap[m.sap]) { R.unmatched.push({ ...x, cands: m.cands || [], catSap: m.conf === "sure" ? m.sap : null, why: m.conf === "sure" ? "in the Hangyo list but not set up as one of your products yet" : "not set up as one of your products yet" }); return; }
       recvPush(m.sap, x, m.conf); added++; if (m.conf !== "sure") check++;
     });
     R.file = { name: f.name, added, check, unitGuess: !P.unitKnown };
     logActivity("Invoice read", f.name, `${added} lines matched${R.unmatched.length ? ", " + R.unmatched.length + " to choose" : ""}`);
-    part("sheet-body", receiveBody());
+    recvRefresh();
   } catch (e) { part("rc-up-msg", `<div class="banner bad">${ic("alert", "sm")}<span>That file could not be read. Save it as .xlsx and try again.</span></div>`); }
 };
-IN.recvPick = (el) => { const R = S.recv, u = R.unmatched[+el.dataset.i]; if (!el.value || !u) return; recvPush(el.value, u, "sure"); R.unmatched.splice(+el.dataset.i, 1); R.file.added++; D.orderAliases = D.orderAliases || {}; if (u.name) D.orderAliases[impAliasKey(u.name)] = el.value; part("sheet-body", receiveBody()); };
-ACT.recvSkip = (el) => { S.recv.unmatched.splice(+el.dataset.i, 1); part("sheet-body", receiveBody()); };
+IN.recvPick = (el) => { const R = S.recv, u = R.unmatched[+el.dataset.i]; if (!el.value || !u) return; recvPush(el.value, u, "sure"); R.unmatched.splice(+el.dataset.i, 1); if (R.file) R.file.added++; D.orderAliases = D.orderAliases || {}; if (u.name) D.orderAliases[impAliasKey(u.name)] = el.value; recvRefresh(); };
+ACT.recvSkip = (el) => { S.recv.unmatched.splice(+el.dataset.i, 1); recvRefresh(); };
+
+/* ===== ADD A PRODUCT YOU START STOCKING =====
+   Used from Receive stock (a line on the invoice that is not one of your products yet) and from the Stock page.
+   If the product is in the Hangyo South Kerala list, its details and prices are filled in to check;
+   if not, everything is typed from the invoice. Hangyo's price to you (the SS rate) is required. */
+const packFromName = (n) => { const m = /\(\s*(\d+)\s*[x×]\s*\d/i.exec(n || ""); return m ? +m[1] : null; };
+function npOpen(o) {
+  const c = (o.sap && catBySap[o.sap]) || null, p = (c && D.prices[c.sap]) || [];
+  S.np = {
+    from: o.from || "stock", i: o.i != null ? o.i : null, raw: o.raw || "", qty: o.qty || null, unit: o.unit || null, inList: !!c,
+    name: (c && c.name) || o.name || "", sap: (c && c.sap) || o.sap || "", cat: (c && c.cat) || "", upc: (c && c.upc) || null, ppe: (c && c.ppe) || packFromName(o.name) || null,
+    ss: o.rate != null ? o.rate : p[0] != null ? p[0] : null, ssFromFile: o.rate != null, dist: p[1] != null ? p[1] : null, dealer: p[2] != null ? p[2] : null, mrp: p[3] != null ? p[3] : (c && c.mrp) || null,
+  };
+  openSheet(S.np.inList ? "Start stocking this product" : "Add a new product", npBody(), `<button class="btn btn-secondary" data-act="npBack">${S.np.from === "recv" ? `${ic("chevL", "sm")} Back to the invoice` : "Cancel"}</button><button class="btn btn-primary" data-act="npSave">${ic("check", "sm")} ${S.np.from === "recv" ? "Add product and receive it" : "Add product"}</button>`, true);
+}
+function npBody() {
+  const N = S.np, cats = [...new Set(D.catalog.map((x) => x.cat).filter(Boolean))].sort();
+  const fromFile = N.raw ? `<div class="banner info">${ic("doc", "sm")}<span><b>On the invoice:</b> ${esc(N.raw)}${N.qty ? ` · ${nf(N.qty)} ${N.unit === "EA (Box)" ? "boxes" : "crates"}` : ""}${N.ssFromFile && SEE_MONEY ? ` · ${rs2(N.ss)} per box` : ""}</span></div>` : "";
+  return `<div id="form-err"></div>${fromFile}
+    <div class="banner ${N.inList ? "good" : "warn"}">${ic(N.inList ? "check" : "info", "sm")}<span>${N.inList ? "Found in the Hangyo South Kerala list: the details and prices from it are filled in. Check them." : "Not in the Hangyo South Kerala list. Type the details from the invoice."}</span></div>
+    <div class="card card-pad"><div class="card-title" style="margin-bottom:12px">Product</div><div class="form-grid">
+      ${fld("np-name", "Name", N.name, { full: true, required: true, ph: "e.g. Rose Kulfi ( 15 x 50 ml )" })}
+      ${fld("np-sap", "SAP / material code", N.sap, { required: true, disabled: N.inList, ph: "From the invoice", hint: N.inList ? "" : "The Material column on the Hangyo invoice." })}
+      ${fld("np-cat", "Category", N.cat, { list: cats })}
+      ${fld("np-upc", "Boxes per crate", N.upc, { type: "number", step: "1", required: true, hint: "Most Hangyo products come 6 or 10 boxes to a crate." })}
+      ${fld("np-ppe", "Pieces per box", N.ppe, { type: "number", step: "1", hint: N.ppe && !(catBySap[N.sap] || {}).ppe ? "Read from the name." : "" })}
+    </div></div>
+    ${CAN_PRICE ? `<div class="card card-pad"><div class="card-title" style="margin-bottom:4px">Prices per box, excl. GST</div><div class="row-sub" style="margin-bottom:12px">Hangyo's price to you is needed to work out stock value and profit. The others can be added later.</div><div class="form-grid">
+      ${fld("np-ss", "Hangyo price to you (₹)", r4(N.ss), { type: "number", required: true, hint: N.ssFromFile ? "From the invoice." : N.inList && N.ss != null ? "From the Hangyo list." : "" })}
+      ${fld("np-dist", "Distributor price (₹), optional", r4(N.dist), { type: "number", hint: "What distributors are billed." })}
+      ${fld("np-dealer", "Retailer price (₹), optional", r4(N.dealer), { type: "number" })}
+      ${fld("np-mrp", "MRP per box (₹), optional", N.mrp, { type: "number" })}
+    </div></div>` : `<div class="banner info">${ic("info", "sm")}<span>The owner adds the prices. They will be asked to when they next open the tool.</span></div>`}`;
+}
+ACT.npBack = () => { const N = S.np; S.np = null; if (N && N.from === "recv") openRecv(); else closeSheet(); };
+ACT.npSave = () => {
+  const N = S.np; if (!N) return;
+  const name = val("np-name").replace(/\s+/g, " "), sap = N.inList ? N.sap : val("np-sap").replace(/\s/g, "").replace(/\.0+$/, "");
+  const upc = Math.round(+val("np-upc")), ppe = Math.max(1, Math.round(+val("np-ppe") || packFromName(name) || 1));
+  if (!name) return formErr("Enter the product name.");
+  if (!/^\d{5,10}$/.test(sap)) return formErr("Enter the SAP / material code from the invoice (numbers only).");
+  if (!(upc > 0)) return formErr("Enter how many boxes come in one crate.");
+  const ss = CAN_PRICE ? numOrNull(val("np-ss")) : null, dist = CAN_PRICE ? numOrNull(val("np-dist")) : null, dealer = CAN_PRICE ? numOrNull(val("np-dealer")) : null, mrp = CAN_PRICE ? numOrNull(val("np-mrp")) : N.mrp;
+  if (CAN_PRICE && !(ss > 0)) return formErr("Enter Hangyo's price to you per box. It is needed for stock value and profit.");
+  if (CAN_PRICE && dist != null && dist < ss) { if (!N.lowOK) { N.lowOK = true; return formErr("The distributor price is lower than Hangyo's price to you. If that is right, tap Add again."); } }
+  let st = stockBySap[sap];
+  if (!st) {
+    let c = catBySap[sap];
+    if (!c) { c = { name, sap, cat: val("np-cat") || null, mrp, ppe, upc, stocked: 1, times: 0, added: "manual" }; D.catalog.push(c); catBySap[sap] = c; }
+    else Object.assign(c, { upc: c.upc || upc, ppe: c.ppe || ppe, cat: c.cat || val("np-cat") || null, stocked: 1 });
+    catByName[key(c.name)] = c;
+    if (CAN_PRICE) {
+      const p = (D.prices[sap] = D.prices[sap] || [null, null, null, null, null]);
+      p[0] = ss; if (dist != null) p[1] = dist; if (dealer != null) p[2] = dealer; if (mrp != null) { p[3] = mrp; p[4] = Math.round((mrp / ppe) * 100) / 100; }
+    }
+    const pr = D.prices[sap] || [];
+    st = { trop: null, name: c.name || name, sap, cat: c.cat, hsn: "21050000", upc, ppe, ea: 0, crates: 0, pcs: 0, mrp: mrp != null ? mrp : c.mrp, cost: CAN_PRICE ? ss : null, price: pr[1] != null ? pr[1] : null, margin: CAN_PRICE && pr[1] != null ? Math.round((pr[1] - ss) * 100) / 100 : null, inSK: N.inList ? "Yes" : "No", updated: iso(NOW()), move: N.from === "recv" ? "Added while receiving stock" : "Added from the Stock page", notes: null, tier: null };
+    D.stock.push(st); stockBySap[sap] = st; if (typeof MP_CACHE !== "undefined") MP_CACHE.t = 0;
+    logActivity(N.inList ? "Product now stocked" : "New product added", sap, `${st.name}${N.inList ? "" : " · not in the Hangyo list"}${CAN_PRICE ? "" : " · prices still to add"}`);
+  }
+  S.np = null;
+  if (N.from === "recv") {
+    const R = S.recv;
+    if (N.i != null && R.unmatched[N.i]) { const u = R.unmatched[N.i]; recvPush(sap, u, "sure"); R.unmatched.splice(N.i, 1); if (R.file) R.file.added++; D.orderAliases = D.orderAliases || {}; if (u.name) D.orderAliases[impAliasKey(u.name)] = sap; }
+    else if (!R.lines.find((l) => l.sap === sap)) R.lines.push({ sap, name: st.name, upc: st.upc, crates: 1 });
+    R.q = ""; openRecv(); toast(`${shortName(st.name)} added. Check its crates below`, "check");
+  } else { render(); ACT.productSheet({ dataset: { sap } }); toast(`${shortName(st.name)} added to your products`); }
+};
+ACT.recvNewProd = (el) => {
+  const R = S.recv, d = el.dataset;
+  if (d.i != null && d.i !== "") {
+    const u = R.unmatched[+d.i]; if (!u) return;
+    const inList = u.catSap && catBySap[u.catSap] ? u.catSap : null, c = inList ? catBySap[inList] : null;
+    const upc = c && c.upc, rate = u.rate != null ? (u.unit === "EA (Box)" ? u.rate : upc ? u.rate / upc : null) : null;
+    npOpen({ from: "recv", i: +d.i, sap: inList || u.code || "", name: u.name, raw: `${u.code ? u.code + " " : ""}${u.name}`.trim(), qty: u.qty, unit: u.unit, rate });
+  } else npOpen({ from: "recv", sap: d.sap || "", name: d.q || "" });
+};
+ACT.stockNewProd = () => npOpen({ from: "stock" });
 
 /* ===== TOD & NOTES ===== */
 function todState() {
@@ -2870,8 +2981,8 @@ ACT.productEdit = (el) => {
     </div></div>
     <div class="card card-pad"><div class="card-title" style="margin-bottom:4px">Prices per box, excl. GST</div><div class="row-sub" style="margin-bottom:12px">${lock ? "Only the owner can change prices." : "From the Hangyo South Kerala price list. The distributor rate is what orders are billed at."}</div><div class="form-grid">
       ${fld("pf-dist", "Distributor rate (₹)", r4(p[1] != null ? p[1] : st && st.price), { type: "number", disabled: lock })}
-      ${SEE_MONEY ? fld("pf-ss", "Your cost, SS rate (₹)", r4(p[0] != null ? p[0] : st && st.cost), { type: "number", disabled: lock }) : ""}
-      ${fld("pf-dealer", "Dealer price (₹)", r4(p[2]), { type: "number", disabled: lock })}
+      ${SEE_MONEY ? fld("pf-ss", "Hangyo price to you, SS rate (₹)", r4(p[0] != null ? p[0] : st && st.cost), { type: "number", disabled: lock, required: !lock }) : ""}
+      ${fld("pf-dealer", "Retailer / dealer price (₹)", r4(p[2]), { type: "number", disabled: lock })}
       ${fld("pf-mrp", "MRP per box (₹)", p[3] != null ? p[3] : c.mrp, { type: "number", disabled: lock })}
       ${fld("pf-special", `Special price (₹)`, r4(sp), { type: "number", disabled: lock, hint: `For distributors on special prices. Leave empty to bill them the normal rate. ${Math.round(D.special.pct * 100)}% off would be ${p[1] ? rs2(p[1] * (1 - D.special.pct)) : "–"}.`, full: true })}
     </div></div>
@@ -2896,6 +3007,7 @@ ACT.productSave = (el) => {
   const dist = numOrNull(val("pf-dist")), ss = numOrNull(val("pf-ss")), dealer = numOrNull(val("pf-dealer")), mrp = numOrNull(val("pf-mrp")), special = numOrNull(val("pf-special"));
   if (CAN_PRICE && special != null && dist != null && special > dist) return formErr("The special price should not be higher than the distributor rate.");
   const stocked = $("#pf-stocked").getAttribute("aria-checked") === "true", onQC = $("#pf-qc").getAttribute("aria-checked") === "true";
+  if (CAN_PRICE && stocked && !(ss > 0) && !stockBySap[sap]) return formErr("Enter Hangyo's price to you (the SS rate). It is needed for stock value and profit.");
   let c = catBySap[sap]; if (!c) { c = { sap, times: 0 }; D.catalog.push(c); catBySap[sap] = c; }
   const oldUpc = c.upc;
   Object.assign(c, { name, cat: val("pf-cat") || null, upc, ppe, mrp, stocked: stocked ? 1 : 0 });
