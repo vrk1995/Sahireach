@@ -1035,22 +1035,6 @@ function cancelOrder(id) {
 }
 ACT.cancelOrderYes = (el) => { cancelOrder(el.dataset.id); closeSheet(); render(); toast("Order cancelled, stock is back"); };
 
-/* ---- sales order preview ---- */
-function fitPaper() { const sc = $("#sheet .paper-scroll"), p = sc && $(".paper", sc); if (!p) return; p.style.zoom = ""; const w = sc.clientWidth; if (w && w < 620) p.style.zoom = (w / 620).toFixed(3); }
-ACT.soPreview = (el) => {
-  const o = orderById(el.dataset.id), lines = linesByOrder[o.id] || [], d = distByKey[key(o.dist)] || {};
-  const due = d.credit != null ? new Date(toDate(o.time).getTime() + d.credit * 864e5) : null;
-  const paper = `<div class="paper-scroll"><div class="paper paper-min">
-    <div style="display:flex;justify-content:space-between;gap:20px;align-items:flex-start"><div style="display:flex;gap:12px;align-items:center"><img src="${LOGO}" alt="SahiReach logo" style="width:54px;height:54px;object-fit:contain"><div><div style="font-size:19px;font-weight:700;letter-spacing:-0.02em">${esc(CO.name)}</div><div style="color:#6e6e73">${esc(CO.address)}<br>GSTIN ${esc(CO.gstin)} · FSSAI ${esc(CO.fssai)}</div></div></div>
-      <div style="text-align:right"><h2>SALES ORDER</h2><div class="mono">${esc(o.id.replace("ORD", "SO"))}</div><div>Order date ${fmtDate(o.time)} ${toDate(o.time).getFullYear()}</div>${o.status === "Dispatched" && o.dispatched ? `<div>Dispatched ${fmtDate(o.dispatched)} ${toDate(o.dispatched).getFullYear()}</div>` : ""}</div></div>
-    <div style="display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:18px;margin-top:22px"><div><div class="lab">Bill to</div><b>${esc(o.dist)}</b><br>${esc(d.district || "")}, Kerala${d.phone ? "<br>Phone " + esc(d.phone) : ""}</div><div><div class="lab">Payment</div>${esc(d.pay || "–")}<br>${d.credit != null ? d.credit + " days credit" : ""}${due ? "<br>Due " + fmtDate(due) : ""}</div><div><div class="lab">Dispatch from</div>Tropicana Logistics cold store<br>${nf(o.crates)} crates · ${esc((vehicleFor(o.crates) || "").split(" (")[0])}</div></div>
-    <table><thead><tr><th>#</th><th>Product</th><th>HSN</th><th class="r">Crates</th><th class="r">Boxes</th><th class="r">Rate / box</th><th class="r">Amount</th></tr></thead><tbody>${lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.product)}</td><td>${esc((stockBySap[l.sap] || {}).hsn || "21050000")}</td><td class="r">${nf(l.crates, 2)}</td><td class="r">${nf(l.ea)}</td><td class="r">${inr2.format(l.billed || 0)}</td><td class="r">${inr2.format(l.value || 0)}</td></tr>`).join("")}</tbody></table>
-    <div class="tot"><div><span>Value excl. GST</span><span class="r">${inr2.format(o.value)}</span></div><div><span>GST @ 5%</span><span class="r">${inr2.format(o.value * 0.05)}</span></div><div class="g"><span>Total (₹)</span><span class="r">${inr2.format(o.value * 1.05)}</span></div></div>
-    <div style="margin-top:26px;color:#6e6e73;font-size:11px">This is a sales order, not a tax invoice. Prices are the South Kerala distributor rate, excluding GST.</div></div></div>`;
-  openSheet("Sales order", `${backBanner(o)}<div class="banner tint">${ic("info", "sm")}<span><b>Draft layout.</b> In the real build every saved order produces this as a PDF you can download or share. I will match it to your own sales order format once you send it.</span></div>${paper}`, `<button class="btn btn-secondary" data-act="orderSheet" data-id="${o.id}">${ic("chevL", "sm")} Back to order</button>`, true);
-  fitPaper();
-};
-
 /* ---- new / edit order ---- */
 ACT.newOrder = () => { if (S.draft.editId) S.draft = newDraft(); closeSheet(); go("new-order"); };
 function searchProducts(q, limit = 30) {
@@ -1610,6 +1594,98 @@ function importNoteHtml() {
 }
 ACT.importOrderGo = () => { if (S.draft.editId) S.draft = newDraft(); go("new-order"); ACT.importOrder(); };
 ACT.impNoteClose = () => { S.draft.importNote = null; render(); };
+
+/* ===== SALES ORDER: laid out like the Vyapar sale order, plus crates and pieces; no bank details or QR ===== */
+function inWords(n) {
+  n = Math.round(n);
+  if (!n) return "Zero Rupees only";
+  const a = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  const two = (x) => (x < 20 ? a[x] : b[Math.floor(x / 10)] + (x % 10 ? " " + a[x % 10] : ""));
+  const three = (x) => (x >= 100 ? a[Math.floor(x / 100)] + " Hundred" + (x % 100 ? " " + two(x % 100) : "") : two(x));
+  const parts = [], cr = Math.floor(n / 1e7), lk = Math.floor((n % 1e7) / 1e5), th = Math.floor((n % 1e5) / 1e3), rest = n % 1e3;
+  if (cr) parts.push(three(cr) + " Crore"); if (lk) parts.push(two(lk) + " Lakh"); if (th) parts.push(two(th) + " Thousand"); if (rest) parts.push(three(rest));
+  return parts.join(" ") + " Rupees only";
+}
+const soNo = (o) => o.id.replace("ORD", "SO");
+const dmyDash = (s) => { const d = toDate(s); return `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)}-${d.getFullYear()}`; };
+function soData(o) {
+  const d = distByKey[key(o.dist)] || {}, C = Object.assign({ state: "32-Kerala" }, D.company || {}, CO.phone ? { phone: CO.phone } : {}, CO.email ? { email: CO.email } : {});
+  const myState = String(C.state || "32").slice(0, 2), theirState = String(d.state || C.state || "32").slice(0, 2), igst = theirState !== myState;
+  const merged = []; (linesByOrder[o.id] || []).filter((l) => l.ea > 0).forEach((l) => { const m = merged.find((x) => x.sap === l.sap && Math.abs((x.billed || 0) - (l.billed || 0)) < 0.005); if (m) { m.ea += l.ea; m.crates = (m.crates || 0) + (l.crates || 0); m.pcs = (m.pcs || 0) + (l.pcs || 0); m.value = (m.value || 0) + (l.value || 0); } else merged.push(Object.assign({}, l)); });
+  const rows = merged.map((l) => {
+    const st = stockBySap[l.sap] || {}, c = catBySap[l.sap] || {}, p = D.prices[l.sap] || [], taxable = Math.round((l.value != null ? l.value : l.ea * (l.billed || 0)) * 100) / 100, gst = Math.round(taxable * 5) / 100;
+    return { name: l.product, hsn: st.hsn || "21050000", mrp: p[3] != null ? p[3] : st.mrp != null ? st.mrp : c.mrp, crates: l.crates || 0, qty: l.ea, pcs: l.pcs != null ? l.pcs : l.ea * (st.ppe || c.ppe || 1), rate: l.billed || 0, taxable, gst, amount: Math.round((taxable + gst) * 100) / 100 };
+  });
+  const sum = (f) => rows.reduce((a, r) => a + f(r), 0), sub = Math.round(sum((r) => r.amount) * 100) / 100, total = Math.round(sub), hsn = {};
+  rows.forEach((r) => { const h = (hsn[r.hsn] = hsn[r.hsn] || { hsn: r.hsn, taxable: 0, gst: 0 }); h.taxable += r.taxable; h.gst += r.gst; });
+  const due = d.credit != null ? addDays(o.time.slice(0, 10), d.credit) : null;
+  return { o, d, C, igst, rows, sub, total, round: Math.round((total - sub) * 100) / 100, hsn: Object.values(hsn), crates: sum((r) => r.crates), qty: sum((r) => r.qty), pcs: sum((r) => r.pcs), gst: sum((r) => r.gst), due };
+}
+function soDocHtml(o) {
+  const X = soData(o), { d, C } = X, m = (v) => "₹ " + inr2.format(v || 0).replace(/^₹\s?/, ""), e = esc;
+  const addr = (s) => e(s || "").replace(/\n/g, "<br>");
+  const blank = Math.max(0, 14 - X.rows.length);
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${e(soNo(o))} · ${e(o.dist)}</title><style>
+  @page { size: A4; margin: 10mm; }
+  * { box-sizing: border-box; } html, body { margin: 0; background: #fff; }
+  body { font: 400 10.5px/1.4 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #111; padding: 16px; width: 794px; }
+  @media print { body { padding: 0; width: auto; } }
+  h1 { text-align: center; font-size: 15px; margin: 0 0 8px; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; } td, th { border: 1px solid #555; padding: 3px 5px; vertical-align: top; }
+  .nb td { border: 0; padding: 1px 0; } .r { text-align: right; white-space: nowrap; } .c { text-align: center; } b, .b { font-weight: 700; }
+  .lab { color: #333; } .items th { font-weight: 700; text-align: left; } .items td { border-top: 0; border-bottom: 0; } .items tr.tot td { border-top: 1px solid #555; border-bottom: 1px solid #555; font-weight: 700; }
+  .items tr.fill td { height: 18px; } .co { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
+</style></head><body>
+<h1>Sale Order</h1>
+<table>
+  <tr><td style="width:50%" rowspan="2"><table class="nb"><tr><td style="width:96px;vertical-align:top"><img src="${e(LOGO)}" alt="" style="width:86px;height:auto"></td><td><div class="co">${e(String(C.name || "SahiReach LLP").toUpperCase())}</div>${addr(C.address)}${C.phone ? `<br>Phone no.: ${e(C.phone)}` : ""}${C.email ? `<br>Email: ${e(C.email)}` : ""}${C.gstin ? `<br>GSTIN: ${e(C.gstin)}` : ""}<br>State: ${e(C.state || "32-Kerala")}${C.fssai ? `<br>FSSAI: ${e(C.fssai)}` : ""}</td></tr></table></td>
+    <td style="width:25%"><span class="lab">Order No.</span><br><b>${e(soNo(o))}</b></td><td style="width:25%"><span class="lab">Date</span><br><b>${dmyDash(o.time)}</b></td></tr>
+  <tr><td><span class="lab">Due Date:</span><br><b>${X.due ? dmyDash(X.due) : "–"}</b></td><td><span class="lab">Place of supply</span><br><b>${e(d.state || C.state || "32-Kerala")}</b></td></tr>
+  <tr><td><span class="lab">Order From</span><br><b>${e(o.dist)}</b><br>${d.address ? addr(d.address) + "<br>India" : e((d.district ? d.district + ", " : "") + "Kerala")}${d.phone ? `<br>Contact No. : ${e(d.phone)}` : ""}${d.gstin ? `<br>GSTIN : ${e(d.gstin)}` : ""}<br>State: ${e(d.state || C.state || "32-Kerala")}</td>
+    <td colspan="2"><span class="lab">Ship To</span><br>${addr(d.shipTo || d.address || (d.district ? d.district + ", Kerala" : ""))}</td></tr>
+</table>
+<table class="items" style="border-top:0">
+  <tr><th style="width:22px">#</th><th>Item name</th><th>HSN/ SAC</th><th class="r">MRP</th><th class="r">Crates</th><th class="r">Quantity</th><th class="r">Pieces</th><th class="r">Unit</th><th class="r">Price/ Unit</th><th class="r">GST</th><th class="r">Amount</th></tr>
+  ${X.rows.map((r, i) => `<tr><td>${i + 1}</td><td class="b">${e(r.name)}</td><td>${e(r.hsn)}</td><td class="r">${r.mrp != null ? m(r.mrp) : ""}</td><td class="r">${nf(r.crates, 2)}</td><td class="r">${nf(r.qty)}</td><td class="r">${nf(r.pcs)}</td><td class="r">EA</td><td class="r">${m(r.rate)}</td><td class="r">${m(r.gst)} (5%)</td><td class="r">${m(r.amount)}</td></tr>`).join("")}
+  ${Array.from({ length: blank }, () => `<tr class="fill"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join("")}
+  <tr class="tot"><td></td><td>Total</td><td></td><td></td><td class="r">${nf(X.crates, 2)}</td><td class="r">${nf(X.qty)}</td><td class="r">${nf(X.pcs)}</td><td></td><td></td><td class="r">${m(X.gst)}</td><td class="r">${m(X.sub)}</td></tr>
+</table>
+<table style="border-top:0">
+  <tr><td style="width:50%;border-top:0"><span class="lab">Order Amount in Words</span><br><b>${e(inWords(X.total))}</b></td>
+    <td style="border-top:0;padding:0"><table class="nb" style="width:100%"><tr><td style="padding:3px 5px" class="b">Amounts</td><td></td></tr>
+      <tr><td style="padding:2px 5px">Sub Total</td><td class="r" style="padding:2px 5px">${m(X.sub)}</td></tr>
+      <tr><td style="padding:2px 5px">Round off</td><td class="r" style="padding:2px 5px">${X.round < 0 ? "- " : ""}${m(Math.abs(X.round))}</td></tr>
+      <tr><td style="padding:2px 5px;border-top:1px solid #555" class="b">Total</td><td class="r b" style="padding:2px 5px;border-top:1px solid #555">${m(X.total)}</td></tr>
+      <tr><td style="padding:2px 5px">Advance</td><td class="r" style="padding:2px 5px">${m(0)}</td></tr>
+      <tr><td style="padding:2px 5px">Balance</td><td class="r" style="padding:2px 5px">${m(X.total)}</td></tr></table></td></tr>
+</table>
+<table style="border-top:0">
+  ${X.igst ? `<tr><th class="c" style="border-top:0">HSN/ SAC</th><th class="c" style="border-top:0">Taxable amount</th><th class="c" style="border-top:0">IGST rate</th><th class="c" style="border-top:0">IGST amount</th><th class="c" style="border-top:0">Total Tax Amount</th></tr>
+  ${X.hsn.map((h) => `<tr><td>${e(h.hsn)}</td><td class="r">${m(h.taxable)}</td><td class="r">5%</td><td class="r">${m(h.gst)}</td><td class="r">${m(h.gst)}</td></tr>`).join("")}
+  <tr><td class="r b">Total</td><td class="r b">${m(X.hsn.reduce((a, h) => a + h.taxable, 0))}</td><td></td><td class="r b">${m(X.gst)}</td><td class="r b">${m(X.gst)}</td></tr>`
+  : `<tr><th class="c" rowspan="2" style="border-top:0">HSN/ SAC</th><th class="c" rowspan="2" style="border-top:0">Taxable amount</th><th class="c" colspan="2" style="border-top:0">CGST</th><th class="c" colspan="2" style="border-top:0">SGST</th><th class="c" rowspan="2" style="border-top:0">Total Tax Amount</th></tr>
+  <tr><th class="c">Rate</th><th class="c">Amount</th><th class="c">Rate</th><th class="c">Amount</th></tr>
+  ${X.hsn.map((h) => `<tr><td>${e(h.hsn)}</td><td class="r">${m(h.taxable)}</td><td class="r">2.5%</td><td class="r">${m(h.gst / 2)}</td><td class="r">2.5%</td><td class="r">${m(h.gst / 2)}</td><td class="r">${m(h.gst)}</td></tr>`).join("")}
+  <tr><td class="r b">Total</td><td class="r b">${m(X.hsn.reduce((a, h) => a + h.taxable, 0))}</td><td></td><td class="r b">${m(X.gst / 2)}</td><td></td><td class="r b">${m(X.gst / 2)}</td><td class="r b">${m(X.gst)}</td></tr>`}
+</table>
+<table style="border-top:0"><tr><td style="width:50%;border-top:0;height:70px"></td><td style="border-top:0" class="c">For : ${e(String(C.name || "SahiReach LLP").toUpperCase())}<br><br><br><b>This is a computer generated sale order. No signature needed.</b></td></tr></table>
+</body></html>`;
+}
+function fitSO() {
+  const f = $("#so-frame"), w = $("#so-wrap"); if (!f || !w || !f.contentDocument || !f.contentDocument.body) return;
+  const h = f.contentDocument.body.scrollHeight + 4, s = Math.min(1, w.clientWidth / 794);
+  f.style.height = h + "px"; f.style.transform = `scale(${s})`; w.style.height = Math.ceil(h * s) + "px";
+}
+ACT.soPreview = (el) => {
+  const o = orderById(el.dataset.id); if (!o) return;
+  const d = distByKey[key(o.dist)] || {}, missing = [!d.address && "billing address", !d.gstin && "GSTIN"].filter(Boolean);
+  openSheet("Sales order", `${backBanner(o)}${missing.length ? `<div class="banner warn">${ic("info", "sm")}<span>${esc(o.dist)} has no ${missing.join(" or ")} saved, so ${missing.length > 1 ? "they are" : "it is"} left off. Add ${missing.length > 1 ? "them" : "it"} with <button class="linkish" data-act="distEdit" data-name="${esc(o.dist)}">Edit distributor</button>.</span></div>` : ""}<div id="so-wrap" style="width:100%;overflow:hidden;border-radius:6px;box-shadow:var(--shadow-2);background:#fff"><iframe id="so-frame" title="Sales order" style="width:794px;border:0;transform-origin:0 0;display:block;background:#fff"></iframe></div>`,
+    `<button class="btn btn-secondary" data-act="orderSheet" data-id="${o.id}">${ic("chevL", "sm")} Back to order</button><button class="btn btn-primary" data-act="soPrint">${ic("doc", "sm")} Print / save as PDF</button>`, true);
+  const f = $("#so-frame"); f.onload = fitSO; f.srcdoc = soDocHtml(o); setTimeout(fitSO, 350);
+};
+ACT.soPrint = () => { const f = $("#so-frame"); if (f && f.contentWindow) { f.contentWindow.focus(); f.contentWindow.print(); } };
+window.addEventListener("resize", () => { if ($("#so-frame")) fitSO(); });
 
 /* ===== DISPATCH ===== */
 const shortOf = (name) => (distByKey[key(name)] && distByKey[key(name)].short) || name;
@@ -2945,7 +3021,7 @@ ACT.cmdRun = (el) => { const it = cmdItems[+el.dataset.i]; closeCmd(); if (it) i
 /* ===== boot ===== */
 function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
-const VIEW_ACTS = new Set("xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_ACTS = new Set("soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {
@@ -3009,6 +3085,10 @@ ACT.distEdit = (el) => {
       ${fld("df-contact", "Contact person (for emails)", x.contact, { ph: "e.g. Rajesh" })}
       ${fld("df-email", "Email", x.email, { type: "email", ph: "orders@theirfirm.com" })}
       ${fld("df-cc", "Also copy (optional)", x.cc, { ph: "Other emails, separated by commas", full: true })}
+      ${fld("df-gstin", "GSTIN", x.gstin, { ph: "e.g. 32ABCDE1234F1Z5" })}
+      ${fld("df-state", "State", x.state || "32-Kerala")}
+      ${fld("df-addr", "Billing address (on the sales order)", x.address, { full: true, ph: "Building, street, town, PIN" })}
+      ${fld("df-ship", "Ship to (if different)", x.shipTo, { full: true, ph: "Leave empty to ship to the billing address" })}
       ${fld("df-district", "District", x.district, { list: districts, ph: "e.g. Ernakulam" })}
       ${fld("df-uom", "Usually orders in", x.uom || "Crate", { options: [["Crate", "Crates"], ["EA (Box)", "Boxes"], ["Pieces", "Pieces"]] })}
       ${fld("df-pay", "Payment", x.pay || "", { options: [["", "Not set"], "Cheque", "Bank Transfer", "UPI", "Cash"] })}
@@ -3025,13 +3105,15 @@ ACT.distSave = (el) => {
   if (!name) return formErr("Enter the distributor's name.");
   const clash = distByKey[key(name)]; if (clash && clash !== old) return formErr("A distributor with this name already exists.");
   const phone = val("df-phone").replace(/[^\d+]/g, ""); if (phone && phone.replace(/\D/g, "").length < 10) return formErr("The phone number looks too short.");
-  const credit = numOrNull(val("df-credit")), deposit = numOrNull(val("df-deposit"));
+  const credit = numOrNull(val("df-credit")), deposit = numOrNull(val("df-deposit")), gstin = val("df-gstin").replace(/\s/g, "").toUpperCase();
+  if (gstin && !/^\d{2}[A-Z0-9]{13}$/.test(gstin)) return formErr("The GSTIN should be 15 characters, starting with the 2-digit state code.");
   const email = val("df-email"), ccRaw = val("df-cc");
   if (email && badEmail(email)) return formErr(`“${badEmail(email)}” does not look like an email address.`);
   if (ccRaw && badEmail(ccRaw)) return formErr(`Copy emails: “${badEmail(ccRaw)}” does not look like an email address.`);
   const d = old || { updated: null };
   const before = old ? JSON.stringify(old) : "";
   if (old && old.name !== name) renameDistributor(old.name, name);
+  Object.assign(d, { gstin: gstin || null, state: val("df-state") || null, address: val("df-addr") || null, shipTo: val("df-ship") || null });
   Object.assign(d, { name, short: val("df-short") || null, phone: phone || null, district: val("df-district") || null, uom: val("df-uom"), pay: val("df-pay") || null, credit: credit != null ? Math.round(credit) : null, deposit: deposit != null ? Math.round(deposit) : null, freezer: val("df-freezer") || null, special: val("df-pricing") === "special", contact: val("df-contact") || null, email: email ? emails(email)[0] : null, cc: ccRaw ? emails(ccRaw).join(", ") : null, updated: iso(NOW()) });
   d.pricing = d.special ? "Special prices" : "Normal";
   if (!old) D.distributors.push(d);
@@ -3128,7 +3210,7 @@ function settingsHtml() {
   return `<div class="grid-2" style="align-items:start"><div class="card card-pad"><div class="card-title">Company details</div><div class="row-sub" style="margin:4px 0 14px">Printed on every sales order.</div><div class="form-grid">
       ${fld("cf-name", "Company name", C.name, { full: true })}${fld("cf-address", "Address", C.address, { full: true })}
       ${fld("cf-gstin", "GSTIN", C.gstin)}${fld("cf-fssai", "FSSAI licence", C.fssai)}
-      ${fld("cf-phone", "Phone", C.phone)}${fld("cf-email", "Email", C.email)}
+      ${fld("cf-phone", "Phone", C.phone)}${fld("cf-email", "Email", C.email)}${fld("cf-state", "State", C.state || "32-Kerala")}
     </div><button class="btn btn-primary" style="margin-top:16px" data-act="companySave" ${CAN_PRICE ? "" : "disabled"}>${ic("check", "sm")} Save company details</button></div>
     <div class="card card-pad"><div class="card-title">Tropicana, Swiggy and Zepto</div><div class="row-sub" style="margin:4px 0 14px">Where pick lists and deliveries go, and the smallest delivery worth sending.</div><div class="form-grid">
       ${fld("qf-swto", "Swiggy delivery point", Q.swiggyTo, { full: true })}${fld("qf-swmin", "Swiggy minimum per delivery (₹)", Q.minSwiggy, { type: "number", step: "1" })}
@@ -3141,7 +3223,7 @@ function settingsHtml() {
 ACT.companySave = () => {
   if (!CAN_PRICE) return;
   const C = D.company || (D.company = {});
-  Object.assign(C, { name: val("cf-name") || "SahiReach LLP", address: val("cf-address"), gstin: val("cf-gstin").toUpperCase(), fssai: val("cf-fssai"), phone: val("cf-phone"), email: val("cf-email") });
+  Object.assign(C, { name: val("cf-name") || "SahiReach LLP", address: val("cf-address"), gstin: val("cf-gstin").toUpperCase(), fssai: val("cf-fssai"), phone: val("cf-phone"), email: val("cf-email"), state: val("cf-state") || "32-Kerala" });
   Object.assign(CO, C); logActivity("Company details edited", "", C.name); toast("Company details saved");
 };
 ACT.qcSettingsSave = () => {
