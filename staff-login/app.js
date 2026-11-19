@@ -233,6 +233,7 @@ const avgBuy = {};
 function unitCost(sap) { const p = D.prices[sap]; if (p && p[0] != null) return p[0]; if (avgBuy[sap] != null) return avgBuy[sap]; const s = stockBySap[sap]; return s && s.cost != null ? s.cost : null; }
 const districtOf = (n) => (distByKey[key(n)] || {}).district || "Other";
 
+const TODX_DIST = "TOD received for sales not in the tool";
 function salesFacts() {
   const f = [];
   (D.salesBefore || []).forEach((r) => {
@@ -254,6 +255,13 @@ function salesFacts() {
     const dt = p.deliveredOn.slice(0, 10), ch = p.platform.toLowerCase(), ls = (qcLinesByPO[p.po] || []).filter((l) => (l.accepted || 0) > 0);
     if (ls.length) ls.forEach((l) => { const v = l.valueAccepted != null ? l.valueAccepted : l.accepted * l.price; f.push({ date: dt, ch, dist: p.platform, sap: l.sap, product: l.product, crates: l.ppc ? l.accepted / l.ppc : 0, value: v, tod: 0, cost: v * (1 - QC_GP_RATE), ref: p.po, kind: "qc" }); });
     else f.push({ date: dt, ch, dist: p.platform, sap: null, product: null, crates: p.pcs ? (p.crates * (p.pcsAccepted || 0)) / p.pcs : 0, value: p.valueAccepted, tod: 0, cost: p.valueAccepted * (1 - QC_GP_RATE), ref: p.po, kind: "qc" });
+  });
+  /* TOD Hangyo paid for a month beyond what the tool has for it (sales from before the tool, or not entered):
+     counted as TOD earned in that month, so the month's TOD and profit match what was actually received */
+  ((D.tod && D.tod.receipts) || []).forEach((r) => {
+    if (!r.month || !(r.excess > 0.005)) return;
+    const end = ymd(new Date(+r.month.slice(0, 4), +r.month.slice(5, 7), 0)), today = ymd(NOW());
+    f.push({ date: end < today ? end : today, ch: "gt", dist: TODX_DIST, sap: null, product: null, crates: 0, value: 0, tod: r.excess, cost: 0, ref: r.ref || "TOD " + r.month, kind: "todx" });
   });
   return f;
 }
@@ -289,9 +297,11 @@ function factsIn(facts, from, to) { return from ? facts.filter((f) => f.date >= 
 function periodStats(facts, from, to) {
   const F = factsIn(facts, from, to), s = { facts: F, net: 0, gt: 0, swiggy: 0, zepto: 0, crates: 0, gtCrates: 0, toolCrates: 0, qcCrates: 0, gpGT: 0, gpQC: 0, tod: 0, returns: 0, noCost: 0, noCostP: {}, orders: new Set(), dists: new Set(), missed: 0, qcOrdered: 0, qcAccepted: 0, o2d: [], qcDeliveries: new Set() };
   if (!from) return s;
+  s.todx = 0;
   F.forEach((f) => {
+    if (f.kind === "todx") { s.tod += f.tod; s.todx += f.tod; return; } /* extra TOD received: added to profit as it is, below */
     s.net += f.value; s[f.ch] += f.value; s.crates += f.crates;
-    if (f.ch === "gt") { s.gtCrates += f.crates; if (f.kind === "order") s.toolCrates += f.crates; if (f.noCost && f.value > 0) { s.noCost += f.value; s.noCostP[f.product || f.sap] = (s.noCostP[f.product || f.sap] || 0) + f.value; } else s.gpGT += f.value + f.tod - f.cost; s.tod += f.tod; if (f.kind === "note" || f.kind === "return") s.returns += -f.value; else { s.orders.add(f.ref); if (f.value > 0) s.dists.add(f.dist); } }
+    if (f.ch === "gt") { s.gtCrates += f.crates; if (f.kind === "order") s.toolCrates += f.crates; if (f.noCost && f.value > 0) { s.noCost += f.value; s.noCostP[f.product || f.sap] = (s.noCostP[f.product || f.sap] || 0) + f.value; } else s.gpGT += f.value + f.tod - f.cost; s.tod += f.tod; if (f.kind === "note" || f.kind === "return") s.returns += -f.value; else if (f.kind !== "todx") { s.orders.add(f.ref); if (f.value > 0) s.dists.add(f.dist); } }
     else { s.qcCrates += f.crates; s.gpQC += f.value * QC_GP_RATE; s.qcDeliveries.add(f.ref); }
   });
   const ch = S.dash.ch, dsel = S.dash.district;
@@ -299,7 +309,8 @@ function periodStats(facts, from, to) {
   if (dsel === "all" && ch !== "gt") D.qcPOs.forEach((p) => { const d = (p.deliveredOn || (p.status === "Lapsed" ? p.expiry : "") || "").slice(0, 10); if (!d || d < from || d > to) return; if ((ch === "swiggy" || ch === "zepto") && p.platform.toLowerCase() !== ch) return; s.qcOrdered += p.pcs || 0; s.qcAccepted += p.pcsAccepted || 0; });
   D.orders.forEach((o) => { if (o.status === "Dispatched" && o.dispatched && o.dispatched.slice(0, 10) >= from && o.dispatched.slice(0, 10) <= to && (ch === "all" || ch === "gt") && (dsel === "all" || districtOf(o.dist) === dsel)) s.o2d.push((toDate(o.dispatched) - toDate(o.time)) / 864e5); });
   /* sales of products with no cost price would count as pure profit: estimate their profit at the margin of the rest */
-  if (s.noCost) { const base = s.gt - s.noCost + s.tod; s.gpEst = base > 0 ? s.noCost * (s.gpGT / base) : 0; s.gpGT += s.gpEst; }
+  if (s.noCost) { const base = s.gt - s.noCost + s.tod - s.todx; s.gpEst = base > 0 ? s.noCost * (s.gpGT / base) : 0; s.gpGT += s.gpEst; }
+  s.gpGT += s.todx;
   s.qc = s.swiggy + s.zepto; s.gp = s.gpGT + s.gpQC;
   s.margin = s.net + s.tod ? s.gp / (s.net + s.tod) : null;
   s.fillGT = s.toolCrates + s.missed > 0 ? s.toolCrates / (s.toolCrates + s.missed) : null;
@@ -673,8 +684,8 @@ function attention(facts) {
   if (!SEE_MONEY) return out;
   const runs = typeof unloggedRuns === "function" ? unloggedRuns() : [];
   if (runs.length) out.push({ ic: "truck", cls: "warn", go: "logistics", title: `${runs.length} dispatch${runs.length > 1 ? "es" : ""} without a trip logged`, sub: runs.slice(0, 2).map((r) => fmtDate(r.date) + ": " + runLabel(r)).join(" · ") + " · add km and cost" });
-  const todDue = D.tod.lines.filter((l) => l.status !== "Received").reduce((a, l) => a + (l.amount || 0), 0) || D.tod.total;
-  out.push({ ic: "rupee", cls: "info", title: `${rs(todDue)} TOD due from Hangyo`, sub: "Not yet received, all months", go: "tod" });
+  const todDue = todState().total, lastR = (D.tod.receipts || []).find((r) => r.month);
+  out.push({ ic: "rupee", cls: "info", title: `${rs(todDue)} TOD due from Hangyo`, sub: lastR ? `Last received: ${rs(lastR.amount)} for ${monthName(lastR.month)} sales${lastR.excess > 0.005 ? ` (${rs(lastR.excess)} more than in the tool)` : ""}` : "Not yet received, all months", go: "tod" });
   return out;
 }
 const chgTxt = (a, b, lbl) => (b == null || !lbl ? "" : b <= 0 ? (a > 0 ? "New vs " + lbl : "") : (a >= b ? "▲ " : "▼ ") + Math.abs((a / b - 1) * 100).toFixed(1) + "% vs " + lbl);
@@ -772,13 +783,13 @@ VIEWS.home = () => {
   </div>`;
 };
 function momCard(facts) {
-  const months = monthsSeries(facts).map((m) => { const from = m.k + "-01", t = toDate(from), to = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0)); const s = periodStats(facts, from, to < ymd(NOW()) ? to : ymd(NOW())); s.pur = purchasesIn(from, to).total; s.logi = logiForDash(from, to, S.dash.ch); return { m, s }; });
+  const months = monthsSeries(facts).map((m) => { const from = m.k + "-01", t = toDate(from), to = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0)); const s = periodStats(facts, from, to < ymd(NOW()) ? to : ymd(NOW())); s.pur = purchasesIn(from, to).total; s.todRecv = ((D.tod && D.tod.receipts) || []).filter((r) => r.month === m.k).reduce((a, r) => a + (r.amount || 0), 0); s.logi = logiForDash(from, to, S.dash.ch); return { m, s }; });
   const rows = [
     ["Net sales", (s) => rs(s.net)], ["Distributor sales (GT)", (s) => rs(s.gt)], ["Swiggy", (s) => rs(s.swiggy)], ["Zepto", (s) => rs(s.zepto)],
     ["GT orders dispatched", (s) => nf(s.orders.size)], ["Average GT order", (s) => rs(s.avgOrder)], ["Active distributors", (s) => nf(s.dists.size)],
     ["Crates moved", (s) => nf(s.crates, 0)], ["Gross profit", (s) => rs(s.gp)], ["Gross margin", (s) => (s.margin != null ? pct(s.margin, 1) : "–")],
     ["Fill rate, distributors", (s) => (s.fillGT != null ? pct(s.fillGT, 1) : "–")], ["Fill rate, quick commerce", (s) => (s.fillQC != null ? pct(s.fillQC, 1) : "–")],
-    ["Logistics cost", (s) => rs(s.logi.cost)], ["Logistics, % of sales carried", (s) => (s.logi.pct != null ? pct(s.logi.pct, 2) : "–")], ["Missed sales (crates)", (s) => nf(s.missed, 1)], ["Returns and credit notes", (s) => rs(s.returns)], ["TOD earned", (s) => rs(s.tod)], ["Purchases from Hangyo", (s) => rs(s.pur)],
+    ["Logistics cost", (s) => rs(s.logi.cost)], ["Logistics, % of sales carried", (s) => (s.logi.pct != null ? pct(s.logi.pct, 2) : "–")], ["Missed sales (crates)", (s) => nf(s.missed, 1)], ["Returns and credit notes", (s) => rs(s.returns)], ["TOD earned", (s) => rs(s.tod)], ["TOD received from Hangyo", (s) => (s.todRecv ? rs(s.todRecv) : "–")], ["Purchases from Hangyo", (s) => rs(s.pur)],
   ].filter(([l]) => SEE_MONEY || !/profit|margin|logistics|tod|purchases/i.test(l));
   const table = `<table class="t"><thead><tr><th class="sticky-col">Measure</th>${months.map(({ m }) => `<th class="r">${esc(m.label)}</th>`).join("")}</tr></thead><tbody>${rows.map(([l, f]) => `<tr><td class="sticky-col">${esc(l)}</td>${months.map(({ s }) => `<td class="r">${f(s)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   return `<div class="card"><div class="card-head"><div><div class="card-title">All the numbers, month on month</div><div class="card-sub">${S.dash.ch !== "all" || S.dash.district !== "all" ? "Filtered: " + esc([S.dash.ch !== "all" ? DASH_CHANNELS.find((c) => c[0] === S.dash.ch)[1] : "", S.dash.district !== "all" ? S.dash.district : ""].filter(Boolean).join(" · ")) + " · " : ""}*this month so far</div></div></div><div class="card-pad" style="padding-top:8px"><div style="overflow-x:auto;margin:0 -8px">${table}</div></div></div>`;
@@ -787,7 +798,7 @@ ACT.nav = (el) => go(el.dataset.to);
 ACT.drill = (el) => {
   const k = el.dataset.k, { R, cur, prev } = homeData(), cmp = R.pFrom ? R.cmpLabel : "";
   const tbl = (head, rows) => rows.length ? `<div class="table-wrap"><table class="t"><thead><tr>${head.map((h, i) => `<th class="${i ? "r" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="${i ? "r" : ""}">${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="group"><div class="empty">Nothing in this period.</div></div>`;
-  const gt = cur.facts.filter((f) => f.ch === "gt"), dPrev = groupBy(prev.facts.filter((f) => f.ch === "gt"), (f) => f.dist);
+  const gt = cur.facts.filter((f) => f.ch === "gt" && f.kind !== "todx"), dPrev = groupBy(prev.facts.filter((f) => f.ch === "gt"), (f) => f.dist);
   let title = "", big = "", sub = "", body = "";
   const byDist = () => tbl(["Distributor", R.label, cmp || "Before", "Orders", "Crates", "Last sale"], Object.values(groupBy(gt, (f) => f.dist)).sort((a, b) => b.value - a.value).map((x) => [esc(x.key) + `<div class="row-sub">${esc(districtOf(x.key))}</div>`, rs(x.value), dPrev[x.key] ? rs(dPrev[x.key].value) : "–", x.refs.size, nf(x.crates, 1), fmtDate(x.last)]));
   if (k === "gt" || k === "active") { title = k === "gt" ? "Distributor sales (GT)" : "Active distributors"; big = k === "gt" ? `₹${lakh(cur.gt)}<small>lakh</small>` : nf(cur.dists.size); sub = `${cur.orders.size} orders · ${nf(cur.gtCrates, 0)} crates`; body = byDist(); }
@@ -839,7 +850,7 @@ function gpRows(cur, prev, keyFn, nameFn) {
   const est = gpEstRate(cur), estP = gpEstRate(prev), g = {}, gp = {};
   cur.facts.forEach((f) => { const k = keyFn(f); if (k == null) return; const x = (g[k] = g[k] || { k, v: 0, tod: 0, gp: 0, est: false }); x.v += f.value; x.tod += f.ch === "gt" ? f.tod : 0; x.gp += factGP(f, est); if (f.ch !== "gt" || (f.noCost && f.value > 0)) x.est = true; });
   (prev.facts || []).forEach((f) => { const k = keyFn(f); if (k == null) return; gp[k] = (gp[k] || 0) + factGP(f, estP); });
-  return Object.values(g).filter((x) => Math.abs(x.v) > 0.5).map((x) => ({ ...x, name: nameFn(x.k), m: x.v + x.tod > 0 ? x.gp / (x.v + x.tod) : null, prevGP: gp[x.k] != null ? gp[x.k] : null })).sort((a, b) => b.gp - a.gp);
+  return Object.values(g).filter((x) => Math.abs(x.v) > 0.5 || Math.abs(x.gp) > 0.5).map((x) => ({ ...x, name: nameFn(x.k), m: Math.abs(x.v) > 0.5 && x.v + x.tod > 0 ? x.gp / (x.v + x.tod) : null, prevGP: gp[x.k] != null ? gp[x.k] : null })).sort((a, b) => b.gp - a.gp);
 }
 function gpBars(rows, avg, act) {
   const top = rows.slice(0, 10), max = Math.max(1, ...top.map((d) => Math.abs(d.gp)));
@@ -940,7 +951,7 @@ function whyTable(head, rows, foot) {
   }
   return `<div class="table-wrap"><table class="t"><thead><tr>${head.map((h, i) => `<th class="${i ? "r" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody>${foot ? `<tfoot><tr>${foot.map((c, i) => `<td class="${i ? "r" : ""}"><b>${c}</b></td>`).join("")}</tr></tfoot>` : ""}</table></div>`;
 }
-const refLabel = (f) => (f.kind === "order" ? "Order" : f.kind === "vyapar" ? "Invoice" : f.kind === "qc" ? "PO" : f.kind === "return" ? "Return" : "Note");
+const refLabel = (f) => (f.kind === "todx" ? "TOD receipt" : f.kind === "order" ? "Order" : f.kind === "vyapar" ? "Invoice" : f.kind === "qc" ? "PO" : f.kind === "return" ? "Return" : "Note");
 function whyBack() { return S.seeKind ? `<button class="btn btn-secondary" data-act="seeAll" data-kind="${S.seeKind}">${ic("chevL", "sm")} Back to the list</button>` : ""; }
 ACT.whyDist = (el) => {
   if (el.dataset.from === "home") S.seeKind = null;
