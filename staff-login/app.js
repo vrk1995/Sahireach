@@ -1257,13 +1257,14 @@ ACT.nav2 = (el) => { closeSheet(); go(el.dataset.to); };
 const IMP_SIZES = new Set([20, 30, 35, 40, 50, 55, 60, 65, 70, 80, 100, 110, 125, 170, 500, 700, 1000, 1500, 2000, 4000]);
 const IMP_FIX = { vanila: "vanilla", vannila: "vanilla", vanill: "vanilla", venilla: "vanilla", choclate: "chocolate", chocklate: "chocolate", chocolat: "chocolate", chocolates: "chocolate", choc: "chocolate", strawbery: "strawberry", srawberry: "strawberry", straw: "strawberry", stawberry: "strawberry", creame: "cream", creem: "cream", cones: "cone", cups: "cup", bars: "bar", candies: "candy", kulfis: "kulfi", koolfi: "kulfi", kulfee: "kulfi", sticks: "stick", tubs: "tub", balls: "ball", sandwiches: "sandwich", sundae: "sundae", pista: "pista", pistachio: "pista", alphonsa: "alphonso", alphanso: "alphonso", almd: "almond", tofee: "toffee", toffe: "toffee", current: "currant", blackcurrent: "blackcurrant", bscotch: "butterscotch", btrscotch: "butterscotch", ripple: "ripple", fills: "fills", fill: "fills", googli: "googly", gugly: "googly", rasmalai: "rasmalai", dryfruit: "dryfruits", dryfruits: "dryfruits", fruits: "fruit", ltr: "l", ltrs: "l", litre: "l", litres: "l", liter: "l", liters: "l", lit: "l", lt: "l" };
 const IMP_JOIN = [[/\bbutter\s+scotch\b/g, "butterscotch"], [/\bsip\s*-?\s*up\b/g, "sipup"], [/\bchoco\s*-?\s*bar\b/g, "chocobar"], [/\bblack\s+curr[ae]nt\b/g, "blackcurrant"], [/\bdry\s+fruits?\b/g, "dryfruits"], [/\bras\s+malai\b/g, "rasmalai"], [/\bpop\s*-?\s*up\b/g, "popup"], [/\bgud\s*-?\s*bud\b/g, "gudbud"], [/\bfun\s+bites?\b/g, "funbites"], [/\bice\s*cream\b/g, " "]];
-const IMP_STOP = new Set(["x", "ml", "the", "and", "of", "with", "new", "mrp", "np", "fd", "pre", "nos", "no", "pcs", "pc", "order", "primary", "flavour", "flavor", "pack", "packs", "box", "boxes", "crate", "crates", "crt", "ctn", "qty", "piece", "pieces", "ea", "oval", "ovel", "p", "sm", "lit", "a", "in"]);
+const IMP_STOP = new Set(["hangyo", "x", "ml", "the", "and", "of", "with", "new", "mrp", "np", "fd", "pre", "nos", "no", "pcs", "pc", "order", "primary", "flavour", "flavor", "pack", "packs", "box", "boxes", "crate", "crates", "crt", "ctn", "qty", "piece", "pieces", "ea", "oval", "ovel", "p", "sm", "lit", "a", "in"]);
 const IMP_GENERIC = new Set(["cone", "cup", "bar", "stick", "mini", "big", "small", "tub", "candy", "kulfi", "judwa", "bulk", "parlour", "premium", "gourmet", "slice", "ball", "dolly", "sipup", "sandwich", "catering", "paper"]);
 const IMP_CAT = { "Sticks": ["bar", "stick"], "Big Cups": ["cup"], "Small Cups": ["cup", "small"], "Big Cones": ["cone", "big"], "Mini Cones": ["cone", "mini"], "Kulfis": ["kulfi"], "Candies": ["candy"], "Judwa": ["judwa"], "Tubs 100 ml": ["cup"], "Tubs 125 ml": ["tub", "cup"], "Tubs 500 ml": ["tub"], "Tubs 1000 ml": ["tub"], "Tubs 1500 ml": ["tub"], "Paper Packs 1000 ml": ["brick"], "Paper Packs 2000 ml": ["brick"], "Bulk Packs 4000 ml": ["bulk"], "Parlour Paper Packs 4000 ml": ["parlour", "bulk"], "Parlour Tubs 4000 ml": ["parlour", "tub"], "Sip Up": ["sipup"], "Dolly": ["dolly", "bar"], "Ball": ["ball"], "Sandwich": ["sandwich"], "Cassatta": ["cassata", "slice"], "Premium Product (Tourist Spot)": ["premium"], "Gourmet Series": ["gourmet"] };
 const IMP_CAT_GROUP = (cat) => { const c = String(cat || ""); return /cone/i.test(c) ? "cone" : /cup|tubs 1(00|25) ml/i.test(c) ? "cup" : /tubs|paper packs (1000|2000)/i.test(c) ? "tub" : /4000/.test(c) ? "bulk" : /sticks|dolly|candies|sip up/i.test(c) ? "stick" : c.toLowerCase(); };
 function impNorm(s) {
   let t = " " + String(s || "").toLowerCase().replace(/&/g, " and ").replace(/f\.\s*d\.?/g, " fd ").replace(/\bpre\.\s*/g, " premium ").replace(/\bnew\s*mrp\b|\bnp\b\s*-?/g, " ") + " ";
   t = t.replace(/(\d)\s*[x×*]\s*(\d)/g, "$1 x $2").replace(/(\d+)\s*x\s*(?=\d+(?:\.\d+)?\s*(?:ml|l|ltrs?|litres?|liters?|lit)\b)/g, (m, n) => (+n > 1 ? ` c${+n} ` : " "));
+  t = t.replace(/\b(\d{1,2})\s*(?:pcs?|pieces|nos)\b/g, (m, n) => (+n > 1 ? ` c${+n} ` : " ")); /* "(16PCS)" = 16 in a box, like "16 x" */
   t = t.replace(/(\d+(?:\.\d+)?)\s*(ml|ltrs?|litres?|liters?|lit\.?|lt|l)\b/g, (m, n, u) => ` s${Math.round(+n * (u[0] === "m" ? 1 : 1000))} `);
   IMP_JOIN.forEach(([re, v]) => { t = t.replace(re, " " + v + " "); });
   return t.replace(/[^a-z0-9.\s]/g, " ").replace(/\.(?!\d)/g, " ").replace(/\s+/g, " ").trim();
@@ -1381,8 +1382,9 @@ function impFromRows(rows) {
   for (let i = 0; i < Math.min(rows.length, 20) && hr < 0; i++) rows[i].forEach((v, j) => { if (hr < 0 && /^(product( name)?|products|items?( name)?|item description|particulars|description|sku( name)?|product description|flavou?rs?|name of (the )?(item|product))$/i.test(v.replace(/\s+/g, " ").trim())) { hr = i; nameCol = j; } });
   if (hr < 0) return { lines: impFromText(rows.map((r) => r.filter(Boolean).join(" ")).join("\n")), header: false };
   const H = rows[hr].map((h) => h.replace(/\s+/g, " ").trim()), cand = [];
+  const unitCol = H.findIndex((h) => /^(unit|units|uom|unit of measure)$/i.test(h)), priceCol = H.findIndex((h) => /price|rate/i.test(h) && !/mrp|amount|value|total|gst/i.test(h));
   H.forEach((h, j) => {
-    if (j === nameCol || !h || /units?\s*\/\s*crates?|per crate|\bupc\b|\bmrp\b|\brate\b|\bprice\b|\bamount\b|\bvalue\b|\btotal\b|\btype\b|categ|^sl\b|^s\.? ?no\b|\bcode\b|\bhsn\b|\bgst\b|\bstock\b/i.test(h)) return;
+    if (j === nameCol || j === unitCol || !h || /units?\s*\/\s*crates?|per crate|\bupc\b|\bmrp\b|\brate\b|\bprice\b|\bamount\b|\bvalue\b|\btotal\b|\btype\b|categ|^sl\b|^s\.? ?no\b|\bcode\b|\bhsn\b|\bgst\b|\bstock\b/i.test(h)) return;
     const p = /order crate|crate number|crates? ordered/i.test(h) ? 5 : /^(crt|crts|crates?|ctns?|cases?)$/i.test(h) ? 4 : /qty|quantity|order/i.test(h) ? 3 : /box|pcs|pieces|nos|units?$/i.test(h) ? 2 : 0;
     if (p) cand.push({ j, p, unit: /crt|crate|ctn|case/i.test(h) ? "Crate" : /box/i.test(h) ? "EA (Box)" : /pcs|piece|nos|units?$/i.test(h) ? "Pieces" : null });
   });
@@ -1393,7 +1395,9 @@ function impFromRows(rows) {
     let got = null;
     for (const c of cand) { const v = r[c.j]; if (v === "" || v == null) continue; const m = String(v).match(new RegExp(`^(\\d+(?:\\.\\d+)?)\\s*(${IMP_UNIT_RE})?\\.?$`, "i")); if (m && +m[1] > 0) { got = { qty: +m[1], unit: IMP_UNIT(m[2]) || c.unit }; break; } }
     if (!got) { skipped++; return; }
-    out.push({ raw: `${nm} — ${got.qty}${got.unit ? " " + UNIT_LABEL[got.unit].toLowerCase() : ""}`, name: nm, qty: got.qty, unit: got.unit });
+    const ut = unitCol >= 0 ? r[unitCol] || "" : "", pr = priceCol >= 0 ? +String(r[priceCol] || "").replace(/[^\d.]/g, "") || null : null;
+    if (!got.unit && IMP_UNIT(ut)) got.unit = IMP_UNIT(ut);
+    out.push({ raw: `${nm} — ${got.qty}${ut ? " " + ut : got.unit ? " " + UNIT_LABEL[got.unit].toLowerCase() : ""}${pr ? " @ ₹" + pr : ""}`, name: nm, qty: got.qty, unit: got.unit, unitText: ut, price: pr });
   });
   return { lines: out, header: true, skipped };
 }
@@ -1405,7 +1409,8 @@ function impFindDist(text) {
   D.distributors.forEach((d) => {
     const toks = impNorm(d.name).split(" ").filter((w) => w.length >= 3 && !GEN.test(w)), sh = impNorm(d.short || "").split(" ").filter((w) => w.length >= 3 && !GEN.test(w));
     const hit = (ws) => ws.length && ws.every((w) => [...T].some((t) => t === w || (w.length >= 5 && impLev(t, w) <= 1)));
-    const sc = hit(toks) ? toks.length + 1 : hit(sh) ? sh.length : toks.length >= 2 && toks.filter((w) => T.has(w)).length >= 2 ? 1 : 0;
+    const joined = toks.join(""), flat = impNorm(text).replace(/\s+/g, "");
+    const sc = hit(toks) ? toks.length + 1 : joined.length >= 6 && toks.length >= 2 && flat.includes(joined) ? toks.length + 1 : hit(sh) ? sh.length : toks.length >= 2 && toks.filter((w) => T.has(w)).length >= 2 ? 1 : 0;
     if (sc && (!best || sc > best.sc)) best = { d, sc };
   });
   return best ? best.d.name : null;
@@ -1458,7 +1463,19 @@ function impBuild(parsed, distName, smart) {
       let c = impMatch(x.name, ctx);
       if (x.ctx) { const c2 = impMatch(x.ctx + " " + x.name, ctx); if (c2.length && (!c.length || (c2[0].score >= 0.75 && c2[0].score >= c[0].score - 0.12))) c = c2; }
       const conf = impConf(c);
-      lines.push({ raw: x.raw, sap: conf === "none" ? null : c[0].sap, cands: c.slice(0, 6).map((m) => m.sap), qty: x.qty, unit: x.unit || defUnit, conf, note: "", leave: false });
+      let sap = conf === "none" ? null : c[0].sap, cf = conf, note = "";
+      /* the price on a purchase order confirms the product: pick the close match whose rate fits, flag a big difference */
+      if (x.price > 0 && c.length) {
+        const fits = (s) => { const r = price(s), st = stockBySap[s] || catBySap[s] || {}; return r > 0 && (Math.abs(x.price / r - 1) < 0.03 || (st.upc && Math.abs(x.price / (r * st.upc) - 1) < 0.03)); };
+        const alt = c.slice(0, 5).find((m) => m.score >= 0.5 && fits(m.sap));
+        if (alt && (!sap || !fits(sap))) { sap = alt.sap; cf = "check"; note = `Matched by its price (₹${x.price})`; }
+        else if (sap && fits(sap) && cf === "check" && c[0].score >= 0.6) cf = "sure";
+        else if (sap && price(sap) > 0 && !fits(sap) && !impUnitFromPrice(sap, x.price)) { cf = "check"; note = `Their price ₹${x.price} vs your rate ${rs2(price(sap))}: check the product`; }
+      }
+      const byPrice = sap && x.price ? impUnitFromPrice(sap, x.price) : null;
+      let unit = x.unit || defUnit;
+      if (byPrice) { if (x.unit && x.unit !== byPrice && x.unitText && !note) note = `Says “${x.unitText}”, but ₹${x.price} is a ${byPrice === "Crate" ? "crate" : "box"} price, so read as ${byPrice === "Crate" ? "crates" : "boxes"}`; unit = byPrice; }
+      lines.push({ raw: x.raw, sap, cands: [...new Set([sap].concat(c.slice(0, 6).map((m) => m.sap)))].filter(Boolean), qty: x.qty, unit, conf: cf, note, leave: false, price: x.price || null });
     });
     /* a heading on its own at the end, with nothing under it */
     parsed.lines.forEach((x, i) => { if (x.head && i > 0 && !parsed.lines.slice(i + 1).some((y) => !y.head)) { const c = impMatch(x.name, ctx); if (c.length && c[0].score >= 0.5) lines.push({ raw: x.raw, sap: c[0].sap, cands: c.slice(0, 6).map((m) => m.sap), qty: null, unit: defUnit, conf: "check", note: "No quantity given", leave: false }); } });
@@ -1471,7 +1488,7 @@ ACT.importOrder = () => {
   S.impIn = S.impIn || { text: "", file: null };
   const smartOn = IMP_SMART && !!(HOST && HOST.readOrder) && !S.smartMissing && !(D.company && D.company.smartOff);
   openSheet("Read an order", `<div class="card card-pad"><div class="field"><label class="label" for="imp-text">Paste the message</label><textarea class="input" id="imp-text" rows="10" style="height:auto;min-height:200px;padding:12px;line-height:1.45" placeholder="Aqua blue Exim - Primary order&#10;&#10;Vanilla cup 2&#10;Mini Choco bar 2&#10;Big cone Vanilla 2&#10;Sipup&#10;Vanilla 1">${esc(S.impIn.text)}</textarea></div>
-      <div class="hstack gap-12 wrap" style="margin-top:14px;align-items:center"><span class="row-sub">or</span><label class="btn btn-secondary" for="imp-file" style="cursor:pointer">${ic("doc", "sm")} Choose a file</label><input id="imp-file" type="file" accept=".xlsx,.xls,.csv,.txt${smartOn ? ",image/*" : ""}" hidden data-in="impFile"><span class="row-sub" id="imp-fname">${S.impIn.file ? esc(S.impIn.file.name) : smartOn ? "Excel, CSV, text or a photo of the order" : "Excel, CSV or text"}</span></div>
+      <div class="hstack gap-12 wrap" style="margin-top:14px;align-items:center"><span class="row-sub">or</span><label class="btn btn-secondary" for="imp-file" style="cursor:pointer">${ic("doc", "sm")} Choose a file</label><input id="imp-file" type="file" accept=".xlsx,.xls,.csv,.txt,.pdf,application/pdf${smartOn ? ",image/*" : ""}" hidden data-in="impFile"><span class="row-sub" id="imp-fname">${S.impIn.file ? esc(S.impIn.file.name) : smartOn ? "PDF, Excel, CSV, text or a photo of the order" : "PDF purchase order, Excel, CSV or text"}</span></div>
       <div class="row-sub" style="margin-top:12px">${smartOn ? `${ic("bolt", "sm")} Claude reads the order and finds the closest products. You check everything before anything is saved.` : `The tool finds the closest products from the names, sizes and what each distributor bought before. You check everything before anything is saved.`}</div></div>
       <div id="imp-wait"></div>`,
     `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="impRead">Read order</button>`);
@@ -1486,6 +1503,7 @@ async function impFileInput(f) {
     cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
     return { image: { media_type: "image/jpeg", data: cv.toDataURL("image/jpeg", 0.85).split(",")[1] }, filename: name };
   }
+  if (/\.pdf$/i.test(name) || f.type === "application/pdf") return impPdfInput(f);
   if (/\.(xlsx|xls|csv)$/i.test(name)) {
     await loadScriptOnce(XLSX_SRC, () => !!window.XLSX);
     const wb = window.XLSX.read(await f.arrayBuffer(), { type: "array" }), rows = [];
@@ -1503,12 +1521,12 @@ ACT.impRead = async (el) => {
     const input = f ? await impFileInput(f) : { text };
     if (f && text.trim()) input.text = text + "\n" + (input.text || "");
     const parsed = input.rows ? impFromRows(input.rows) : input.text ? { lines: impFromText(input.text) } : { lines: [] };
-    const hintSrc = [input.filename || "", (input.text || "").split("\n").slice(0, 3).join(" "), input.rows ? input.rows.slice(0, 6).map((r) => r.join(" ")).join(" ") : ""].join(" ");
+    const hintSrc = [input.head || "", input.filename || "", (input.text || "").split("\n").slice(0, 3).join(" "), input.rows ? input.rows.slice(0, 6).map((r) => r.join(" ")).join(" ") : ""].join(" ");
     let dist = S.draft.dist && !S.draft.editId ? S.draft.dist : impFindDist(hintSrc), smart = null, why = "";
     try { smart = await impSmart(input, dist); } catch (e) { if (e && e.code === "not_configured") S.smartMissing = true; else why = e && e.message ? e.message : "error"; }
     if (input.image && !smart) throw new Error(why || "Photos need smart reading with Claude. Paste the text or upload the Excel instead.");
     if (smart && smart.distributor && !dist) { const m = D.distributors.find((d) => key(d.name) === key(smart.distributor)); if (m) dist = m.name; }
-    S.imp = impBuild(parsed, dist, smart); S.imp.src = input.image ? "photo" : input.rows ? "excel" : "message"; S.imp.file = input.filename || "";
+    S.imp = impBuild(parsed, dist, smart); S.imp.src = input.image ? "photo" : input.pdf ? "pdf" : input.rows ? "excel" : "message"; S.imp.file = input.filename || "";
     if (why) toast("Claude could not read it this time, so it was read on this device", "info");
     if (!S.imp.lines.length) throw new Error("No products with quantities were found. Check the message or file.");
     impReview();
@@ -1549,7 +1567,7 @@ function impBody() {
   const order = L.map((l, i) => i).sort((a, b) => { const r = (l) => (!l.sap && !l.leave ? 0 : l.leave ? 3 : l.conf !== "sure" || l.qty == null ? 1 : 2); return r(L[a]) - r(L[b]) || a - b; });
   return `<div class="card card-pad"><div class="hstack between wrap gap-12"><div class="field" style="min-width:260px;flex:1"><label class="label" for="imp-dist">Distributor</label><select class="select" id="imp-dist" data-in="impDist">${I.dist ? "" : `<option value="">Choose the distributor…</option>`}${D.distributors.map((d) => `<option ${d.name === I.dist ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></div>
       <div class="hstack gap-8 wrap">${none.length ? `<span class="pill bad">${none.length} not understood</span>` : ""}${check.length ? `<span class="pill warn">${check.length} to check</span>` : ""}<span class="pill good">${sure.length} matched</span>${oos ? `<span class="pill plain">${oos} short or out of stock</span>` : ""}</div></div>
-    <div class="row-sub" style="margin-top:10px">${I.smart ? `${ic("bolt", "sm")} Read by Claude` : "Read"} from ${I.src === "excel" ? "the Excel file" : I.src === "photo" ? "the photo" : "the message"}${I.file ? ` (${esc(I.file)})` : ""}. ${I.skipped ? `${I.skipped} rows with no quantity were skipped. ` : ""}Nothing is saved until you press Save order on the next screen.</div></div>
+    <div class="row-sub" style="margin-top:10px">${I.smart ? `${ic("bolt", "sm")} Read by Claude` : "Read"} from ${I.src === "excel" ? "the Excel file" : I.src === "pdf" ? "the PDF" : I.src === "photo" ? "the photo" : "the message"}${I.file ? ` (${esc(I.file)})` : ""}. ${I.skipped ? `${I.skipped} rows with no quantity were skipped. ` : ""}Nothing is saved until you press Save order on the next screen.</div></div>
     ${none.length ? `<div class="banner bad">${ic("alert", "sm")}<span><b>${none.length} line${none.length > 1 ? "s" : ""} could not be understood:</b> ${none.map((l) => "“" + esc(l.raw) + "”").join(", ")}. Choose the product or leave ${none.length > 1 ? "them" : "it"} out.</span></div>` : ""}
     <div class="group imp-list">${order.map((i) => impLineHtml(L[i], i)).join("")}</div>
     <div class="row-sub">Your corrections are remembered, so the same wording is matched straight away next time.</div>
@@ -1601,7 +1619,7 @@ ACT.impApply = () => {
 };
 function importNoteHtml() {
   const n = S.draft.importNote; if (!n) return "";
-  return `<div class="banner info" style="align-items:flex-start">${ic("doc", "sm")}<span class="grow"><b>Read from ${n.src === "excel" ? "an Excel file" : n.src === "photo" ? "a photo" : "a message"}${n.smart ? " by Claude" : ""}: ${n.n} product${n.n > 1 ? "s" : ""}.</b>${n.swapped.length ? ` Swapped: ${esc(n.swapped.join(", "))}.` : ""}${n.left.length ? ` <b>Left out (${n.left.length}):</b> ${esc(n.left.join(", "))}.` : ""} Check the lines and press <b>Save order</b>.</span><button class="icon-btn" data-act="impNoteClose" aria-label="Hide">${ic("x", "sm")}</button></div>`;
+  return `<div class="banner info" style="align-items:flex-start">${ic("doc", "sm")}<span class="grow"><b>Read from ${n.src === "excel" ? "an Excel file" : n.src === "pdf" ? "a PDF" : n.src === "photo" ? "a photo" : "a message"}${n.smart ? " by Claude" : ""}: ${n.n} product${n.n > 1 ? "s" : ""}.</b>${n.swapped.length ? ` Swapped: ${esc(n.swapped.join(", "))}.` : ""}${n.left.length ? ` <b>Left out (${n.left.length}):</b> ${esc(n.left.join(", "))}.` : ""} Check the lines and press <b>Save order</b>.</span><button class="icon-btn" data-act="impNoteClose" aria-label="Hide">${ic("x", "sm")}</button></div>`;
 }
 ACT.importOrderGo = () => { if (S.draft.editId) S.draft = newDraft(); go("new-order"); ACT.importOrder(); };
 ACT.impNoteClose = () => { S.draft.importNote = null; render(); };
@@ -1697,6 +1715,86 @@ ACT.soPreview = (el) => {
 };
 ACT.soPrint = () => { const f = $("#so-frame"); if (f && f.contentWindow) { f.contentWindow.focus(); f.contentWindow.print(); } };
 window.addEventListener("resize", () => { if ($("#so-frame")) fitSO(); });
+
+/* ===== READ A PURCHASE ORDER PDF (typed PDFs from billing software, e.g. Vyapar / myBillBook) =====
+   The words and their positions are taken out of the PDF, the table is rebuilt from the header row
+   (Item name, Quantity, Unit, Price…), item names that wrap onto two lines are joined, and it stops at "Total". */
+const PDFJS_SRC = (HOST && HOST.pdfSrc) || "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+const PDFJS_WORKER = (HOST && HOST.pdfWorker) || "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+const PDF_NAME_H = /^(item\s*name|items?|item\s*description|product(\s*name)?|products|description(\s*of\s*goods)?|particulars|product\s*description|name\s*of\s*(the\s*)?(item|product)|sku(\s*name)?)$/i;
+async function pdfPages(buf) {
+  await loadScriptOnce(PDFJS_SRC, () => !!window.pdfjsLib);
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+  const doc = await window.pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise, pages = [];
+  for (let n = 1; n <= Math.min(doc.numPages, 6); n++) {
+    const tc = await (await doc.getPage(n)).getTextContent();
+    pages.push(tc.items.map((i) => ({ s: String(i.str || "").replace(/\s+/g, " ").trim(), x: i.transform[4], y: i.transform[5], w: i.width || 0 })).filter((i) => i.s));
+  }
+  return pages;
+}
+/* some PDFs put several header names in one text run (") Quantity Unit"): split it where a new column name starts */
+const PDF_COL_START = /^(qty|quantity|unit|units|uom|price|rate|mrp|gst|tax|amount|amt|hsn|batch|disc|discount|value|total|cgst|sgst|igst)\b/i, PDF_NO_SPLIT_AFTER = /(\/|^tax|^unit|^item|^sl\.?|^s\.?|^sr\.?|^per|^net|^total|^taxable|^disc\.?)$/i;
+function pdfSplitHead(i) {
+  const words = i.s.split(" "); if (words.length < 2 || !(i.w > 0)) return [i];
+  const per = i.w / i.s.length, out = []; let off = 0, cur = null;
+  words.forEach((wd, k) => {
+    if (!cur || (PDF_COL_START.test(wd) && !PDF_NO_SPLIT_AFTER.test(words[k - 1]))) { if (cur) out.push(cur); cur = { s: wd, x: i.x + off * per, y: i.y, w: wd.length * per }; }
+    else { cur.s += " " + wd; cur.w = i.x + (off + wd.length) * per - cur.x; }
+    off += wd.length + 1;
+  });
+  out.push(cur); return out;
+}
+function pdfLines(items) {
+  const L = []; items.slice().sort((a, b) => b.y - a.y || a.x - b.x).forEach((i) => { const l = L.find((x) => Math.abs(x.y - i.y) < 3); if (l) l.items.push(i); else L.push({ y: i.y, items: [i] }); });
+  return L.map((l) => l.items.sort((a, b) => a.x - b.x).map((i) => i.s).join(" "));
+}
+function pdfTable(pages) {
+  let cols = null; const rows = [], head = [];
+  for (const items of pages) {
+    const h = items.find((i) => PDF_NAME_H.test(i.s.replace(/[:()₹]/g, "").trim()));
+    let body = items;
+    if (h) {
+      const hs = items.filter((i) => Math.abs(i.y - h.y) <= 14);
+      if (!cols) head.push(...pdfLines(items.filter((i) => i.y > h.y + 14)));
+      const C = []; hs.flatMap(pdfSplitHead).sort((a, b) => a.x - b.x).forEach((i) => {
+        /* a wrapped header ("Price/" over "Unit") overlaps; pieces on one line ("MRP(" "₹" ")") touch */
+        const c = C.find((c) => (i.x < c.r - 1 && i.x + i.w > c.l + 1) || c.parts.some((p) => Math.abs(p.y - i.y) < 3 && i.x - (p.x + p.w) <= 3 && i.x - (p.x + p.w) >= -1));
+        if (c) { c.l = Math.min(c.l, i.x); c.r = Math.max(c.r, i.x + i.w); c.parts.push(i); } else C.push({ l: i.x, r: i.x + i.w, parts: [i] });
+      });
+      C.forEach((c) => { c.label = c.parts.sort((a, b) => b.y - a.y || a.x - b.x).map((p) => p.s).join(" ").replace(/\s*\/\s*/g, "/").replace(/\((₹|rs\.?|inr)\)/gi, "").trim(); });
+      cols = C; const low = Math.min(...hs.map((i) => i.y)); body = items.filter((i) => i.y < low - 4);
+    } else if (!cols) { head.push(...pdfLines(items)); continue; }
+    const colOf = (i) => { let best = -1, bo = 0; cols.forEach((c, j) => { const o = Math.min(i.x + i.w, c.r + 6) - Math.max(i.x, c.l - 6); if (o > bo) { bo = o; best = j; } }); if (best >= 0) return best; let d = 1e9; cols.forEach((c, j) => { const dd = Math.abs(i.x + i.w / 2 - (c.l + c.r) / 2); if (dd < d) { d = dd; best = j; } }); return best; };
+    const nameIdx = cols.findIndex((c) => PDF_NAME_H.test(c.label.replace(/[:]/g, ""))), noIdx = cols.findIndex((c) => /^(#|sl\.?\s*no\.?|s\.?\s*no\.?|sr\.?\s*no\.?|no\.?)$/i.test(c.label)), qtyIdx = cols.findIndex((c) => /qty|quantity/i.test(c.label));
+    const tagged = body.map((i) => ({ ...i, c: colOf(i) }));
+    const tot = tagged.filter((i) => (i.c === nameIdx || i.c === noIdx || i.c === 0) && /^(grand\s*|sub\s*)?total\b/i.test(i.s)).sort((a, b) => b.y - a.y)[0];
+    const live = tagged.filter((i) => !tot || i.y > tot.y + 2);
+    const aIdx = noIdx >= 0 ? noIdx : qtyIdx; if (aIdx < 0) continue;
+    const anchors = live.filter((i) => i.c === aIdx && /^\d+(\.\d+)?$/.test(i.s.replace(/,/g, ""))).sort((a, b) => b.y - a.y);
+    if (!anchors.length) continue;
+    const gaps = anchors.slice(1).map((a, k) => anchors[k].y - a.y).sort((a, b) => a - b), gap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 40;
+    const R = anchors.map(() => cols.map(() => []));
+    live.forEach((i) => { let k = -1, d = 1e9; anchors.forEach((a, n) => { const dd = Math.abs(a.y - i.y); if (dd < d) { d = dd; k = n; } }); if (k >= 0 && d <= Math.max(18, gap * 0.75)) R[k][i.c].push(i); });
+    R.forEach((r) => rows.push(r.map((cell) => cell.sort((a, b) => b.y - a.y || a.x - b.x).map((i) => i.s).join(" ").replace(/\s+/g, " ").trim())));
+    if (tot) break;
+  }
+  return cols ? { header: cols.map((c) => c.label), rows, head } : { header: null, rows: [], head };
+}
+async function impPdfInput(f) {
+  const pages = await pdfPages(await f.arrayBuffer());
+  if (!pages.some((p) => p.length)) throw new Error("This PDF is a scan or photo, so there is no text in it to read. Ask for the PDF from their billing software, or type the order in.");
+  const T = pdfTable(pages), headText = T.head.join("\n");
+  if (T.header && T.rows.length) { const all = [T.header].concat(T.rows); return { rows: all, rowsText: all.map((r) => r.join("\t")).join("\n").slice(0, 60000), head: headText, filename: f.name, pdf: true }; }
+  return { text: pages.map(pdfLines).flat().join("\n"), head: headText, filename: f.name, pdf: true };
+}
+/* what a price per unit says about the unit: a box price means boxes, a crate price means crates */
+function impUnitFromPrice(sap, p) {
+  const rate = price(sap), st = stockBySap[sap] || catBySap[sap] || {};
+  if (!(p > 0) || !(rate > 0)) return null;
+  if (p / rate > 0.6 && p / rate < 1.6) return "EA (Box)";
+  if (st.upc && p / (rate * st.upc) > 0.6 && p / (rate * st.upc) < 1.6) return "Crate";
+  return null;
+}
 
 /* ===== DISPATCH ===== */
 const shortOf = (name) => (distByKey[key(name)] && distByKey[key(name)].short) || name;
