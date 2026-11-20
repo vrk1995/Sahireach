@@ -1523,6 +1523,7 @@ ACT.impRead = async (el) => {
   if (el) el.disabled = true; part("imp-wait", `<div class="banner info" style="margin-top:12px">${ic("cycle", "sm")}<span>Reading the order…</span></div>`);
   try {
     const input = f ? await impFileInput(f) : { text };
+    if (input.qcPages) { await qcLoadPdf(input.qcPages, input.filename); toast("That is a quick commerce PO, so it was opened in Quick commerce", "bolt"); return; }
     if (f && text.trim()) input.text = text + "\n" + (input.text || "");
     const parsed = input.rows ? impFromRows(input.rows) : input.text ? { lines: impFromText(input.text) } : { lines: [] };
     const hintSrc = [input.head || "", input.filename || "", (input.text || "").split("\n").slice(0, 3).join(" "), input.rows ? input.rows.slice(0, 6).map((r) => r.join(" ")).join(" ") : ""].join(" ");
@@ -1725,7 +1726,7 @@ window.addEventListener("resize", () => { if ($("#so-frame")) fitSO(); });
    (Item name, Quantity, Unit, Price…), item names that wrap onto two lines are joined, and it stops at "Total". */
 const PDFJS_SRC = (HOST && HOST.pdfSrc) || "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
 const PDFJS_WORKER = (HOST && HOST.pdfWorker) || "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-const PDF_NAME_H = /^(item\s*name|items?|item\s*description|product(\s*name)?|products|description(\s*of\s*goods)?|particulars|product\s*description|name\s*of\s*(the\s*)?(item|product)|sku(\s*name)?)$/i;
+const PDF_NAME_H = /^(item\s*name|items?|item\s*desc(ription)?|product(\s*name)?|products|description(\s*of\s*goods)?|particulars|product\s*description|name\s*of\s*(the\s*)?(item|product)|sku(\s*name)?)$/i;
 async function pdfPages(buf) {
   await loadScriptOnce(PDFJS_SRC, () => !!window.pdfjsLib);
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
@@ -1758,7 +1759,9 @@ function pdfTable(pages) {
     const h = items.find((i) => PDF_NAME_H.test(i.s.replace(/[:()₹]/g, "").trim()));
     let body = items;
     if (h) {
-      const hs = items.filter((i) => Math.abs(i.y - h.y) <= 14);
+      /* the header ends just above the first row number (some tables start right under it) */
+      const lx = Math.min(...items.filter((i) => Math.abs(i.y - h.y) <= 14).map((i) => i.x)), first = items.filter((i) => i.y < h.y - 2 && /^\d+$/.test(i.s) && i.x <= lx + 20).sort((a, b) => b.y - a.y)[0];
+      const hs = items.filter((i) => Math.abs(i.y - h.y) <= 14 && (!first || i.y > first.y + 4));
       if (!cols) head.push(...pdfLines(items.filter((i) => i.y > h.y + 14)));
       const C = []; hs.flatMap(pdfSplitHead).sort((a, b) => a.x - b.x).forEach((i) => {
         /* a wrapped header ("Price/" over "Unit") overlaps; pieces on one line ("MRP(" "₹" ")") touch */
@@ -1769,9 +1772,9 @@ function pdfTable(pages) {
       cols = C; const low = Math.min(...hs.map((i) => i.y)); body = items.filter((i) => i.y < low - 4);
     } else if (!cols) { head.push(...pdfLines(items)); continue; }
     const colOf = (i) => { let best = -1, bo = 0; cols.forEach((c, j) => { const o = Math.min(i.x + i.w, c.r + 6) - Math.max(i.x, c.l - 6); if (o > bo) { bo = o; best = j; } }); if (best >= 0) return best; let d = 1e9; cols.forEach((c, j) => { const dd = Math.abs(i.x + i.w / 2 - (c.l + c.r) / 2); if (dd < d) { d = dd; best = j; } }); return best; };
-    const nameIdx = cols.findIndex((c) => PDF_NAME_H.test(c.label.replace(/[:]/g, ""))), noIdx = cols.findIndex((c) => /^(#|sl\.?\s*no\.?|s\.?\s*no\.?|sr\.?\s*no\.?|no\.?)$/i.test(c.label)), qtyIdx = cols.findIndex((c) => /qty|quantity/i.test(c.label));
+    const nameIdx = cols.findIndex((c) => PDF_NAME_H.test(c.label.replace(/[:]/g, ""))), noIdx = cols.findIndex((c) => /^(#|sl\.?\s*no\.?|s\.?\s*no\.?|sr\.?(\s*no\.?)?|no\.?)$/i.test(c.label)), qtyIdx = cols.findIndex((c) => /qty|quantity/i.test(c.label));
     const tagged = body.map((i) => ({ ...i, c: colOf(i) }));
-    const tot = tagged.filter((i) => (i.c === nameIdx || i.c === noIdx || i.c === 0) && /^(grand\s*|sub\s*)?total\b/i.test(i.s)).sort((a, b) => b.y - a.y)[0];
+    const tot = tagged.filter((i) => ((i.c === nameIdx || i.c === noIdx || i.c === 0) && /^(grand\s*|sub\s*)?total\b/i.test(i.s)) || /^(grand\s+)?total\s+(taxable|amount|value|qty|quantity)|^amount\s+in\s+words|terms\s*(and|&)\s*conditions/i.test(i.s)).sort((a, b) => b.y - a.y)[0];
     const live = tagged.filter((i) => !tot || i.y > tot.y + 2);
     const aIdx = noIdx >= 0 ? noIdx : qtyIdx; if (aIdx < 0) continue;
     const anchors = live.filter((i) => i.c === aIdx && /^\d+(\.\d+)?$/.test(i.s.replace(/,/g, ""))).sort((a, b) => b.y - a.y);
@@ -1786,6 +1789,7 @@ function pdfTable(pages) {
 }
 async function impPdfInput(f) {
   const pages = await pdfPages(await f.arrayBuffer());
+  if (typeof qcLoadPdf === "function") { const t = pages.map(pdfLines).flat().join("\n"); if (/\bpurchase\s*order\b/i.test(t) && (QC_PDF_SWIGGY.test(t) || QC_PDF_ZEPTO.test(t))) return { qcPages: pages, filename: f.name }; }
   if (!pages.some((p) => p.length)) throw new Error("This PDF is a scan or photo, so there is no text in it to read. Ask for the PDF from their billing software, or type the order in.");
   const T = pdfTable(pages), headText = T.head.join("\n");
   if (T.header && T.rows.length) { const all = [T.header].concat(T.rows); return { rows: all, rowsText: all.map((r) => r.join("\t")).join("\n").slice(0, 60000), head: headText, filename: f.name, pdf: true }; }
@@ -2138,7 +2142,7 @@ function qcLinesHtml() {
   const n = qcDraft();
   if (!n.lines.length) return `<div class="empty"><div class="big">No lines yet</div>Search above and add each product on the ${esc(n.platform)} PO.</div>`;
   return n.lines.map((l, i) => { const q = qcBySap[l.sap] || {}, ppc = l.ppc || q.ppc || 0, cr = ppc ? (+l.pcs || 0) / ppc : 0, last = qcPlatPrice(q, n.platform); return `<div class="qline ${n.flash === i ? "flash" : ""}" id="qnl-${i}"><span class="line-no">${i + 1}</span>
-    <div class="line-name"><span class="line-title">${esc(l.product)}</span><div class="row-sub" id="qnc-${i}">${ppc ? `${nf(cr, 2)} crate${cr === 1 ? "" : "s"} · ${ppc} pcs / crate` : "pieces per crate not set"} · ${nf(q.crates || 0)} crates in QC stock</div></div>
+    <div class="line-name"><span class="line-title">${esc(l.product)}</span>${l.raw ? `<div class="row-sub clip" title="${esc(l.raw)}"><span class="${l.conf === "check" ? "pill warn" : "dim"}" style="${l.conf === "check" ? "height:20px;font-size:11.5px" : ""}">${l.conf === "check" ? "Check: " : "On the PO: "}${esc(l.raw)}</span></div>` : ""}${l.note && l.conf !== "check" ? `<div class="row-sub" style="color:var(--warn)">${esc(l.note)}</div>` : ""}<div class="row-sub" id="qnc-${i}">${ppc ? `${nf(cr, 2)} crate${cr === 1 ? "" : "s"} · ${ppc} pcs / crate` : "pieces per crate not set"} · ${nf(q.crates || 0)} crates in QC stock</div></div>
     <div class="qline-qty"><div class="stepper sm"><button data-act="qnStep" data-i="${i}" data-d="-1" aria-label="Fewer pieces">${ic("minus", "sm")}</button><input id="qnp-${i}" class="qn-pcs" type="number" inputmode="numeric" min="0" value="${l.pcs}" data-in="qnPcs" data-i="${i}" aria-label="Pieces" enterkeyhint="next"><button data-act="qnStep" data-i="${i}" data-d="1" aria-label="More pieces">${ic("plus", "sm")}</button></div><span class="row-sub">pcs</span></div>
     <div class="qline-price"><span class="row-sub">₹</span><input class="input sm num-in qn-price" id="qnr-${i}" type="number" inputmode="decimal" min="0" step="0.01" value="${l.price ? +(+l.price).toFixed(4) : ""}" placeholder="0.00" data-in="qnPrice" data-i="${i}" aria-label="Price per piece excl. GST" title="Price per piece on the PO, excl. GST${last ? ". Last time " + rs2(last) : ""}" enterkeyhint="next"><span class="row-sub">/ pc</span></div>
     <div class="line-val"><div class="row-value" id="qnv-${i}">${rs2(qnVal(l))}</div></div>
@@ -2158,7 +2162,8 @@ function qcNewHtml() {
   const n = qcDraft();
   return `<div class="split"><div class="stack gap-20">
     ${n.editPo ? `<div class="editing-bar">${ic("pencil", "sm")}<span>Editing <span class="mono">${esc(n.editPo)}</span>. Saving replaces its lines. Pick lists and the truck plan use the new numbers.</span></div>` : ""}
-    <div><div class="group-label"><span>1 · The PO</span></div><div class="card card-pad"><div class="form-grid qn-head">
+    ${qcReadBanner()}
+    <div><div class="group-label"><span>1 · The PO</span>${n.editPo ? "" : `<button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="qcReadPdf">${ic("doc", "sm")} Read a PO PDF</button>`}</div><input id="qn-pdf" type="file" accept=".pdf,application/pdf" hidden data-in="qnPdf"><div class="card card-pad"><div class="form-grid qn-head">
       <div class="field"><span class="label">Platform</span>${seg("qnPlatform", n.platform, [["Swiggy", "Swiggy"], ["Zepto", "Zepto"]])}</div>
       <div class="field"><label class="label" for="qn-po">PO number</label><input class="input" id="qn-po" placeholder="KCOPO10712" value="${esc(n.po)}" data-in="qnField" data-f="po" autocomplete="off" enterkeyhint="next"></div>
       <div class="field"><label class="label" for="qn-date">PO date</label><input class="input" id="qn-date" type="date" value="${esc(n.date)}" data-in="qnField" data-f="date"></div>
@@ -2250,6 +2255,115 @@ ACT.qcCancelPO = (el) => {
   (qcLinesByPO[p.po] || []).forEach((l) => { l.status = "Cancelled"; });
   delete S.qcPicked[p.po]; logActivity("QC PO cancelled", p.po, p.platform); closeSheet(); render(); toast(`PO ${p.po} cancelled`);
 };
+
+/* ===== READ A SWIGGY (JUPITER KART) OR ZEPTO PO PDF INTO THE PO ENTRY SCREEN =====
+   Platform, PO number, PO date and expiry come from the header; each line's pieces and unit base cost from the table.
+   Products are found by the platform's item code first (learned from past POs), then the EAN, then the name,
+   and the price per piece confirms the match. Nothing is saved until Save PO is pressed. */
+const QC_PDF_SWIGGY = /jupiter\s*kart|swiggy|scootsy|instamart/i, QC_PDF_ZEPTO = /zepto|kiranakart/i;
+function qcPdfDate(s) {
+  if (!s) return "";
+  const M = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+  let m = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s); if (m) return `${m[1]}-${pad2(+m[2])}-${pad2(+m[3])}`;
+  m = /([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/.exec(s); if (m && M[m[1].toLowerCase()]) return `${m[3]}-${pad2(M[m[1].toLowerCase()])}-${pad2(+m[2])}`;
+  m = /(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?,?\s+(\d{4})/.exec(s); if (m && M[m[2].toLowerCase()]) return `${m[3]}-${pad2(M[m[2].toLowerCase()])}-${pad2(+m[1])}`;
+  m = /(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/.exec(s); if (m) return `${m[3].length === 2 ? "20" + m[3] : m[3]}-${pad2(+m[2])}-${pad2(+m[1])}`;
+  return "";
+}
+function qcPdfParse(pages) {
+  const text = pages.map(pdfLines).flat().join("\n");
+  const platform = QC_PDF_ZEPTO.test(text) ? "Zepto" : QC_PDF_SWIGGY.test(text) ? "Swiggy" : null;
+  const grab = (re) => { const m = re.exec(text); return m ? m[1].trim() : ""; };
+  const DATE = "([A-Za-z]{3}[a-z]*\\.?\\s+\\d{1,2},?\\s+\\d{4}|\\d{4}-\\d{1,2}-\\d{1,2}|\\d{1,2}\\s+[A-Za-z]{3}[a-z]*,?\\s+\\d{4}|\\d{1,2}[-/.]\\d{1,2}[-/.]\\d{2,4})";
+  const po = grab(/PO\s*(?:No|Number|#)\.?\s*:?\s*([A-Z0-9][A-Z0-9\/-]{4,})/i);
+  const date = qcPdfDate(grab(new RegExp("PO\\s*Date\\s*:?\\s*" + DATE, "i"))), expiry = qcPdfDate(grab(new RegExp("(?:PO\\s*)?Expiry\\s*Date\\s*:?\\s*" + DATE, "i"))), delivery = qcPdfDate(grab(new RegExp("Expected\\s*Delivery\\s*Date\\s*:?\\s*" + DATE, "i")));
+  const T = pdfTable(pages), lines = [];
+  if (T.header) {
+    const H = T.header.map((h) => h.toLowerCase()), col = (re, not) => H.findIndex((h) => re.test(h) && !(not && not.test(h)));
+    const iName = H.findIndex((h) => PDF_NAME_H.test(h.replace(/[:]/g, ""))), iCode = col(/item\s*code|material\s*code|article|item\s*id|product\s*code/), iEan = col(/\bean\b|barcode/);
+    const iQty = col(/^(qty|quantity|po\s*qty|order\s*qty)/), iPrice = col(/unit\s*base\s*cost|base\s*cost|unit\s*cost|landing\s*(rate|price)|unit\s*price|^rate/, /mrp/), iMrp = col(/mrp/), iTax = col(/taxable/);
+    const num = (v) => { const n = +String(v || "").replace(/[^\d.]/g, ""); return isNaN(n) ? null : n; };
+    T.rows.forEach((r) => {
+      const name = iName >= 0 ? r[iName] : "", qty = iQty >= 0 ? num(r[iQty]) : null; if (!name && !(iCode >= 0 && r[iCode])) return; if (!(qty > 0)) return;
+      lines.push({ code: iCode >= 0 ? String(r[iCode] || "").split(" ")[0] : "", ean: iEan >= 0 ? String(r[iEan] || "").replace(/\D/g, "") : "", name: String(name).replace(/\s+/g, " ").trim(), qty: Math.round(qty), price: iPrice >= 0 ? num(r[iPrice]) : null, mrp: iMrp >= 0 ? num(r[iMrp]) : null, taxable: iTax >= 0 ? num(r[iTax]) : null });
+    });
+  }
+  /* prices printed with 2 decimals lose a little: the taxable value ÷ pieces is exact when it agrees */
+  lines.forEach((x) => { if (x.taxable > 0 && x.qty > 0) { const p = x.taxable / x.qty; if (!(x.price > 0) || Math.abs(p / x.price - 1) < 0.01) x.price = Math.round(p * 1e6) / 1e6; } });
+  return { platform, po, date, expiry, delivery, lines, text };
+}
+/* the platform's item codes and EANs already known: from the QC products and every PO line saved before */
+function qcCodeMaps() {
+  const code = { Swiggy: {}, Zepto: {} }, ean = {};
+  D.qcStock.forEach((q) => { if (q.swCode) code.Swiggy[String(q.swCode)] = q.sap; if (q.zpCode) code.Zepto[String(q.zpCode)] = q.sap; if (q.ean) ean[String(q.ean)] = q.sap; });
+  const plat = {}; D.qcPOs.forEach((p) => { plat[p.po] = p.platform; });
+  Object.keys(qcLinesByPO).forEach((po) => (qcLinesByPO[po] || []).forEach((l) => { const pl = plat[po]; if (l.code && pl && code[pl] && !code[pl][String(l.code)] && qcBySap[l.sap]) code[pl][String(l.code)] = l.sap; if (l.ean && !ean[l.ean]) ean[l.ean] = l.sap; }));
+  return { code, ean };
+}
+function qcMatchLine(x, plat, maps) {
+  const fits = (sap) => { const q = qcBySap[sap]; return x.price > 0 && [qcPlatPrice(q, plat), qcPlatPrice(q, plat === "Swiggy" ? "Zepto" : "Swiggy")].some((pr) => pr > 0 && Math.abs(x.price / pr - 1) < 0.04); };
+  const byCode = x.code && maps.code[plat] && maps.code[plat][x.code]; if (byCode && qcBySap[byCode]) return { sap: byCode, conf: "sure", how: `${plat} code ${x.code}` };
+  const byEan = x.ean && maps.ean[x.ean]; if (byEan && qcBySap[byEan]) return { sap: byEan, conf: "sure", how: "EAN" };
+  const c = impMatch(x.name, {}).filter((m) => qcBySap[m.sap]), conf = impConf(c);
+  if (c.length) {
+    const top = c[0], alt = c.slice(0, 5).find((m) => m.score >= 0.45 && fits(m.sap));
+    if (alt && alt.sap !== top.sap && !fits(top.sap)) return { sap: alt.sap, conf: "check", how: "name and price", cands: c.slice(0, 6).map((m) => m.sap) };
+    if (conf === "sure" || (conf === "check" && fits(top.sap) && top.score >= 0.5)) return { sap: top.sap, conf: fits(top.sap) || !x.price ? "sure" : "check", how: fits(top.sap) ? "name and price" : "name", cands: c.slice(0, 6).map((m) => m.sap) };
+    if (conf === "check") return { sap: top.sap, conf: "check", how: "closest name", cands: c.slice(0, 6).map((m) => m.sap) };
+  }
+  return { sap: null, conf: "none", cands: c.slice(0, 6).map((m) => m.sap) };
+}
+async function qcLoadPdf(pages, file) {
+  const P = qcPdfParse(pages);
+  if (!P.platform) throw new Error("This does not look like a Swiggy (Jupiter Kart) or Zepto PO. Distributor orders are read from Orders → Paste or upload order.");
+  if (!P.lines.length) throw new Error("No lines with a quantity were found in the PO.");
+  const maps = qcCodeMaps(), cur = qcDraft();
+  if (cur.editPo) { toast("Finish or cancel the PO you are editing first", "alert"); return; }
+  const n = newQCDraft(); Object.assign(n, { platform: P.platform, po: P.po, date: P.date || n.date, expiry: P.expiry || n.expiry, read: { file, delivery: P.delivery, total: P.lines.length, unmatched: [], dup: P.po && D.qcPOs.some((p) => p.po === P.po) } });
+  P.lines.forEach((x) => {
+    const m = qcMatchLine(x, P.platform, maps), q = m.sap ? qcBySap[m.sap] : null;
+    const raw = `${x.code ? x.code + " · " : ""}${x.name} — ${nf(x.qty)} pcs${x.price ? " @ ₹" + x.price : ""}`;
+    if (!q) { n.read.unmatched.push({ ...x, raw, cands: m.cands || [] }); return; }
+    const last = qcPlatPrice(q, P.platform), note = m.conf === "check" ? `Check: matched by ${m.how}` : x.price && last && Math.abs(x.price / last - 1) > 0.04 ? `Price ₹${x.price} / pc (last time ${rs2(last)})` : "";
+    const ex = n.lines.find((l) => l.sap === q.sap); if (ex) { ex.pcs += x.qty; return; }
+    n.lines.push({ sap: q.sap, product: q.name, pcs: x.qty, price: x.price != null ? x.price : last, ppc: q.ppc || 0, code: x.code || qcPlatCode(q, P.platform), ean: x.ean || "", manual: true, raw, note, how: m.how, conf: m.conf });
+  });
+  S.qcNew = n; S.qcPlatform = P.platform; S.qcTab = "add"; closeSheet(); go("quick");
+  logActivity("QC PO read from PDF", P.po || file, `${P.platform}: ${n.lines.length} of ${P.lines.length} lines matched`);
+}
+function qcReadBanner() {
+  const n = qcDraft(), R = n.read; if (!R) return "";
+  const un = R.unmatched || [], chk = n.lines.filter((l) => l.conf === "check").length;
+  return `<div class="banner ${R.dup ? "bad" : un.length || chk ? "warn" : "good"}" style="align-items:flex-start">${ic(R.dup ? "alert" : un.length || chk ? "alert" : "check", "sm")}<span class="grow"><b>Read from ${esc(R.file)}</b> (${esc(n.platform)}): ${n.lines.length} of ${R.total} line${R.total === 1 ? "" : "s"} matched${chk ? `, ${chk} to check (marked below)` : ""}.${R.delivery ? ` Expected delivery ${esc(fmtDate(R.delivery))}.` : ""}
+    ${R.dup ? `<br><b>PO ${esc(n.po)} is already in the tool, so it cannot be saved again.</b>` : un.length ? ` <b>${un.length} not matched</b>: choose the product for each, or skip it.` : " Check the pieces and prices, then Save PO."}</span><button class="icon-btn" data-act="qnReadClose" aria-label="Close">${ic("x", "sm")}</button></div>
+    ${un.length ? `<div class="group">${un.map((u, i) => `<div class="row" style="flex-wrap:wrap;gap:8px"><span class="grow" style="min-width:200px"><div class="row-title clip">${esc(u.name || u.code)}</div><div class="row-sub">${u.code ? esc(n.platform) + " code " + esc(u.code) + " · " : ""}${nf(u.qty)} pieces${u.price ? " · ₹" + u.price + " / pc" : ""}</div></span><select class="select sm" style="width:auto;max-width:100%" data-in="qnReadPick" data-i="${i}"><option value="">Choose the product…</option>${(u.cands || []).filter((s) => qcBySap[s]).map((s) => `<option value="${esc(s)}">${esc(qcBySap[s].name)}</option>`).join("")}${D.qcStock.filter((q) => !(u.cands || []).includes(q.sap)).sort((a, b) => a.name.localeCompare(b.name)).map((q) => `<option value="${esc(q.sap)}">${esc(q.name)}</option>`).join("")}</select><button class="icon-btn" data-act="qnReadSkip" data-i="${i}" aria-label="Skip this line">${ic("trash", "sm")}</button></div>`).join("")}</div>` : ""}`;
+}
+IN.qnReadPick = (el) => {
+  const n = qcDraft(), u = n.read && n.read.unmatched[+el.dataset.i], q = qcBySap[el.value]; if (!u || !q) return;
+  n.lines.push({ sap: q.sap, product: q.name, pcs: u.qty, price: u.price != null ? u.price : qcPlatPrice(q, n.platform), ppc: q.ppc || 0, code: u.code || qcPlatCode(q, n.platform), ean: u.ean || "", manual: true, raw: u.raw, note: "", how: "chosen", conf: "sure" });
+  n.read.unmatched.splice(+el.dataset.i, 1); render();
+};
+ACT.qnReadSkip = (el) => { const n = qcDraft(); n.read.unmatched.splice(+el.dataset.i, 1); render(); };
+ACT.qnReadClose = () => { const n = qcDraft(); n.read = null; render(); };
+ACT.qcReadPdf = () => { const f = $("#qn-pdf"); if (f) { f.value = ""; f.click(); } };
+IN.qnPdf = async (el) => {
+  const f = el.files && el.files[0]; if (!f) return;
+  const sig = [f.name, f.size, f.lastModified].join("|"); if (S.qnPdfSig === sig && Date.now() - (S.qnPdfAt || 0) < 800) return; S.qnPdfSig = sig; S.qnPdfAt = Date.now();
+  toast("Reading the PO…", "doc");
+  try { await qcLoadPdf(await pdfPages(await f.arrayBuffer()), f.name); }
+  catch (e) { toast((e && e.message) || "That PDF could not be read", "alert"); }
+};
+/* the item code and EAN of every line saved are remembered, so the next PO from that platform matches by code */
+{
+  const save = ACT.qcSavePO;
+  ACT.qcSavePO = (el, e) => {
+    const n = qcDraft(), po = (n.po || "").trim(), plat = n.platform, learn = n.lines.filter((l) => l.sap && (l.code || l.ean)).map((l) => ({ sap: l.sap, code: l.code, ean: l.ean }));
+    save(el, e);
+    if (!po || !D.qcPOs.some((p) => p.po === po)) return;
+    learn.forEach((x) => { const q = qcBySap[x.sap]; if (!q) return; if (x.code && plat === "Swiggy" && !q.swCode) q.swCode = String(x.code); if (x.code && plat === "Zepto" && !q.zpCode) q.zpCode = String(x.code); if (x.ean && !q.ean) q.ean = x.ean; });
+    (qcLinesByPO[po] || []).forEach((l) => { const x = learn.find((y) => y.sap === l.sap); if (x && x.ean) l.ean = x.ean; });
+  };
+}
 
 /* ===== STOCK ===== */
 const cratesOf = (s) => (s.upc ? s.ea / s.upc : s.crates || 0);
