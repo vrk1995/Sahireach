@@ -174,7 +174,7 @@ function openSheet(title, body, foot, wide) {
   sh.className = "sheet" + (wide ? " wide" : "");
   sh.innerHTML = `<div class="sheet-head"><div class="sheet-title grow clip">${title}</div><button class="icon-btn" data-act="closeSheet" aria-label="Close">${ic("x")}</button></div><div class="sheet-body" id="sheet-body">${body}</div>${foot ? `<div class="sheet-foot" id="sheet-foot">${foot}</div>` : ""}`;
   $("#scrim").hidden = false; sh.hidden = false; sheetOpen = true;
-  requestAnimationFrame(() => { $("#scrim").classList.add("on"); sh.classList.add("on"); });
+  requestAnimationFrame(() => { if (!sheetOpen) return; /* closed again before it appeared */ $("#scrim").classList.add("on"); sh.classList.add("on"); });
 }
 function closeSheet() {
   if (!sheetOpen) return;
@@ -2069,7 +2069,7 @@ ACT.dispatchNow = () => {
   sel.forEach((o) => { o.status = "Dispatched"; o.dispatched = now; delete S.picked[o.id]; });
   logActivity("Orders dispatched", `${sel.length} order(s)`, sel.map((o) => shortOf(o.dist)).join(", "));
   closeSheet(); render(); toast(`${sel.length} order${sel.length > 1 ? "s" : ""} marked dispatched`, "truck");
-  setTimeout(() => openSheet("Let them know?", `<div class="success"><div class="tick">${ic("truck")}</div><div class="section-title">${sel.length} order${sel.length > 1 ? "s" : ""} on the way</div><div class="muted">Send each distributor a short “your order is on its way” email with the crates and the payment due date.</div></div><div class="group">${sel.map((o) => { const d = distByKey[key(o.dist)] || {}; return `<div class="row"><span class="grow"><div class="row-title">${esc(o.dist)}</div><div class="row-sub">${d.email ? esc(d.email) : `<span style="color:var(--warn)">No email saved</span>`}</div></span><span class="row-end">${nf(o.crates, 2)} crates</span></div>`; }).join("")}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Not now</button><button class="btn btn-secondary" data-act="tripForm" data-orders="${sel.map((o) => o.id).join(",")}">${ic("truck", "sm")} Log the trip</button><button class="btn btn-primary" data-act="emailDispatch" data-ids="${sel.map((o) => o.id).join(",")}">${ic("arrowR", "sm")} Preview and send</button>`), 450);
+  setTimeout(() => openSheet("Let them know?", `<div class="success"><div class="tick">${ic("truck")}</div><div class="section-title">${sel.length} order${sel.length > 1 ? "s" : ""} on the way</div><div class="muted">Send each distributor a short “your order is on its way” email with the crates and the payment due date.</div></div><div class="group">${sel.map((o) => { const d = distByKey[key(o.dist)] || {}; return `<div class="row"><span class="grow"><div class="row-title">${esc(o.dist)}</div><div class="row-sub">${d.email ? esc(d.email) : `<span style="color:var(--warn)">No email saved</span>`}</div></span><span class="row-end">${nf(o.crates, 2)} crates</span></div>`; }).join("")}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Not now</button><button class="btn btn-secondary" data-act="tripSelf" data-orders="${sel.map((o) => o.id).join(",")}">Self pickup</button><button class="btn btn-secondary" data-act="tripForm" data-orders="${sel.map((o) => o.id).join(",")}">${ic("truck", "sm")} Log the trip</button><button class="btn btn-primary" data-act="emailDispatch" data-ids="${sel.map((o) => o.id).join(",")}">${ic("arrowR", "sm")} Preview and send</button>`), 450);
 };
 
 /* ===== QUICK COMMERCE ===== */
@@ -3869,13 +3869,24 @@ const transporterOf = (name) => logi().transporters.find((t) => key(t.name) === 
 const tripPct = (t) => (t.revenue > 0 && t.cost != null ? t.cost / t.revenue : null);
 const tripMissing = (t) => t.cost == null || !(t.revenue > 0);
 /* dispatches since the app started tracking trips that are not on any trip yet */
+/* the day a Swiggy / Zepto PO went out: its sent pick list's dispatch date, else the day it was delivered */
+function qcTripInfo(p) {
+  const L = typeof qcLockOf === "function" ? qcLockOf(p.po) : null;
+  if (p.deliveredOn && (p.valueAccepted > 0 || p.pcsDelivered > 0)) return { date: p.deliveredOn.slice(0, 10), crates: p.pcs ? (p.crates * (p.pcsDelivered || 0)) / p.pcs : 0, revenue: p.valueAccepted || 0, sent: false };
+  if (L && p.status === "Open") {
+    /* not delivered yet: its share of what the pick list sent */
+    const pos = L.pos.map((po) => D.qcPOs.find((x) => x.po === po)).filter(Boolean), tot = pos.reduce((a, x) => a + (x.value || 0), 0), share = tot > 0 ? (p.value || 0) / tot : 1 / Math.max(1, pos.length);
+    return { date: L.dispatchOn || String(L.at || "").slice(0, 10), crates: (L.crates || 0) * share, revenue: (L.value || 0) * share, sent: true };
+  }
+  return null;
+}
 function unloggedRuns() {
   const L = logi(), onTrip = new Set(), qcOn = new Set();
   L.trips.forEach((t) => { (t.orders || []).forEach((id) => onTrip.add(id)); (t.qc || []).forEach((po) => qcOn.add(po)); });
-  const runs = {};
-  D.orders.forEach((o) => { if (o.status !== "Dispatched" || !o.dispatched || o.dispatched.slice(0, 10) < L.since || onTrip.has(o.id)) return; const d = o.dispatched.slice(0, 10), r = (runs[d] = runs[d] || { date: d, orders: [], qc: [] }); r.orders.push(o.id); });
-  D.qcPOs.forEach((p) => { if (!p.deliveredOn || p.deliveredOn.slice(0, 10) < L.since || qcOn.has(p.po) || !(p.valueAccepted > 0 || p.pcsDelivered > 0)) return; const d = p.deliveredOn.slice(0, 10), r = (runs[d] = runs[d] || { date: d, orders: [], qc: [] }); r.qc.push(p.po); });
-  return Object.values(runs).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const runs = {}, run = (d, kind) => (runs[d + "|" + kind] = runs[d + "|" + kind] || { key: d + "|" + kind, date: d, kind, orders: [], qc: [] });
+  D.orders.forEach((o) => { if (o.status !== "Dispatched" || !o.dispatched || o.dispatched.slice(0, 10) < L.since || onTrip.has(o.id)) return; run(o.dispatched.slice(0, 10), "GT").orders.push(o.id); });
+  D.qcPOs.forEach((p) => { if (qcOn.has(p.po)) return; const q = qcTripInfo(p); if (!q || !q.date || q.date < L.since) return; run(q.date, "QC").qc.push(p.po); });
+  return Object.values(runs).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.kind < b.kind ? -1 : 1));
 }
 const runLabel = (r) => [...new Set(r.orders.map((id) => shortOf((orderById(id) || {}).dist || "")).concat(r.qc.map((po) => (D.qcPOs.find((p) => p.po === po) || {}).platform || "QC")))].join(", ");
 /* ---------- figures ---------- */
@@ -3944,7 +3955,7 @@ VIEWS.logistics = () => {
   const chips = (name, list, val) => list.map(([v, l]) => `<button class="chip" data-act="logiF" data-f="${name}" data-v="${esc(v)}" aria-pressed="${val === v}">${esc(l)}</button>`).join("");
   return `<div class="page">
     <div class="page-head"><div><h1 class="title">Logistics</h1><div class="subtitle">What each trip cost and what share of the invoiced sales it takes.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="logiExcel">${ic("doc", "sm")} Download Excel</button><button class="btn btn-secondary" data-act="logiTransporters">${ic("truck", "sm")} Transporters</button><button class="btn btn-primary" data-act="tripForm">${ic("plus", "sm")} Log a trip</button></div></div>
-    ${runs.length ? `<div class="banner warn" style="align-items:flex-start">${ic("truck", "sm")}<span class="grow"><b>${runs.length} dispatch${runs.length > 1 ? "es have" : " has"} no trip logged yet.</b> ${runs.slice(0, 3).map((r) => `${fmtDate(r.date)}: ${esc(runLabel(r))}`).join(" · ")}${runs.length > 3 ? " and more" : ""}</span><button class="btn btn-sm btn-primary" data-act="tripForm" data-run="${runs[0].date}">Log ${fmtDate(runs[0].date)}</button></div>` : ""}
+    ${runs.length ? `<div><div class="group-label"><span>No trip logged yet</span><span>${runs.length}</span></div><div class="group">${runs.map((r) => `<div class="row" style="flex-wrap:wrap;gap:10px"><span class="attn-ic warn" style="width:30px;height:30px">${ic(r.kind === "QC" ? "bolt" : "truck", "sm")}</span><span class="grow" style="min-width:200px"><div class="row-title clip">${esc(fmtDate(r.date))} · ${esc(runLabel(r))}</div><div class="row-sub">${r.kind === "QC" ? `Quick commerce · ${r.qc.length} PO${r.qc.length > 1 ? "s" : ""}${r.qc.some((po) => { const q = qcTripInfo(D.qcPOs.find((x) => x.po === po) || {}); return q && q.sent; }) ? " · pick list sent, not delivered yet" : ""}` : `Distributors · ${r.orders.length} order${r.orders.length > 1 ? "s" : ""}`}</div></span><span class="row-end hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="tripSelf" data-run="${esc(r.key)}">Self pickup</button><button class="btn btn-sm btn-primary" data-act="tripForm" data-run="${esc(r.key)}">${ic("plus", "sm")} Log trip</button></span></div>`).join("")}</div></div>` : ""}
     <div class="hstack gap-12 wrap"><div class="chips" style="margin:0">${chips("preset", [["month", "This month"], ["lastMonth", "Last month"], ["3m", "Last 3 months"], ["all", "All time"]], F.preset)}</div><div class="chips" style="margin:0">${chips("type", [["all", "GT and QC"], ["GT", "GT"], ["QC", "QC"]], F.type)}</div>
       <select class="select sm" style="width:auto" data-in="logiTr" aria-label="Transporter"><option value="all">All transporters</option>${[...new Set(L.trips.map((t) => t.transporter || "").filter(Boolean))].sort().map((n) => `<option ${F.tr === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div class="tiles tiles-4">
@@ -3973,19 +3984,28 @@ function tripCands(T) {
   const L = logi(), other = new Set(), otherQ = new Set();
   L.trips.forEach((t) => { if (t.id === T.id) return; (t.orders || []).forEach((i) => other.add(i)); (t.qc || []).forEach((p) => otherQ.add(p)); });
   const lo = addDays(T.date || ymd(NOW()), -21), hi = addDays(T.date || ymd(NOW()), 2);
-  const os = D.orders.filter((o) => o.status === "Dispatched" && o.dispatched && (T.orders.includes(o.id) || (!other.has(o.id) && o.dispatched.slice(0, 10) >= Math.max(lo, L.since) && o.dispatched.slice(0, 10) <= hi))).sort((a, b) => (a.dispatched < b.dispatched ? 1 : -1));
-  const qs = D.qcPOs.filter((p) => p.deliveredOn && (T.qc.includes(p.po) || (!otherQ.has(p.po) && p.deliveredOn.slice(0, 10) >= Math.max(lo, L.since) && p.deliveredOn.slice(0, 10) <= hi))).sort((a, b) => (a.deliveredOn < b.deliveredOn ? 1 : -1));
+  const os = D.orders.filter((o) => o.status === "Dispatched" && o.dispatched && (T.orders.includes(o.id) || (!other.has(o.id) && o.dispatched.slice(0, 10) >= (lo > L.since ? lo : L.since) && o.dispatched.slice(0, 10) <= hi))).sort((a, b) => (a.dispatched < b.dispatched ? 1 : -1));
+  const qs = D.qcPOs.map((p) => ({ p, q: qcTripInfo(p) })).filter(({ p, q }) => T.qc.includes(p.po) || (q && !otherQ.has(p.po) && q.date >= (lo > L.since ? lo : L.since) && q.date <= hi)).sort((a, b) => ((a.q || {}).date < (b.q || {}).date ? 1 : -1)).map(({ p }) => p);
   return { os, qs };
 }
 function tripAuto(T) {
   const os = T.orders.map(orderById).filter(Boolean), qs = T.qc.map((po) => D.qcPOs.find((p) => p.po === po)).filter(Boolean);
   if (!os.length && !qs.length) return null;
   const sellers = [...new Set(os.map((o) => shortOf(o.dist)).concat(qs.map((p) => p.platform)))].join(", ");
-  const crates = Math.round((os.reduce((a, o) => a + (o.crates || 0), 0) + qs.reduce((a, p) => a + (p.pcs ? (p.crates * (p.pcsDelivered || 0)) / p.pcs : 0), 0)) * 10) / 10;
-  const revenue = Math.round((os.reduce((a, o) => a + (o.value || 0), 0) + qs.reduce((a, p) => a + (p.valueAccepted || 0), 0)) * 100) / 100;
+  const qv = qs.map((p) => qcTripInfo(p) || { crates: 0, revenue: 0 });
+  const crates = Math.round((os.reduce((a, o) => a + (o.crates || 0), 0) + qv.reduce((a, q) => a + (q.crates || 0), 0)) * 10) / 10;
+  const revenue = Math.round((os.reduce((a, o) => a + (o.value || 0), 0) + qv.reduce((a, q) => a + (q.revenue || 0), 0)) * 100) / 100;
   return { sellers, crates, revenue, type: os.length ? "GT" : "QC" };
 }
+/* self pickup: the buyer collected it from the cold store, so there is no transport cost */
+const SELF = "Self pickup";
+function tripSelfSet(T, on) {
+  T.selfPickup = !!on;
+  if (on) { if (T.transporter && T.transporter !== SELF) T.lastTransporter = T.transporter; T.transporter = SELF; T.cost = 0; T.km = null; T.odoStart = null; T.odoEnd = null; T.route = null; T.halting = null; T.own.cost = true; T.own.route = true; }
+  else { T.transporter = T.lastTransporter || (logi().transporters[0] || {}).name || ""; T.cost = null; T.own.cost = false; T.own.route = false; const tr = transporterOf(T.transporter); if (tr && tr.mode === "km") T.odoStart = lastOdo(tr.name); }
+}
 function tripCalc(T) {
+  if (T.selfPickup) { const A = tripAuto(T); if (A) { if (!T.own.sellers) T.sellers = A.sellers; if (!T.own.crates) T.crates = A.crates; if (!T.own.revenue) T.revenue = A.revenue; if (!T.own.type) T.type = A.type; } T.cost = 0; T.transporter = SELF; return { tr: null, A }; }
   const tr = transporterOf(T.transporter), A = tripAuto(T);
   if (A) { if (!T.own.sellers) T.sellers = A.sellers; if (!T.own.crates) T.crates = A.crates; if (!T.own.revenue) T.revenue = A.revenue; if (!T.own.type) T.type = A.type; }
   if (T.odoStart != null && T.odoEnd != null && T.odoEnd >= T.odoStart && !T.own.km) T.km = T.odoEnd - T.odoStart;
@@ -3997,14 +4017,15 @@ function lastOdo(name) { const t = logi().trips.filter((x) => key(x.transporter)
 ACT.tripForm = (el) => {
   const L = logi(), id = el && el.dataset && el.dataset.id, run = el && el.dataset && el.dataset.run, ids = el && el.dataset && el.dataset.orders;
   let T;
-  if (id) { const t = L.trips.find((x) => x.id === id); if (!t) return; T = JSON.parse(JSON.stringify(t)); T.orders = T.orders || []; T.qc = T.qc || []; T.own = { sellers: true, crates: true, revenue: true, type: true, km: t.odoStart == null, cost: true, route: true }; T.isNew = false; }
+  if (id) { const t = L.trips.find((x) => x.id === id); if (!t) return; T = JSON.parse(JSON.stringify(t)); T.orders = T.orders || []; T.qc = T.qc || []; T.own = { sellers: true, crates: true, revenue: true, type: true, km: t.odoStart == null, cost: true, route: true }; T.isNew = false; T.selfPickup = !!t.selfPickup; }
   else {
     const lastGT = L.trips.filter((t) => t.type === "GT" && t.transporter).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
     T = { id: null, date: ymd(NOW()), sellers: "", type: "GT", crates: null, km: null, odoStart: null, odoEnd: null, revenue: null, cost: null, transporter: lastGT ? lastGT.transporter : (L.transporters[0] || {}).name || "", halting: null, route: null, orders: [], qc: [], note: "", own: {}, isNew: true };
-    if (run) { const r = unloggedRuns().find((x) => x.date === run); if (r) { T.date = r.date; T.orders = r.orders.slice(); T.qc = r.qc.slice(); } }
+    if (run) { const r = unloggedRuns().find((x) => x.key === run || x.date === run); if (r) { T.date = r.date; T.orders = r.orders.slice(); T.qc = r.qc.slice(); T.type = r.kind || T.type; } }
     if (ids) { T.orders = ids.split(",").filter(Boolean); const o = orderById(T.orders[0]); if (o && o.dispatched) T.date = o.dispatched.slice(0, 10); }
     if (T.orders.length === 0 && T.qc.length) T.type = "QC";
     const tr = transporterOf(T.transporter); if (tr && tr.mode === "km") T.odoStart = lastOdo(tr.name);
+    if (el && el.dataset && el.dataset.self) tripSelfSet(T, true);
   }
   S.trip = T; tripCalc(T);
   openSheet(T.isNew ? "Log a trip" : "Trip of " + fmtDate(T.date), `<div id="trip-body" class="stack gap-16">${tripBody()}</div>`,
@@ -4014,18 +4035,19 @@ function tripBody() {
   const T = S.trip, { tr, A } = tripCalc(T), C = tripCands(T), L = logi(), p = T.revenue > 0 && T.cost != null ? T.cost / T.revenue : null;
   const num = (f, v, ph, extra = "") => `<input class="input num-in" type="number" step="any" min="0" value="${v != null ? v : ""}" placeholder="${ph || ""}" data-in="tripF" data-f="${f}" ${extra}>`;
   const auto = (f) => (A && !T.own[f] ? `<span class="pill plain" style="height:20px;font-size:11px">from the orders</span>` : "");
-  const pick = C.os.length || C.qs.length ? `<div class="group" style="max-height:260px;overflow:auto">${C.os.map((o) => `<label class="row" style="cursor:pointer"><input type="checkbox" data-in="tripLink" data-k="o" data-v="${esc(o.id)}" ${T.orders.includes(o.id) ? "checked" : ""}><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub">Dispatched ${fmtDate(o.dispatched)} · ${nf(o.crates, 1)} crates · ${rs(o.value)}</div></span></label>`).join("")}${C.qs.map((q) => `<label class="row" style="cursor:pointer"><input type="checkbox" data-in="tripLink" data-k="q" data-v="${esc(q.po)}" ${T.qc.includes(q.po) ? "checked" : ""}><span class="grow"><div class="row-title clip">${platDot(q.platform)}${esc(q.platform)} <span class="mono">${esc(q.po)}</span></div><div class="row-sub">Delivered ${fmtDate(q.deliveredOn)} · ${rs(q.valueAccepted || 0)}</div></span></label>`).join("")}</div>` : `<div class="row-sub">No dispatched orders or deliveries around this date that are not already on a trip. Fill in the details below.</div>`;
+  const pick = C.os.length || C.qs.length ? `<div class="group" style="max-height:260px;overflow:auto">${C.os.map((o) => `<label class="row" style="cursor:pointer"><input type="checkbox" data-in="tripLink" data-k="o" data-v="${esc(o.id)}" ${T.orders.includes(o.id) ? "checked" : ""}><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub">Dispatched ${fmtDate(o.dispatched)} · ${nf(o.crates, 1)} crates · ${rs(o.value)}</div></span></label>`).join("")}${C.qs.map((q) => `<label class="row" style="cursor:pointer"><input type="checkbox" data-in="tripLink" data-k="q" data-v="${esc(q.po)}" ${T.qc.includes(q.po) ? "checked" : ""}><span class="grow"><div class="row-title clip">${platDot(q.platform)}${esc(q.platform)} <span class="mono">${esc(q.po)}</span></div><div class="row-sub">${(() => { const t = qcTripInfo(q); return t && t.sent ? `Pick list sent for ${fmtDate(t.date)} · not delivered yet · ${rs(t.revenue)} as sent` : q.deliveredOn ? `Delivered ${fmtDate(q.deliveredOn)} · ${rs(q.valueAccepted || 0)}` : "Not delivered"; })()}</div></span></label>`).join("")}</div>` : `<div class="row-sub">No dispatched orders or deliveries around this date that are not already on a trip. Fill in the details below.</div>`;
   return `<div><div class="group-label"><span>1 · What went on this trip</span><span>${T.orders.length + T.qc.length} ticked</span></div>${pick}</div>
     <div><div class="group-label"><span>2 · The trip</span></div><div class="card card-pad"><div class="form-grid">
       <div class="field"><label class="label">Date</label><input class="input" type="date" value="${esc(T.date)}" data-in="tripF" data-f="date"></div>
-      <div class="field"><label class="label">Transporter</label><select class="select" data-in="tripF" data-f="transporter">${L.transporters.map((t) => `<option ${key(t.name) === key(T.transporter) ? "selected" : ""}>${esc(t.name)}</option>`).join("")}${T.transporter && !transporterOf(T.transporter) ? `<option selected>${esc(T.transporter)}</option>` : ""}</select></div>
+      <div class="field full"><label class="row" style="cursor:pointer;padding:10px 12px;border-radius:12px;background:var(--fill)"><input type="checkbox" data-in="tripSelf" ${T.selfPickup ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--tint)"><span class="grow"><div class="row-title">Self pickup</div><div class="row-sub">The buyer collected it from the cold store: no transporter, no transport cost</div></span></label></div>
+      ${T.selfPickup ? "" : `<div class="field"><label class="label">Transporter</label><select class="select" data-in="tripF" data-f="transporter">${L.transporters.map((t) => `<option ${key(t.name) === key(T.transporter) ? "selected" : ""}>${esc(t.name)}</option>`).join("")}${T.transporter && !transporterOf(T.transporter) ? `<option selected>${esc(T.transporter)}</option>` : ""}</select></div>`}
       <div class="field full"><label class="label">Sellers ${auto("sellers")}</label><input class="input" value="${esc(T.sellers || "")}" placeholder="Who the goods went to" data-in="tripF" data-f="sellers"></div>
       <div class="field"><label class="label">Type</label><select class="select" data-in="tripF" data-f="type">${["GT", "QC"].map((x) => `<option ${T.type === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
-      <div class="field"><label class="label">Route</label><select class="select" data-in="tripF" data-f="route"><option value="">${T.type === "QC" ? "Not needed" : "Not set"}</option>${["Short", "Long"].map((x) => `<option ${T.route === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+      ${T.selfPickup ? "" : `<div class="field"><label class="label">Route</label><select class="select" data-in="tripF" data-f="route"><option value="">${T.type === "QC" ? "Not needed" : "Not set"}</option>${["Short", "Long"].map((x) => `<option ${T.route === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>`}
       <div class="field"><label class="label">Crates ${auto("crates")}</label>${num("crates", T.crates, "0")}</div>
       <div class="field"><label class="label">Invoiced revenue, excl. GST ${auto("revenue")}</label>${num("revenue", T.revenue, "0.00")}</div>
     </div></div></div>
-    <div><div class="group-label"><span>3 · Kilometres${SEE_MONEY || !(tr && tr.mode === "km") ? " and cost" : ""}</span><span>${tr && tr.mode === "km" ? (SEE_MONEY ? `${esc(tr.name)}: ₹${tr.rate} per km` : "Cost is worked out from the km") : "Amount paid for this trip"}</span></div><div class="card card-pad"><div class="form-grid">
+    ${T.selfPickup ? `<div class="banner info">${ic("info", "sm")}<span>Self pickup: saved with no transporter and ₹0 transport cost.</span></div>` : `<div><div class="group-label"><span>3 · Kilometres${SEE_MONEY || !(tr && tr.mode === "km") ? " and cost" : ""}</span><span>${tr && tr.mode === "km" ? (SEE_MONEY ? `${esc(tr.name)}: ₹${tr.rate} per km` : "Cost is worked out from the km") : "Amount paid for this trip"}</span></div><div class="card card-pad"><div class="form-grid">
       <div class="field"><label class="label">Odometer at start</label>${num("odoStart", T.odoStart, "Reading at the start")}</div>
       <div class="field"><label class="label">Odometer at end</label>${num("odoEnd", T.odoEnd, "Reading at the end")}</div>
       <div class="field"><label class="label">Km, both ways</label>${num("km", T.km, "0")}</div>
@@ -4033,8 +4055,10 @@ function tripBody() {
       <div class="field"><label class="label">Halting time, hours after the first free hour</label>${num("halting", T.halting, "0")}</div>
       <div class="field"><label class="label">Note</label><input class="input" value="${esc(T.note || "")}" data-in="tripF" data-f="note" placeholder="Optional"></div>
     </div>
-    ${SEE_MONEY ? `<div class="hstack gap-12 wrap" style="margin-top:14px" id="trip-sum">${tripSum(T)}</div>` : `<div id="trip-sum"></div>`}</div></div>`;
+    ${SEE_MONEY ? `<div class="hstack gap-12 wrap" style="margin-top:14px" id="trip-sum">${tripSum(T)}</div>` : `<div id="trip-sum"></div>`}</div></div>`}
+    ${T.selfPickup ? `<div id="trip-sum"></div>` : ""}`;
 }
+IN.tripSelf = (el) => { tripSelfSet(S.trip, el.checked); tripRedraw(); };
 const tripSum = (T) => { if (!SEE_MONEY) return ""; const p = T.revenue > 0 && T.cost != null ? T.cost / T.revenue : null; return `<span class="pill ${p == null ? "plain" : p > 0.06 ? "bad" : p > 0.045 ? "warn" : "good"}">${p != null ? pct(p, 2) + " of revenue" : "Add revenue and cost to see the %"}</span>${T.crates > 0 && T.cost != null ? `<span class="pill plain">${rs2(T.cost / T.crates)} per crate</span>` : ""}${T.km > 0 && T.cost != null ? `<span class="pill plain">${rs2(T.cost / T.km)} per km</span>` : ""}`; };
 const tripRedraw = () => { const sc = $("#sheet .sheet-body") || $("#sheet"), y = sc ? sc.scrollTop : 0; part("trip-body", tripBody()); if (sc) sc.scrollTop = y; };
 IN.tripF = (el) => {
@@ -4058,11 +4082,18 @@ ACT.tripSave = () => {
   if (!T.date) { toast("Add the date", "alert"); return; }
   if (!T.sellers && !T.orders.length && !T.qc.length) { toast("Tick what went on the trip, or type the sellers", "alert"); return; }
   let nid = T.id; if (!nid) { const base = "TRIP-" + T.date.replace(/-/g, "") + "-" + stamp(NOW()).slice(-6); nid = base; let k = 1; while (L.trips.some((x) => x.id === nid)) nid = base + "-" + ++k; }
-  const rec = { id: nid, date: T.date, sellers: T.sellers || (tripAuto(T) || {}).sellers || "", type: T.type || "GT", crates: T.crates, km: T.km, odoStart: T.odoStart, odoEnd: T.odoEnd, revenue: T.revenue, cost: T.cost, rate: (transporterOf(T.transporter) || {}).mode === "km" ? transporterOf(T.transporter).rate : null, transporter: T.transporter || "", halting: T.halting, route: T.type === "QC" ? T.route || null : T.route || null, orders: T.orders.slice(), qc: T.qc.slice(), source: T.isNew ? "app" : T.source || "app", note: T.note || "" };
+  const rec = { id: nid, date: T.date, sellers: T.sellers || (tripAuto(T) || {}).sellers || "", type: T.type || "GT", crates: T.crates, km: T.km, odoStart: T.odoStart, odoEnd: T.odoEnd, revenue: T.revenue, cost: T.cost, rate: (transporterOf(T.transporter) || {}).mode === "km" ? transporterOf(T.transporter).rate : null, transporter: T.transporter || "", halting: T.halting, route: T.type === "QC" ? T.route || null : T.route || null, orders: T.orders.slice(), qc: T.qc.slice(), source: T.isNew ? "app" : T.source || "app", note: T.note || "", ...(T.selfPickup ? { selfPickup: true, transporter: SELF, cost: 0, km: null, odoStart: null, odoEnd: null, rate: null, route: null, halting: null } : {}) };
   const i = L.trips.findIndex((x) => x.id === rec.id); if (i >= 0) { rec.source = L.trips[i].source || rec.source; L.trips[i] = rec; } else L.trips.push(rec);
   logActivity(i >= 0 ? "Trip updated" : "Trip logged", fmtDate(rec.date), `${rec.sellers} · ${rec.cost != null ? rs(rec.cost) : "cost not added"}${tripPct(rec) != null ? " · " + pct(tripPct(rec), 1) : ""}`);
   S.trip = null; closeSheet(); if (S.route === "logistics") render(); else render();
+  if (rec.selfPickup) { toast(`Saved as self pickup · ${rec.sellers}`, "truck"); return; }
   toast(!SEE_MONEY ? "Trip saved" : rec.cost != null ? `Trip saved · ${tripPct(rec) != null ? pct(tripPct(rec), 1) + " of revenue" : rs(rec.cost)}` : "Trip saved. Add the cost when you have it", "truck");
+};
+/* one tap from the list (or after marking dispatched): log it as self pickup */
+ACT.tripSelf = (el) => {
+  ACT.tripForm({ dataset: { run: el.dataset.run || "", orders: el.dataset.orders || "", self: "1" } });
+  if (!S.trip || !S.trip.selfPickup) return;
+  ACT.tripSave();
 };
 ACT.tripDelAsk = () => { part("trip-sum", `<div class="confirm" style="width:100%"><span><b>Delete this trip?</b> Its orders go back to "no trip logged".</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="tripDelNo">Keep it</button><button class="btn btn-sm btn-danger" data-act="tripDel">Delete</button></span></div>`); };
 ACT.tripDelNo = () => part("trip-sum", tripSum(S.trip));
