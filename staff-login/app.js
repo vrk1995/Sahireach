@@ -1012,11 +1012,12 @@ VIEWS.orders = () => {
 IN.ordersQ = (el) => { S.ordersQ = el.value; part("orders-list", ordersList()); };
 
 ACT.orderSheet = (el) => showOrder(el.dataset.id);
-function showOrder(id, confirmCancel) {
+function showOrder(id, confirmCancel, confirmUndo) {
   const o = orderById(id); if (!o) return;
   const lines = linesByOrder[id] || [], missed = D.oos.filter((x) => x.id === id), d = distByKey[key(o.dist)] || {};
   const tl = [`<div class="tl"><span class="tl-dot tint"></span><div><b>Order saved</b><div class="row-sub">${fmtDT(o.time)}</div></div></div>`];
   if (o.edited) tl.push(`<div class="tl"><span class="tl-dot warn"></span><div><b>Edited${o.timesEdited > 1 ? " " + o.timesEdited + " times" : ""}</b><div class="row-sub">Last change ${fmtDT(o.edited)}</div></div></div>`);
+  (o.undone || []).forEach((u) => tl.push(`<div class="tl"><span class="tl-dot warn"></span><div><b>Dispatch undone</b><div class="row-sub">${fmtDT(u.at)}${u.by ? " by " + esc(u.by) : ""} · it had been marked dispatched ${fmtDT(u.was)}</div></div></div>`));
   if (o.status === "Dispatched") tl.push(`<div class="tl"><span class="tl-dot good"></span><div><b>Dispatched</b><div class="row-sub">${fmtDT(o.dispatched)}</div></div></div>`);
   if (o.status === "Cancelled") tl.push(`<div class="tl"><span class="tl-dot bad"></span><div><b>Cancelled</b><div class="row-sub">Stock went back on the shelf</div></div></div>`);
   if (o.status === "Pending") tl.push(`<div class="tl"><span class="tl-dot"></span><div class="muted">Waiting for dispatch</div></div>`);
@@ -1026,12 +1027,13 @@ function showOrder(id, confirmCancel) {
       <div class="divider" style="margin:16px 0"></div>
       <div class="kv"><div><div class="k">Ordered</div><div class="v">${fmtDT(o.time)}</div></div><div><div class="k">Dispatched</div><div class="v">${o.status === "Dispatched" && o.dispatched ? fmtDT(o.dispatched) : o.status === "Cancelled" ? "Cancelled" : "Not yet"}</div></div><div><div class="k">Crates</div><div class="v num">${nf(o.crates)}</div></div><div><div class="k">Value excl. GST</div><div class="v num">${rs2(o.value)}</div></div><div><div class="k">GST 5%</div><div class="v num">${rs2(o.value * 0.05)}</div></div><div><div class="k">Total incl. GST</div><div class="v num">${rs2(o.value * 1.05)}</div></div>${o.tod ? `<div><div class="k">TOD to claim</div><div class="v num">${rs2(o.tod)}</div></div>` : ""}</div></div>
     ${confirmCancel ? `<div class="confirm"><span><b>Cancel this order?</b> ${nf(o.crates)} crates go back into stock. This cannot be undone.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="orderSheet" data-id="${id}">Keep order</button><button class="btn btn-sm btn-danger" data-act="cancelOrderYes" data-id="${id}">Cancel order</button></span></div>` : ""}
+    ${confirmUndo ? undoDispatchHtml(o) : ""}
     ${o.notes ? `<div class="banner info">${ic("info", "sm")}<span>${esc(o.notes)}</span></div>` : ""}
     <div><div class="group-label"><span>Timeline</span></div><div class="card card-pad"><div class="timeline">${tl.join("")}</div></div></div>
     ${lines.length ? `<div><div class="group-label"><span>${lines.length} line${lines.length > 1 ? "s" : ""}</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crate${l.crates === 1 ? "" : "s"} · ${nf(l.ea)} boxes × ${rs2(l.billed)}${l.tod ? ` · TOD ${rs2(l.tod)}` : ""}</div></span><span class="row-end"><span class="row-value">${rs2(l.value)}</span></span></div>`).join("")}</div></div>` : ""}
     ${missed.length ? `<div><div class="group-label"><span>Not supplied in full</span></div><div class="group">${missed.map((m) => `<div class="row"><span class="attn-ic warn" style="width:28px;height:28px">${ic("alert", "sm")}</span><span class="grow"><div class="row-title clip">${esc(shortName(m.product))}</div><div class="row-sub">${esc(m.reason)}</div></span>${typeof m.missed === "number" ? `<span class="row-end"><span class="pill warn plain">${m.missed} missed</span></span>` : ""}</div>`).join("")}</div></div>` : ""}`;
-  const foot = `<button class="btn btn-secondary" data-act="soPreview" data-id="${id}">${ic("doc", "sm")} Sales order</button>${o.status !== "Cancelled" && lines.length ? `<button class="btn btn-secondary" data-act="${o.status === "Dispatched" ? "emailDispatch" : "emailSO"}" data-id="${id}">${ic("arrowR", "sm")} ${o.status === "Dispatched" ? "Email: on its way" : "Email sales order"}</button>` : ""}${o.status === "Pending" ? `<button class="btn btn-danger" data-act="cancelOrderAsk" data-id="${id}">Cancel order</button><button class="btn btn-primary" data-act="editOrder" data-id="${id}">${ic("pencil", "sm")} Edit order</button>` : ""}`;
-  openSheet("Order", body, lines.length || o.status === "Pending" ? foot : "");
+  const foot = `<button class="btn btn-secondary" data-act="soPreview" data-id="${id}">${ic("doc", "sm")} Sales order</button>${o.status !== "Cancelled" && lines.length ? `<button class="btn btn-secondary" data-act="${o.status === "Dispatched" ? "emailDispatch" : "emailSO"}" data-id="${id}">${ic("arrowR", "sm")} ${o.status === "Dispatched" ? "Email: on its way" : "Email sales order"}</button>` : ""}${o.status === "Pending" ? `<button class="btn btn-danger" data-act="cancelOrderAsk" data-id="${id}">Cancel order</button><button class="btn btn-primary" data-act="editOrder" data-id="${id}">${ic("pencil", "sm")} Edit order</button>` : ""}${o.status === "Dispatched" && ROLE === "owner" ? `<button class="btn btn-secondary" data-act="undoDispatchAsk" data-id="${id}">${ic("undo", "sm")} Undo dispatch</button>` : ""}`;
+  openSheet("Order", body, lines.length || o.status !== "Cancelled" ? foot : "");
 }
 ACT.cancelOrderAsk = (el) => showOrder(el.dataset.id, true);
 function restoreStock(id) { (linesByOrder[id] || []).forEach((l) => { const st = stockBySap[l.sap]; if (st && st.upc) { st.ea += l.ea || 0; st.crates = st.ea / st.upc; st.pcs = st.ea * (st.ppe || 1); } }); }
@@ -1804,6 +1806,37 @@ function impUnitFromPrice(sap, p, dist) {
   if (st.upc && p / (rate * st.upc) > 0.6 && p / (rate * st.upc) < 1.6) return "Crate";
   return null;
 }
+
+/* ===== UNDO A DISPATCH (owner only) =====
+   For an order marked dispatched by mistake. It goes back to Pending, exactly as it was: its stock was
+   already taken off the shelf when the order was saved, so stock does not change. It comes off any trip it
+   was logged on. It cannot be undone once TOD has been received against it. The database also refuses
+   this change from anyone who is not an owner. */
+function undoDispatchCheck(o) {
+  const tr = (D.logistics && D.logistics.trips || []).filter((t) => (t.orders || []).includes(o.id));
+  const todGot = D.tod.lines.filter((l) => l.id === o.id).reduce((a, l) => a + (l.received || 0), 0);
+  const mailed = D.activity.some((a) => a.action === "Email sent" && a.ref === o.id && /on (its|the) way|dispatch/i.test(a.detail || ""));
+  return { tr, todGot, mailed };
+}
+function undoDispatchHtml(o) {
+  const c = undoDispatchCheck(o);
+  if (c.todGot > 0.005) return `<div class="banner bad" style="flex-wrap:wrap"><span class="grow">${ic("alert", "sm")} <b>This dispatch can't be undone.</b> ${rs2(c.todGot)} of TOD has already been received against this order. Correct the TOD first.</span><button class="btn btn-sm btn-secondary" data-act="orderSheet" data-id="${esc(o.id)}">OK</button></div>`;
+  const notes = [];
+  if (c.tr.length) notes.push(`It comes off the trip logged on ${c.tr.map((t) => fmtDate(t.date)).join(", ")}.`);
+  if (c.mailed) notes.push(`${esc(shortOf(o.dist))} was already emailed that it is on its way. Let them know.`);
+  return `<div class="confirm" style="flex-wrap:wrap"><span class="grow" style="min-width:220px"><b>Undo this dispatch?</b> The order goes back to <b>Pending</b> and can be picked, edited or cancelled again. Stock does not change (it was taken off the shelf when the order was saved).${notes.length ? "<br>" + notes.join(" ") : ""}</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="orderSheet" data-id="${esc(o.id)}">Keep it dispatched</button><button class="btn btn-sm btn-primary" data-act="undoDispatchYes" data-id="${esc(o.id)}">Undo dispatch</button></span></div>`;
+}
+ACT.undoDispatchAsk = (el) => { if (ROLE !== "owner") { toast("Only the owner can undo a dispatch", "alert"); return; } showOrder(el.dataset.id, false, true); const c = $("#sheet .confirm, #sheet .banner.bad"); if (c) c.scrollIntoView({ block: "nearest" }); };
+ACT.undoDispatchYes = (el) => {
+  if (ROLE !== "owner") { toast("Only the owner can undo a dispatch", "alert"); return; }
+  const o = orderById(el.dataset.id); if (!o || o.status !== "Dispatched") return;
+  const c = undoDispatchCheck(o); if (c.todGot > 0.005) { showOrder(o.id, false, true); return; }
+  c.tr.forEach((t) => { t.orders = t.orders.filter((x) => x !== o.id); });
+  (o.undone = o.undone || []).push({ at: iso(NOW()), by: ME.name, was: o.dispatched });
+  o.status = "Pending"; delete o.dispatched;
+  logActivity("Dispatch undone", o.id, `${o.dist}: back to Pending${c.tr.length ? " · taken off " + c.tr.length + " trip" + (c.tr.length > 1 ? "s" : "") : ""}`);
+  render(); showOrder(o.id); toast("Dispatch undone. The order is Pending again", "undo");
+};
 
 /* ===== DISPATCH ===== */
 const shortOf = (name) => (distByKey[key(name)] && distByKey[key(name)].short) || name;
@@ -3340,6 +3373,8 @@ ACT.cmdRun = (el) => { const it = cmdItems[+el.dataset.i]; closeCmd(); if (it) i
 /* ===== boot ===== */
 function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
+/* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
+const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
 const VIEW_ACTS = new Set("qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
@@ -3355,8 +3390,8 @@ if (!CAN_EDIT) {
   const st = document.createElement("style"); st.textContent = ".vo-off{opacity:.4!important;cursor:not-allowed!important}"; document.head.appendChild(st);
   new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1) viewOnlyMark(n); }))).observe(document.body, { childList: true, subtree: true });
 }
-document.addEventListener("click", (e) => { const el = e.target.closest("[data-act]"); if (!el) return; if (!viewOK(el)) { e.preventDefault(); toast("View only: you can look, but not change anything", "info"); return; } const fn = ACT[el.dataset.act]; if (fn) fn(el, e); });
-document.addEventListener("input", (e) => { const el = e.target.closest("[data-in]"); if (!el) return; if (!viewOK(el)) return; const fn = IN[el.dataset.in]; if (fn) fn(el, e); });
+document.addEventListener("click", (e) => { const el = e.target.closest("[data-act]"); if (!el) return; if (!viewOK(el)) { e.preventDefault(); toast("View only: you can look, but not change anything", "info"); return; } const fn = ACT[el.dataset.act]; if (fn) afterAsync(fn(el, e)); });
+document.addEventListener("input", (e) => { const el = e.target.closest("[data-in]"); if (!el) return; if (!viewOK(el)) return; const fn = IN[el.dataset.in]; if (fn) afterAsync(fn(el, e)); });
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if ($("#cmd")) closeCmd(); else ACT.cmd(); return; }
   if ($("#cmd")) {
@@ -3712,6 +3747,7 @@ ACT.mailSend = async (el) => {
     catch (e) { fail++; lastErr = (e && e.message) || "Could not send"; }
   }
   el.disabled = false;
+  if (ok && typeof queueSave === "function") queueSave(); /* save the lock and log right away */
   if (/not switched on/i.test(lastErr)) { toast("Email isn't switched on yet: the Resend key still needs adding", "alert"); return; }
   if (fail) { toast(`${ok} sent, ${fail} not sent: ${lastErr}`, "alert"); part("mail-form", mailFormHtml()); return; }
   closeSheet(); render(); toast(`${ok} email${ok > 1 ? "s" : ""} sent${missing.length ? ` · ${missing.length} skipped (no email address)` : ""}`, "check");
@@ -4266,6 +4302,8 @@ ACT.saveRetry = () => { if (SAVE.state === "conflict") location.reload(); else i
 /* save after anything the user does; IN handlers fire per keystroke, so the debounce matters */
 ["click", "change", "keydown"].forEach((t) => document.addEventListener(t, () => setTimeout(queueSave, 0)));
 document.addEventListener("input", () => queueSave());
+/* safety net: anything changed without a tap (after an email is sent, a file is read…) is saved within a few seconds */
+setInterval(() => { if (SAVE.on && !SAVE.busy && !SAVE.conflict && dirty()) queueSave(); }, 4000);
 window.addEventListener("beforeunload", (e) => { if (SAVE.on && !SAVE.conflict && (SAVE.busy || dirty())) { e.preventDefault(); e.returnValue = ""; } });
 window.addEventListener("online", () => { if (SAVE.state === "error") doSave(); });
 
