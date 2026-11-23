@@ -158,7 +158,7 @@ function openQC() { return D.qcPOs.filter((p) => p.status === "Open"); }
 function render() {
   const cur = ROUTES[S.route].parent || S.route;
   $$("[data-nav]").forEach((el) => {
-    const on = el.dataset.nav === cur || (el.dataset.nav === "more" && ["quick", "replenish", "tod", "setup", "activity", "more"].includes(cur) && el.classList.contains("tab"));
+    const on = el.dataset.nav === cur || (el.dataset.nav === "more" && ["quick", "replenish", "tod", "setup", "activity", "backups", "more"].includes(cur) && el.classList.contains("tab"));
     if (on) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current");
   });
   const pb = $("#badge-dispatch"); if (pb) { const n = pendingOrders().length; pb.textContent = n; pb.hidden = !n; }
@@ -3334,7 +3334,7 @@ ACT.orderFor = (el) => { S.draft = newDraft(); S.draft.dist = el.dataset.name; c
 
 /* ===== MORE (phone) ===== */
 VIEWS.more = () => `<div class="page narrow"><div class="page-head"><h1 class="title">More</h1></div>
-  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["activity", "Activity log", ADMIN ? "Who did what and when, with undo" : "Who did what and when", "clock"], ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["logistics", "Logistics", "Trips, transport cost and its share of sales", "truck", unloggedRuns().length], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].filter((x) => ROUTES[x[0]]).map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
+  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["activity", "Activity log", ADMIN ? "Who did what and when, with undo" : "Who did what and when", "clock"], ...(ADMIN ? [["backups", "Backups", "Copies of all the data: download as Excel, or restore", "lock"]] : []), ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["logistics", "Logistics", "Trips, transport cost and its share of sales", "truck", unloggedRuns().length], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].filter((x) => ROUTES[x[0]]).map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
   <div class="group"><button class="row" data-act="cmd"><span class="attn-ic info">${ic("search")}</span><span class="grow"><div class="row-title">Search everything</div><div class="row-sub">Distributors, products, orders</div></span>${ic("chevR", "sm chev")}</button>${HOST ? `<button class="row" data-act="account"><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow"><div class="row-title">${esc(ME.name)}</div><div class="row-sub">Account, team and sign out</div></span>${ic("chevR", "sm chev")}</button>` : ""}</div></div>`;
 
 /* ===== ACCOUNT (only on the staff-login page) ===== */
@@ -4496,6 +4496,111 @@ ACT.actUndoYes = async (el) => {
   }
 };
 
+/* ===== BACKUPS (system admin) =====
+   The database keeps copies of all the tool's data: every hour (when something changed, for 3 days), every night
+   (for 90 days), the first night of every month (kept), and before any restore or file upload. Every night the
+   copy is also emailed to the system admin: an Excel workbook and the backup file that restores the tool.
+   Here the admin sees every copy, downloads it as Excel or as a backup file, makes one now, or restores one. */
+const BK_KIND = { hourly: "Hourly", daily: "Nightly", monthly: "Monthly", manual: "Made by hand", before_restore: "Before a restore", before_upload: "Before a file upload" };
+const BK_SHEETS = [["orders", "Orders"], ["orderLines", "Order lines"], ["oos", "Missed sales"], ["stock", "Stock"], ["purchases", "Stock received"], ["hpoLog", "Hangyo orders"], ["qcStock", "QC stock"], ["qcPOs", "QC POs"], ["qcLines", "QC PO lines"], ["transfers", "Credit notes & PIs"], ["distributors", "Distributors"], ["catalog", "Products"], ["notes", "Credit & debit notes"], ["salesBefore", "Sales before the tool"], ["activity", "Activity log"]];
+/* the same workbook as the nightly email: every list, one sheet each */
+function backupSheets(data, takenAt, version) {
+  const cellOf = (v) => (v == null ? null : typeof v === "object" ? JSON.stringify(v).slice(0, 30000) : typeof v === "string" ? v.slice(0, 30000) : v);
+  const table = (list) => { const rows = (Array.isArray(list) ? list : []).filter((x) => x && typeof x === "object" && !Array.isArray(x)), cols = [], seen = new Set(); rows.forEach((r) => Object.keys(r).forEach((k) => { if (k[0] !== "_" && !seen.has(k)) { seen.add(k); cols.push(k); } })); return [cols].concat(rows.map((r) => cols.map((c) => cellOf(r[c])))); };
+  const S2 = [];
+  BK_SHEETS.forEach(([k, n]) => { if (Array.isArray(data[k]) && data[k].length) S2.push([n, table(data[k])]); });
+  if (data.tod && Array.isArray(data.tod.lines)) S2.push(["TOD lines", table(data.tod.lines)]);
+  if (data.tod && Array.isArray(data.tod.byDist)) S2.push(["TOD by distributor", table(data.tod.byDist)]);
+  if (data.logistics && Array.isArray(data.logistics.trips)) S2.push(["Trips", table(data.logistics.trips)]);
+  if (data.logistics && Array.isArray(data.logistics.transporters)) S2.push(["Transporters", table(data.logistics.transporters)]);
+  if (data.repl && Array.isArray(data.repl.rows)) S2.push(["Replenishment", table(data.repl.rows)]);
+  if (data.prices && typeof data.prices === "object") { const nm = {}; (data.catalog || []).forEach((c) => { if (c && c.sap) nm[c.sap] = c.name; }); S2.push(["Prices", [["SAP", "Product", "SS rate (our cost)", "Distributor rate", "Dealer rate", "MRP per box", "MRP per piece", "Special price"]].concat(Object.keys(data.prices).map((sap) => { const p = Array.isArray(data.prices[sap]) ? data.prices[sap] : []; return [sap, nm[sap] || "", p[0] ?? null, p[1] ?? null, p[2] ?? null, p[3] ?? null, p[4] ?? null, (data.special && data.special.prices && data.special.prices[sap]) ?? null]; }))]); }
+  const about = [["SahiReach order tool: backup"], [], ["Taken", fmtDT(takenAt) + " (India time)"], ["Data version", version], [], ["What is in this file", "Every list in the tool, one sheet each. Costs and margins are included: keep this file private."], [], ["Sheet", "Rows"]].concat(S2.map(([n, a]) => [n, Math.max(0, a.length - 1)]));
+  return [{ name: "About this backup", aoa: about, cols: [26, 90] }].concat(S2.map(([n, a]) => ({ name: n.slice(0, 31), aoa: a, cols: (a[0] || []).map(() => 16) })));
+}
+const bkDay = (t) => { const d = new Date(t); return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()); };
+async function bkLoad() {
+  if (!HOST || !HOST.backupList) return;
+  try { S.bk = await HOST.backupList(); S.bkErr = null; } catch (e) { S.bkErr = (e && e.message) || "Could not load the backups"; }
+  if (S.route === "backups") part("bk-body", backupsBody());
+}
+function bkRowHtml(b) {
+  const sure = S.bkSure === b.id;
+  return `<div class="row" style="flex-wrap:wrap;gap:10px"><span class="attn-ic ${b.kind === "monthly" ? "good" : b.kind === "daily" ? "tint" : b.kind === "hourly" ? "info" : "warn"}" style="width:30px;height:30px">${ic(b.kind === "hourly" ? "clock" : b.kind === "daily" || b.kind === "monthly" ? "cal" : "lock", "sm")}</span>
+    <span class="grow" style="min-width:180px"><div class="row-title">${esc(fmtDT(b.taken_at))}</div><div class="row-sub">${esc(BK_KIND[b.kind] || b.kind)} · ${nf(b.orders)} orders · version ${esc(b.version)}${b.by ? " · by " + esc(b.by) : ""}${b.note ? " · " + esc(b.note) : ""}</div></span>
+    <span class="row-end hstack gap-8 wrap"><button class="btn btn-sm btn-secondary" data-act="bkExcel" data-id="${esc(b.id)}">${ic("doc", "sm")} Excel</button><button class="btn btn-sm btn-secondary" data-act="bkFile" data-id="${esc(b.id)}">Backup file</button><button class="btn btn-sm btn-secondary" data-act="bkRestoreAsk" data-id="${esc(b.id)}">${ic("undo", "sm")} Restore</button></span>
+    ${sure ? `<div class="banner warn" style="flex-basis:100%;flex-wrap:wrap"><span class="grow" style="min-width:220px">${ic("alert", "sm")} <b>Put the whole tool back to ${esc(fmtDT(b.taken_at))}?</b> Everything done after that is undone for everyone. How it is right now is kept as a backup first, so you can come back.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="bkRestoreNo">Cancel</button><button class="btn btn-sm btn-primary" data-act="bkRestoreYes" data-id="${esc(b.id)}">Restore this copy</button></span></div>` : ""}</div>`;
+}
+function backupsBody() {
+  if (!HOST) return `<div class="group"><div class="empty"><div class="big">Backups live in the database</div>Sign in at sahireach.com/staff-login to see them.</div></div>`;
+  if (S.bkErr) return `<div class="banner bad">${ic("alert", "sm")}<span>${esc(S.bkErr)}</span></div>`;
+  if (!S.bk) return `<div class="group"><div class="row"><span class="row-sub">Loading the backups…</span></div></div>`;
+  const L = S.bk.backups || [], E = S.bk.emails || [], last = L[0], mail = E[0], n = (k) => L.filter((b) => b.kind === k).length;
+  const groups = [["Made by hand and before restores", L.filter((b) => ["manual", "before_restore", "before_upload"].includes(b.kind))], ["Hourly · last 3 days, when something changed", L.filter((b) => b.kind === "hourly")], ["Nightly · last 90 days", L.filter((b) => b.kind === "daily")], ["Monthly · kept", L.filter((b) => b.kind === "monthly")]].filter((g) => g[1].length);
+  return `<div class="card card-pad"><div class="hstack gap-12" style="align-items:flex-start"><span class="attn-ic good">${ic("lock")}</span><div class="grow">
+      <div class="card-title">Your data is copied automatically</div>
+      <div class="row-sub" style="margin-top:4px">Every hour when something changed · every night at 11:55 pm (emailed to you as Excel and a backup file) · the first night of every month, kept.</div>
+      <div class="kv" style="margin-top:14px"><div><div class="k">Last copy</div><div class="v">${last ? esc(fmtDT(last.taken_at)) : "None yet"}</div></div><div><div class="k">Last backup email</div><div class="v">${mail ? `${esc(fmtDT(mail.at))} · ${mail.status === "sent" ? "sent" : `<span style="color:var(--bad)">not sent</span>`}` : "Tonight"}</div></div><div><div class="k">Copies kept</div><div class="v num">${nf(L.length)}</div></div><div><div class="k">Nightly · monthly</div><div class="v num">${nf(n("daily"))} · ${nf(n("monthly"))}</div></div></div>
+      ${mail && mail.status !== "sent" ? `<div class="banner bad" style="margin-top:12px">${ic("alert", "sm")}<span>The last backup email was not sent: ${esc(mail.error || "unknown reason")}</span></div>` : ""}
+    </div></div>
+    <div class="hstack gap-8 wrap" style="margin-top:16px"><button class="btn btn-primary" data-act="bkNow">${ic("plus", "sm")} Make a copy now</button><button class="btn btn-secondary" data-act="bkFromFile">${ic("doc", "sm")} Restore from a file</button></div></div>
+    ${groups.map(([t, list]) => `<div><div class="group-label"><span>${esc(t)}</span><span>${list.length}</span></div><div class="group">${list.slice(0, t.startsWith("Hourly") && !S.bkAllHourly ? 8 : 200).map(bkRowHtml).join("")}${t.startsWith("Hourly") && list.length > 8 && !S.bkAllHourly ? `<button class="row" data-act="bkAllHourly"><span class="row-sub">Show all ${list.length} hourly copies</span></button>` : ""}</div></div>`).join("")}`;
+}
+if (ADMIN) {
+  ROUTES.backups = { label: "Backups", icon: "lock" };
+  VIEWS.backups = () => { if (!S.bk && !S.bkErr && !S.bkLoading) { S.bkLoading = true; bkLoad().then(() => { S.bkLoading = false; }); } return `<div class="page narrow"><div class="page-head"><div><h1 class="title">Backups</h1><div class="subtitle">Copies of all the tool's data. Download any copy as Excel, or put the tool back to it.</div></div></div><div id="bk-body" class="stack gap-16">${backupsBody()}</div></div>`; };
+}
+ACT.bkAllHourly = () => { S.bkAllHourly = true; part("bk-body", backupsBody()); };
+ACT.bkRestoreAsk = (el) => { S.bkSure = +el.dataset.id; part("bk-body", backupsBody()); };
+ACT.bkRestoreNo = () => { S.bkSure = null; part("bk-body", backupsBody()); };
+async function bkFetch(id) { let b = null; try { b = await HOST.backupGet(+id); } catch (e) { toast((e && e.message) || "Could not load that copy", "alert"); return null; } if (!b || !b.data) { toast("That copy could not be found", "alert"); return null; } return b; }
+ACT.bkExcel = async (el) => {
+  const b = await bkFetch(el.dataset.id); if (!b || !b.data) return;
+  await downloadBook(el, backupSheets(b.data, b.taken_at, b.version), `SahiReach backup ${bkDay(b.taken_at)} ${pad2(new Date(b.taken_at).getHours())}${pad2(new Date(b.taken_at).getMinutes())}.xlsx`);
+};
+ACT.bkFile = async (el) => {
+  const b = await bkFetch(el.dataset.id); if (!b || !b.data) return;
+  const blob = new Blob([JSON.stringify({ kind: "sahireach-order-tool", js: typeof b.js === "string" ? b.js : "", data: b.data, as_of: b.taken_at, backup: { id: b.id, taken_at: b.taken_at, version: b.version } })], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `SahiReach-backup-${bkDay(b.taken_at)}.json`; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  toast("Backup file downloaded. Keep it private: it has costs and margins", "check");
+};
+ACT.bkNow = async (el) => {
+  if (SAVE.busy || dirty()) { clearTimeout(SAVE.timer); await doSave(); }
+  el.disabled = true;
+  try { await HOST.backupNow("Made from the Backups screen"); toast("Copy made", "check"); S.bk = null; await bkLoad(); } catch (e) { toast((e && e.message) || "Could not make a copy", "alert"); }
+  el.disabled = false;
+};
+async function bkGoBack(run, msg) {
+  SAVE.on = false; clearTimeout(SAVE.timer);
+  try { await run(); toast(msg, "undo"); setTimeout(() => { if (HOST.reload) HOST.reload(); else location.reload(); }, 800); }
+  catch (e) { SAVE.on = true; toast((e && e.message) || "Could not restore", "alert"); }
+}
+ACT.bkRestoreYes = async (el) => {
+  if (!ADMIN) return;
+  if (SAVE.busy || dirty()) { clearTimeout(SAVE.timer); await doSave(); }
+  if (SAVE.conflict) { toast("Someone else saved just now. Reload first, then restore", "alert"); return; }
+  el.disabled = true; await bkGoBack(() => HOST.backupRestore(+el.dataset.id), "Restored · reopening");
+};
+ACT.bkFromFile = () => {
+  if (!ADMIN || !HOST || !HOST.uploadWorkspace) return;
+  const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".json,application/json";
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    let o; try { o = JSON.parse(await f.text()); } catch (e) { toast("That file could not be read. Choose a SahiReach backup file (.json)", "alert"); return; }
+    if (!o || o.kind !== "sahireach-order-tool" || !o.data || !Array.isArray(o.data.orders)) { toast("That is not a SahiReach backup file", "alert"); return; }
+    S.bkFile = f;
+    openSheet("Restore from a file?", `<div class="banner warn">${ic("alert", "sm")}<span><b>Put the whole tool back to this file?</b> Everything done after it was made is undone for everyone. How the tool is right now is kept as a backup first.</span></div>
+      <div class="card card-pad"><div class="kv"><div><div class="k">File</div><div class="v">${esc(f.name)}</div></div><div><div class="k">Data as of</div><div class="v">${o.as_of ? esc(fmtDT(o.as_of)) : "Not stated"}</div></div><div><div class="k">Orders in it</div><div class="v num">${nf(o.data.orders.length)}</div></div><div><div class="k">Orders now</div><div class="v num">${nf(D.orders.length)}</div></div></div></div>`,
+      `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="bkFileYes">${ic("undo", "sm")} Restore this file</button>`);
+  };
+  inp.click();
+};
+ACT.bkFileYes = async (el) => {
+  if (!ADMIN || !S.bkFile) return;
+  if (SAVE.busy || dirty()) { clearTimeout(SAVE.timer); await doSave(); }
+  el.disabled = true; await bkGoBack(() => HOST.uploadWorkspace(S.bkFile), "Restored from the file · reopening");
+};
+
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
 (function buildShell() {
   const item = (r, extra = "") => `<button class="nav-item" data-act="nav" data-to="${r}" data-nav="${r}">${ic(ROUTES[r].icon)}<span>${ROUTES[r].label}</span>${extra}</button>`;
@@ -4504,7 +4609,7 @@ ACT.actUndoYes = async (el) => {
     <div class="nav-label">Sell</div>${item("orders")}${item("dispatch", `<span class="nav-badge hot" id="badge-dispatch" hidden></span>`)}${item("quick", `<span class="nav-badge" id="badge-quick" hidden></span>`)}
     <div class="nav-label">Stock</div>${item("stock")}${item("replenish")}
     ${SEE_MONEY ? `<div class="nav-label">Money</div>${item("tod")}${item("logistics")}` : ""}
-    <div class="nav-label">Manage</div>${item("setup")}${item("activity")}
+    <div class="nav-label">Manage</div>${item("setup")}${item("activity")}${ROUTES.backups ? item("backups") : ""}
     <div class="side-foot"><button class="nav-item" data-act="cmd">${ic("search")}<span>Search</span><span class="nav-badge">⌘K</span></button><${HOST ? 'button class="me me-btn" data-act="account" aria-label="Account"' : 'div class="me"'}><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow" style="text-align:left;min-width:0"><span class="clip" style="display:block;font-weight:600;font-size:14px">${esc(ME.name)}</span><span class="brand-sub" style="display:block">${ROLE === "owner" ? "SahiReach LLP" : ROLE_LABEL[ROLE] + (CAN_EDIT ? "" : " · view only")}</span></span>${HOST ? ic("chevR", "sm chev") : ""}</${HOST ? "button" : "div"}></div>`;
   const tab = (r, label) => `<button class="tab" data-act="nav" data-to="${r}" data-nav="${r}">${ic(ROUTES[r].icon)}<span>${label}</span></button>`;
   $("#tabbar").innerHTML = tab("home", "Home") + tab("orders", "Orders") + tab("dispatch", "Dispatch") + tab("stock", "Stock") + tab("more", "More");
