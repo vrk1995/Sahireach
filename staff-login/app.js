@@ -7,6 +7,8 @@ const ME = (HOST && HOST.me) || { name: "Vishnu", role: "owner" };
    The database enforces the same rules: staff are sent no cost data, and a viewer's changes are refused. */
 const ROLE = (() => { if (HOST) return ["owner", "staff", "viewer"].includes(ME.role) ? ME.role : "staff"; let r = ""; try { r = new URLSearchParams(location.search).get("as") || ""; } catch (e) {} return ["staff", "viewer"].includes(r) ? r : "owner"; })();
 const CAN_EDIT = ROLE !== "viewer", SEE_MONEY = ROLE !== "staff";
+/* the system admin (an owner) can undo anything in the activity log; in the preview the owner is the admin */
+const ADMIN = ROLE === "owner" && (HOST ? !!ME.admin : true);
 const ROLE_LABEL = { owner: "Owner", staff: "Staff", viewer: "Viewer" };
 const FIRST = String(ME.name || "").trim().split(/\s+/)[0] || "there";
 const CO = D.company || { name: "SahiReach LLP", address: "", gstin: "", fssai: "" };
@@ -134,6 +136,7 @@ const ROUTES = {
   tod: { label: "TOD & notes", icon: "rupee" },
   logistics: { label: "Logistics", icon: "truck" },
   setup: { label: "Setup", icon: "gear" },
+  activity: { label: "Activity log", icon: "clock" },
   more: { label: "More", icon: "grid" },
 };
 if (!SEE_MONEY) { delete ROUTES.tod; delete ROUTES.logistics; }
@@ -155,7 +158,7 @@ function openQC() { return D.qcPOs.filter((p) => p.status === "Open"); }
 function render() {
   const cur = ROUTES[S.route].parent || S.route;
   $$("[data-nav]").forEach((el) => {
-    const on = el.dataset.nav === cur || (el.dataset.nav === "more" && ["quick", "replenish", "tod", "setup", "more"].includes(cur) && el.classList.contains("tab"));
+    const on = el.dataset.nav === cur || (el.dataset.nav === "more" && ["quick", "replenish", "tod", "setup", "activity", "more"].includes(cur) && el.classList.contains("tab"));
     if (on) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current");
   });
   const pb = $("#badge-dispatch"); if (pb) { const n = pendingOrders().length; pb.textContent = n; pb.hidden = !n; }
@@ -191,7 +194,8 @@ function copyText(text, okMsg) {
   const fallback = () => { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); done(); } catch (e) { toast("Select and copy the text", "info"); } ta.remove(); };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(fallback); else fallback();
 }
-function logActivity(action, ref, detail) { D.activity.unshift({ time: iso(NOW()), action, ref, detail, by: HOST ? ME.name : undefined }); }
+let ACT_N = 0;
+function logActivity(action, ref, detail) { D.activity.unshift({ id: "A" + Date.now().toString(36) + (ACT_N++).toString(36) + Math.random().toString(36).slice(2, 5), time: iso(NOW()), action, ref, detail, by: HOST ? ME.name : undefined }); }
 
 /* ---- small shared builders ---- */
 const statusPill = (s) => {
@@ -1028,9 +1032,10 @@ function showOrder(id, confirmCancel, confirmUndo) {
       <div class="kv"><div><div class="k">Ordered</div><div class="v">${fmtDT(o.time)}</div></div><div><div class="k">Dispatched</div><div class="v">${o.status === "Dispatched" && o.dispatched ? fmtDT(o.dispatched) : o.status === "Cancelled" ? "Cancelled" : "Not yet"}</div></div><div><div class="k">Crates</div><div class="v num">${nf(o.crates)}</div></div><div><div class="k">Value excl. GST</div><div class="v num">${rs2(o.value)}</div></div><div><div class="k">GST 5%</div><div class="v num">${rs2(o.value * 0.05)}</div></div><div><div class="k">Total incl. GST</div><div class="v num">${rs2(o.value * 1.05)}</div></div>${o.tod ? `<div><div class="k">TOD to claim</div><div class="v num">${rs2(o.tod)}</div></div>` : ""}</div></div>
     ${confirmCancel ? `<div class="confirm"><span><b>Cancel this order?</b> ${nf(o.crates)} crates go back into stock. This cannot be undone.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="orderSheet" data-id="${id}">Keep order</button><button class="btn btn-sm btn-danger" data-act="cancelOrderYes" data-id="${id}">Cancel order</button></span></div>` : ""}
     ${confirmUndo ? undoDispatchHtml(o) : ""}
+    ${o.status === "Pending" ? orderQCOfferHtml(o) : ""}
     ${o.notes ? `<div class="banner info">${ic("info", "sm")}<span>${esc(o.notes)}</span></div>` : ""}
     <div><div class="group-label"><span>Timeline</span></div><div class="card card-pad"><div class="timeline">${tl.join("")}</div></div></div>
-    ${lines.length ? `<div><div class="group-label"><span>${lines.length} line${lines.length > 1 ? "s" : ""}</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crate${l.crates === 1 ? "" : "s"} · ${nf(l.ea)} boxes × ${rs2(l.billed)}${l.tod ? ` · TOD ${rs2(l.tod)}` : ""}</div></span><span class="row-end"><span class="row-value">${rs2(l.value)}</span></span></div>`).join("")}</div></div>` : ""}
+    ${lines.length ? `<div><div class="group-label"><span>${lines.length} line${lines.length > 1 ? "s" : ""}</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crate${l.crates === 1 ? "" : "s"} · ${nf(l.ea)} boxes × ${rs2(l.billed)}${l.tod ? ` · TOD ${rs2(l.tod)}` : ""}${l.qc > 0 ? ` · <span style="color:var(--tint);font-weight:600">${nf(l.qc, 2)} from quick commerce stock</span>` : ""}</div></span><span class="row-end"><span class="row-value">${rs2(l.value)}</span></span></div>`).join("")}</div></div>` : ""}
     ${missed.length ? `<div><div class="group-label"><span>Not supplied in full</span></div><div class="group">${missed.map((m) => `<div class="row"><span class="attn-ic warn" style="width:28px;height:28px">${ic("alert", "sm")}</span><span class="grow"><div class="row-title clip">${esc(shortName(m.product))}</div><div class="row-sub">${esc(m.reason)}</div></span>${typeof m.missed === "number" ? `<span class="row-end"><span class="pill warn plain">${m.missed} missed</span></span>` : ""}</div>`).join("")}</div></div>` : ""}`;
   const foot = `<button class="btn btn-secondary" data-act="soPreview" data-id="${id}">${ic("doc", "sm")} Sales order</button>${o.status !== "Cancelled" && lines.length ? `<button class="btn btn-secondary" data-act="${o.status === "Dispatched" ? "emailDispatch" : "emailSO"}" data-id="${id}">${ic("arrowR", "sm")} ${o.status === "Dispatched" ? "Email: on its way" : "Email sales order"}</button>` : ""}${o.status === "Pending" ? `<button class="btn btn-danger" data-act="cancelOrderAsk" data-id="${id}">Cancel order</button><button class="btn btn-primary" data-act="editOrder" data-id="${id}">${ic("pencil", "sm")} Edit order</button>` : ""}${o.status === "Dispatched" && ROLE === "owner" ? `<button class="btn btn-secondary" data-act="undoDispatchAsk" data-id="${id}">${ic("undo", "sm")} Undo dispatch</button>` : ""}`;
   openSheet("Order", body, lines.length || o.status !== "Cancelled" ? foot : "");
@@ -1057,25 +1062,28 @@ function searchProducts(q, limit = 30) {
   return list.slice(0, limit);
 }
 function calcDraft() {
-  const dr = S.draft, d = dr.dist ? distByKey[key(dr.dist)] : null, used = {}, oldEA = {};
+  const dr = S.draft, d = dr.dist ? distByKey[key(dr.dist)] : null, used = {}, usedQ = {}, oldEA = {};
   if (dr.editId) (dr.orig || []).forEach((l) => { oldEA[l.sap] = (oldEA[l.sap] || 0) + (l.ea || 0); });
   const rows = dr.lines.map((ln) => {
     const st = stockBySap[ln.sap], c = catBySap[ln.sap] || {}, upc = st ? st.upc : null, ppe = (st && st.ppe) || c.ppe || 1, stocked = !!(st && upc > 0), qty = +ln.qty || 0;
     const exact = !stocked ? null : ln.unit === "Crate" ? qty : ln.unit === "EA (Box)" ? qty / upc : qty / (upc * ppe);
     const req = stocked ? Math.ceil(Math.round(exact * 1e6) / 1e6) : null;
     const avail = stocked ? Math.max(0, (st.ea + (oldEA[ln.sap] || 0) - ownHeldEA(ln.sap)) / upc - (used[ln.sap] || 0)) : 0; /* minus crates held for a sent QC pick list */
-    const supply = stocked ? Math.max(0, Math.min(req, avail)) : 0;
-    if (stocked) used[ln.sap] = (used[ln.sap] || 0) + supply;
+    const own = stocked ? Math.max(0, Math.min(req, avail)) : 0;
+    /* short of SahiReach stock: quick commerce stock can fill the rest, if the user says so */
+    const qcFree = stocked && req > own + 1e-9 ? Math.max(0, Math.floor(orderQCFree(ln.sap, oldEA[ln.sap] || 0) - (usedQ[ln.sap] || 0) + 1e-9)) : 0;
+    const qcTake = ln.useQC && qcFree > 0 ? Math.min(req - own, qcFree) : 0, supply = own + qcTake;
+    if (stocked) { used[ln.sap] = (used[ln.sap] || 0) + own; usedQ[ln.sap] = (usedQ[ln.sap] || 0) + qcTake; }
     const ea = supply * (upc || 0), normal = price(ln.sap), base = normal != null ? normal : ln.manual > 0 ? +ln.manual : null;
     const special = d && d.special && D.special.prices[ln.sap] != null ? D.special.prices[ln.sap] : null;
     const billed = special != null ? special : base, value = billed != null ? Math.round(ea * billed * 100) / 100 : null;
     const todEA = special != null && base != null ? Math.max(0, Math.round((base - special) * 100) / 100) : 0;
-    const status = !qty ? "empty" : !stocked ? "notstocked" : avail <= 0 ? "out" : avail < req ? "short" : "ok";
-    return { ln, st, c, upc, ppe, stocked, qty, req, avail, supply, ea, pcs: ea * ppe, normal, special, billed, value, todEA, tod: Math.round(ea * todEA * 100) / 100, status, needPrice: billed == null && qty > 0 && stocked && avail > 0 };
+    const status = !qty ? "empty" : !stocked ? "notstocked" : supply <= 0 ? "out" : supply < req - 1e-9 ? "short" : "ok";
+    return { ln, st, c, upc, ppe, stocked, qty, req, avail, own, qcFree, qcTake, supply, ea, pcs: ea * ppe, normal, special, billed, value, todEA, tod: Math.round(ea * todEA * 100) / 100, status, needPrice: billed == null && qty > 0 && stocked && avail > 0 };
   });
   const sum = (f) => rows.reduce((a, r) => a + (f(r) || 0), 0);
   const net = Math.round(sum((r) => r.value) * 100) / 100;
-  return { rows, d, crates: sum((r) => r.supply), req: sum((r) => r.req), net, gst: Math.round(net * 5) / 100, tod: sum((r) => r.tod), ea: sum((r) => r.ea), needPrice: rows.filter((r) => r.needPrice).length, short: rows.filter((r) => ["short", "out", "notstocked"].includes(r.status)).length };
+  return { rows, d, crates: sum((r) => r.supply), req: sum((r) => r.req), net, gst: Math.round(net * 5) / 100, tod: sum((r) => r.tod), ea: sum((r) => r.ea), needPrice: rows.filter((r) => r.needPrice).length, short: rows.filter((r) => ["short", "out", "notstocked"].includes(r.status)).length, qcCan: rows.filter((r) => r.qcFree > 0 && !r.ln.useQC && r.qty > 0), qcTake: sum((r) => r.qcTake) };
 }
 function distCard(d) {
   const due = d.credit != null ? new Date(Date.now() + d.credit * 864e5) : null;
@@ -1099,7 +1107,8 @@ function lineCalcHtml(r, i) {
   let msg = "";
   if (r.status === "notstocked") msg = `<div class="line-msg warn">${ic("info", "sm")} Not in your range: logged as demand, nothing supplied.</div>`;
   else if (r.status === "out") msg = `<div class="line-msg bad">${ic("alert", "sm")} Out of stock: ${r.req} crate${r.req > 1 ? "s" : ""} logged as missed.</div>`;
-  else if (r.status === "short") msg = `<div class="line-msg warn">${ic("alert", "sm")} Only ${nf(r.avail, 2)} crate${r.avail === 1 ? "" : "s"} in stock: ${nf(r.req - r.avail, 2)} logged as missed.</div>`;
+  else if (r.status === "short") msg = `<div class="line-msg warn">${ic("alert", "sm")} Only ${nf(r.supply, 2)} crate${r.supply === 1 ? "" : "s"} available: ${nf(r.req - r.supply, 2)} logged as missed.</div>`;
+  msg += lineQCHtml(r, i);
   if (r.needPrice) msg += `<div class="line-msg bad">${ic("tag", "sm")} No price in the South Kerala list. Price per box: <input class="input sm num-in" style="width:110px" id="mp-${i}" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="${r.ln.manual || ""}" data-in="manualPrice" data-i="${i}"></div>`;
   return `<div class="line-val"><div class="row-value">${r.value != null && r.qty && r.supply > 0 ? rs2(r.value) : "–"}</div><div class="row-sub nowrap">${r.stocked && r.qty ? `${nf(r.supply, 2)} cr · ${nf(r.ea)} bx` : ""}</div></div>${msg}`;
 }
@@ -1210,7 +1219,7 @@ ACT.clearDraft = () => { const was = S.draft.editId; S.draft = newDraft(); if (w
    stock or not stocked (those live only in the missed-sales log, so they have to be put back) */
 function requestedLines(o) {
   const d = distByKey[key(o.dist)] || {}, out = [], seen = new Set();
-  (linesByOrder[o.id] || []).forEach((l) => { out.push({ sap: l.sap, name: l.product, qty: l.qty, unit: l.unit || d.uom || "Crate", manual: /manual/i.test(l.src || "") ? l.billed : 0 }); seen.add(l.sap); });
+  (linesByOrder[o.id] || []).forEach((l) => { out.push({ sap: l.sap, name: l.product, qty: l.qty, unit: l.unit || d.uom || "Crate", manual: /manual/i.test(l.src || "") ? l.billed : 0, useQC: l.qc > 0 }); seen.add(l.sap); });
   D.oos.filter((x) => x.id === o.id && x.sap && !seen.has(x.sap)).forEach((x) => {
     const m = /requested\s+([\d.]+)\s+(Crate|EA \(Box\)|Pieces)/i.exec(x.reason || "");
     const qty = x.askQty != null ? x.askQty : m ? +m[1] : typeof x.req === "number" ? x.req : 1, unit = x.askUnit || (m ? m[2] : "Crate");
@@ -1233,15 +1242,16 @@ ACT.saveOrder = () => {
   const lines = [];
   C.rows.filter((r) => r.qty > 0).forEach((r) => {
     if (r.supply > 0) {
-      lines.push({ id: o.id, product: r.c.name, sap: r.ln.sap, unit: r.ln.unit, qty: r.qty, crates: r.supply, ea: r.ea, pcs: r.pcs, src: r.special != null ? "Special price" : r.normal != null ? "SK Master" : "Manual", normal: r.normal, billed: r.billed, value: r.value, tod: r.tod });
-      r.st.ea -= r.ea; r.st.crates = r.st.ea / r.upc; r.st.pcs = r.st.ea * r.ppe; r.st.move = `${o.id} (${C.d.name}): -${nf(r.supply, 2)} crates`;
+      lines.push({ id: o.id, product: r.c.name, sap: r.ln.sap, unit: r.ln.unit, qty: r.qty, crates: r.supply, ea: r.ea, pcs: r.pcs, src: r.special != null ? "Special price" : r.normal != null ? "SK Master" : "Manual", normal: r.normal, billed: r.billed, value: r.value, tod: r.tod, ...(r.qcTake > 0 ? { qc: r.qcTake } : {}) });
+      /* crates taken from quick commerce stock leave SahiReach stock below zero until the pick list moves them across at dispatch */
+      r.st.ea -= r.ea; r.st.crates = r.st.ea / r.upc; r.st.pcs = r.st.ea * r.ppe; r.st.move = `${o.id} (${C.d.name}): -${nf(r.supply, 2)} crates${r.qcTake > 0 ? ` (${nf(r.qcTake, 2)} from quick commerce stock)` : ""}`;
       if (r.tod > 0) D.tod.lines.push({ time: iso(now), id: o.id, month: "", dist: C.d.name, product: r.c.name, sap: r.ln.sap, crates: r.supply, ea: r.ea, normal: r.normal, special: r.special, perEA: r.todEA, amount: r.tod, status: "Expected", received: null });
     }
     if (r.status !== "ok") D.oos.push({ time: iso(now), id: o.id, dist: C.d.name, product: r.c.name, sap: r.ln.sap, askQty: r.qty, askUnit: r.ln.unit, req: r.req == null ? "N/A" : r.req, avail: r.stocked ? r.avail : "N/A", missed: r.stocked ? r.req - r.supply : "N/A", value: r.stocked && r.billed != null ? (r.req - r.supply) * r.upc * r.billed : "N/A", reason: r.status === "notstocked" ? `Not in current range - requested ${r.qty} ${r.ln.unit}` : r.status === "out" ? "Fully out of stock" : `Partial - ${nf(r.req - r.supply, 2)} of ${r.req} crates short` });
   });
   linesByOrder[o.id] = lines;
   Object.assign(o, { lines: lines.length, crates: C.crates, value: C.net, valueGst: C.net + C.gst, tod: C.tod });
-  logActivity(dr.editId ? "Order edited" : "Order saved", o.id, `${C.d.name}: ${lines.length} lines, ${nf(C.crates, 2)} crates, ${rs(C.net)}`);
+  logActivity(dr.editId ? "Order edited" : "Order saved", o.id, `${C.d.name}: ${lines.length} lines, ${nf(C.crates, 2)} crates, ${rs(C.net)}${C.qcTake > 0 ? ` · ${nf(C.qcTake, 2)} crates from quick commerce stock` : ""}`);
   const wasEdit = !!dr.editId; S.draft = newDraft(); S.ordersTab = "Pending"; S.picked[o.id] = true;
   go("orders");
   openSheet(wasEdit ? "Order updated" : "Order saved", `<div class="success"><div class="tick">${ic("check")}</div><div class="section-title">${wasEdit ? "Order updated" : "Order saved"}</div><div class="muted">${esc(o.dist)} · ${nf(o.crates, 2)} crates · ${rs2(o.valueGst)} incl. GST</div><div class="mono dim">${esc(o.id)}</div>${C.short ? `<div class="banner warn" style="margin-top:10px;text-align:left">${ic("alert", "sm")}<span>${C.short} line${C.short > 1 ? "s were" : " was"} short or not stocked. Logged under missed sales.</span></div>` : ""}</div>
@@ -1838,6 +1848,57 @@ ACT.undoDispatchYes = (el) => {
   render(); showOrder(o.id); toast("Dispatch undone. The order is Pending again", "undo");
 };
 
+/* ===== DISTRIBUTOR ORDERS CAN USE QUICK COMMERCE STOCK =====
+   When SahiReach stock is short, the order line offers the crates sitting in quick commerce stock. If taken, the
+   order is saved with them (SahiReach stock goes below zero by that much), the pick list fills them in under
+   "Take from quick commerce stock", and at dispatch they move across and a purchase invoice is pending. */
+/* crates of SahiReach stock already promised to distributor orders out of quick commerce stock */
+const gtFromQC = (sap) => { const st = stockBySap[sap]; return st && st.upc && st.ea < -1e-9 ? -st.ea / st.upc : 0; };
+/* quick commerce crates free for this order: not held for a sent Swiggy / Zepto pick list, not promised to another order */
+function orderQCFree(sap, oldEA) {
+  const q = qcBySap[sap], st = stockBySap[sap]; if (!q || !st || !st.upc) return 0;
+  const promised = Math.max(0, -(st.ea + (oldEA || 0)) / st.upc);
+  return Math.max(0, (q.crates || 0) - qcHeld(sap).q - promised);
+}
+function lineQCHtml(r, i) {
+  if (r.qcTake > 0) return `<div class="line-msg tint">${ic("bolt", "sm")} <span><b>${nf(r.qcTake, 2)} crate${r.qcTake === 1 ? "" : "s"} from quick commerce stock.</b> A purchase invoice will be pending once it is dispatched. <button class="btn-plain" style="height:auto;padding:0;font-size:inherit;font-weight:600;color:var(--tint)" data-act="lineQC" data-i="${i}" data-off="1">Don't use</button></span></div>`;
+  if (r.qcFree > 0 && r.qty > 0) { const n = Math.min(r.req - r.own, r.qcFree); return `<div class="line-msg tint">${ic("bolt", "sm")} <span>Quick commerce stock has <b>${nf(r.qcFree)} crate${r.qcFree === 1 ? "" : "s"}</b>. <button class="btn btn-sm btn-secondary" style="margin-left:4px" data-act="lineQC" data-i="${i}">Take ${nf(n, 2)} from quick commerce</button></span></div>`; }
+  return "";
+}
+function orderQCAllHtml(C) {
+  if (!C.qcCan.length) return "";
+  return `<div class="banner info" style="margin-top:10px;flex-wrap:wrap;text-align:left">${ic("bolt", "sm")}<span class="grow" style="min-width:160px"><b>Quick commerce stock can fill ${C.qcCan.length} short line${C.qcCan.length > 1 ? "s" : ""}:</b> ${C.qcCan.map((r) => esc(shortName(r.c.name || r.ln.name))).join(", ")}.</span><button class="btn btn-sm btn-primary" data-act="allQC">Use it</button></div>`;
+}
+ACT.lineQC = (el) => { const l = S.draft.lines[+el.dataset.i]; if (!l) return; l.useQC = !el.dataset.off; refreshOrderLines(); };
+ACT.allQC = () => { calcDraft().qcCan.forEach((r) => { r.ln.useQC = true; }); refreshOrderLines(); toast("Quick commerce stock added to the short lines", "bolt"); };
+{
+  const sh = summaryHtml;
+  summaryHtml = (C) => sh(C).replace(`<div class="stack gap-8" style="margin-top:16px">`, `${orderQCAllHtml(C)}${C.qcTake > 0 ? `<div class="sum-row" style="margin-top:6px"><span class="muted">From quick commerce stock</span><span class="num">${nf(C.qcTake, 2)} crates</span></div>` : ""}<div class="stack gap-8" style="margin-top:16px">`);
+}
+/* a saved order with missed lines that quick commerce stock could fill now */
+function orderQCOffer(o) {
+  if (!o || o.status !== "Pending") return [];
+  const seen = new Set();
+  return D.oos.filter((m) => m.id === o.id && m.sap && typeof m.missed === "number" && m.missed > 0).filter((m) => !seen.has(m.sap) && seen.add(m.sap)).map((m) => ({ m, free: Math.floor(orderQCFree(m.sap, 0) + 1e-9) })).filter((x) => x.free >= 1);
+}
+function orderQCOfferHtml(o) {
+  const L = orderQCOffer(o); if (!L.length) return "";
+  return `<div class="banner info" style="flex-wrap:wrap"><span class="grow" style="min-width:220px">${ic("bolt", "sm")} <b>Quick commerce stock can fill what was missed:</b> ${L.map((x) => `${esc(shortName(x.m.product))} (${nf(x.m.missed, 2)} missed, quick commerce has ${nf(x.free)})`).join(", ")}.</span>${CAN_EDIT ? `<button class="btn btn-sm btn-primary" data-act="orderAddQC" data-id="${esc(o.id)}">Add from quick commerce</button>` : ""}</div>`;
+}
+ACT.orderAddQC = (el) => {
+  const o = orderById(el.dataset.id); if (!o || o.status !== "Pending") return;
+  const saps = new Set(orderQCOffer(o).map((x) => x.m.sap));
+  ACT.editOrder({ dataset: { id: o.id } });
+  S.draft.lines.forEach((l) => { if (saps.has(l.sap)) l.useQC = true; });
+  render(); toast("Quick commerce stock added. Check the order, then tap Update order", "bolt");
+};
+/* at dispatch without a matching pick list: move what the orders were promised from quick commerce stock */
+function orderQCMoves(orders) {
+  const need = {};
+  orders.forEach((o) => (linesByOrder[o.id] || []).forEach((l) => { if (l.qc > 0) need[l.sap] = (need[l.sap] || 0) + l.qc; }));
+  return Object.keys(need).map((sap) => { const q = qcBySap[sap]; const n = Math.min(need[sap], Math.ceil(gtFromQC(sap) - 1e-9), q ? Math.max(0, Math.floor((q.crates || 0) - qcHeld(sap).q + 1e-9)) : 0); return { sap, n, name: (stockBySap[sap] || q || { name: sap }).name, code: (q || {}).trop || "" }; }).filter((x) => x.n > 0);
+}
+
 /* ===== DISPATCH ===== */
 const shortOf = (name) => (distByKey[key(name)] && distByKey[key(name)].short) || name;
 function pickedOrders() { return pendingOrders().filter((o) => S.picked[o.id]); }
@@ -1849,7 +1910,7 @@ VIEWS.dispatch = () => {
     <div class="page-head"><div><h1 class="title">Dispatch</h1><div class="subtitle">Tick the orders going on the next truck, send the pick list to Tropicana, then mark them dispatched once it has left.</div></div></div>
     ${pend.length ? `<div class="split s300">
       <div><div class="group-label"><span>${pend.length} order${pend.length > 1 ? "s" : ""} not dispatched yet</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="pickAll">${sel.length === pend.length ? "Untick all" : "Tick all"}</button></div>
-        <div class="group">${pend.map((o) => `<div class="row tap" role="checkbox" tabindex="0" aria-checked="${!!S.picked[o.id]}" data-act="togglePick" data-id="${o.id}" style="cursor:pointer"><span class="check" aria-checked="${!!S.picked[o.id]}">${ic("check")}</span><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub">${backPill(o) ? backPill(o) + " " : ""}${dayLabel(o.time)}, ${fmtTime(o.time)} · ${o.lines} lines${o.timesEdited ? " · edited" : ""}</div></span><span class="row-end"><span><div class="row-value">${nf(o.crates, 2)} crates</div><div class="row-sub num">${rs(o.value)}</div></span><button class="icon-btn" data-act="orderSheet" data-id="${o.id}" aria-label="Open order">${ic("chevR", "sm")}</button></span></div>`).join("")}</div></div>
+        <div class="group">${pend.map((o) => `<div class="row tap" role="checkbox" tabindex="0" aria-checked="${!!S.picked[o.id]}" data-act="togglePick" data-id="${o.id}" style="cursor:pointer"><span class="check" aria-checked="${!!S.picked[o.id]}">${ic("check")}</span><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub">${backPill(o) ? backPill(o) + " " : ""}${dayLabel(o.time)}, ${fmtTime(o.time)} · ${o.lines} lines${o.timesEdited ? " · edited" : ""}${orderQCOffer(o).length ? ` · <span style="color:var(--tint);font-weight:600">quick commerce stock can fill a missed line</span>` : ""}</div></span><span class="row-end"><span><div class="row-value">${nf(o.crates, 2)} crates</div><div class="row-sub num">${rs(o.value)}</div></span><button class="icon-btn" data-act="orderSheet" data-id="${o.id}" aria-label="Open order">${ic("chevR", "sm")}</button></span></div>`).join("")}</div></div>
       <div class="sticky"><div class="card card-pad"><div class="card-title">This truck</div>
         <div class="tile-value" style="margin-top:8px">${nf(crates, 2)}<small>crates</small></div><div class="row-sub">${sel.length} of ${pend.length} orders · ${rs(sel.reduce((a, o) => a + o.value, 0))}</div>
         ${veh ? `<div class="vehicle">${ic("truck")}<span><b>${esc(veh.split(" (")[0])}</b><div class="row-sub">${veh.includes("(") ? esc(veh.split("(")[1].replace(")", "")) : "Suggested vehicle"}</div></span></div>` : ""}
@@ -2014,7 +2075,7 @@ function qcDeliveryLive() {
   pos.forEach((p) => (qcLinesByPO[p.po] || []).forEach((l) => { const k = l.sap || l.product, a = (agg[k] = agg[k] || { sap: l.sap, name: l.product, pcs: 0, value: 0, ppc: l.ppc }); a.pcs += l.pcs; a.value += l.value; }));
   const rows = Object.values(agg).map((a) => {
     const qc = qcBySap[a.sap] || {}, own = stockBySap[a.sap] || {}, ppc = a.ppc || qc.ppc || 1;
-    const held = qcHeld(a.sap), full = Math.floor(a.pcs / ppc), qcCr = Math.max(0, Math.floor((qc.crates || 0) - held.q + 1e-9)), ownCr = own.upc ? Math.max(0, Math.floor(own.ea / own.upc - held.o + 1e-9)) : 0;
+    const held = qcHeld(a.sap), full = Math.floor(a.pcs / ppc), qcCr = Math.max(0, Math.floor((qc.crates || 0) - held.q - gtFromQC(a.sap) + 1e-9)), ownCr = own.upc ? Math.max(0, Math.floor(own.ea / own.upc - held.o + 1e-9)) : 0;
     let fromQC = Math.min(full, qcCr), fromOwn = S.qcOwn ? Math.min(full - fromQC, ownCr) : 0;
     const ov = (S.qcOverride[S.qcPlatform] || {})[a.sap], edited = !!ov;
     if (ov) { fromQC = Math.max(0, Math.min(ov.q, qcCr)); fromOwn = Math.max(0, Math.min(ov.o, ownCr)); }
@@ -2485,7 +2546,7 @@ function ownStockGrid() {
   const rows = stockRows().sort((a, b) => cratesOf(b) - cratesOf(a) || a.name.localeCompare(b.name));
   if (!rows.length) return `<div class="group"><div class="empty"><div class="big">Nothing matches</div>Try another name, code or filter.</div></div>`;
   return `<div class="dg" style="--cols:minmax(0,2fr) 90px 80px 80px minmax(110px,150px) 100px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="c-hide">Class</span><span class="r">Crates</span><span class="r c-hide">Boxes</span><span class="c-hide">Days of stock</span><span class="r c-hide">Price / box</span></div>
-  ${rows.map((s) => { const r = replBySap[s.sap] || {}, c = cratesOf(s), days = r.perDay > 0 ? c / r.perDay : null, low = r.belowRop || (days != null && days < 4); return `<button class="dg-row" data-act="productSheet" data-sap="${s.sap}"><span><div class="strong clip">${esc(shortName(s.name))}</div><div class="row-sub clip">${esc(s.trop || "No Tropicana code")} · ${esc(s.cat || "")}</div></span><span class="c-hide">${classPill(r.cls)}</span><span class="r strong" ${c <= 0 ? 'style="color:var(--bad)"' : ""}>${nf(c, 1)}</span><span class="r c-hide">${nf(s.ea)}</span><span class="bar-cell c-hide">${days != null ? `<div class="meter ${low ? "bad" : days < 8 ? "warn" : ""}"><i style="width:${Math.min(100, (days / 30) * 100)}%"></i></div><span class="num" style="font-size:13px;min-width:30px;text-align:right">${days.toFixed(0)}d</span>` : `<span class="dim" style="font-size:13px">no recent sales</span>`}</span><span class="r c-hide">${s.price != null ? rs2(s.price) : "–"}</span></button>`; }).join("")}</div>`;
+  ${rows.map((s) => { const r = replBySap[s.sap] || {}, c = cratesOf(s), days = r.perDay > 0 ? c / r.perDay : null, low = r.belowRop || (days != null && days < 4); return `<button class="dg-row" data-act="productSheet" data-sap="${s.sap}"><span><div class="strong clip">${esc(shortName(s.name))}</div><div class="row-sub clip">${c < -1e-9 ? `<span style="color:var(--tint);font-weight:600">${nf(-c, 1)} crates promised from quick commerce stock</span>` : `${esc(s.trop || "No Tropicana code")} · ${esc(s.cat || "")}`}</div></span><span class="c-hide">${classPill(r.cls)}</span><span class="r strong" ${c <= 0 ? 'style="color:var(--bad)"' : ""}>${nf(Math.max(0, c), 1)}</span><span class="r c-hide">${nf(Math.max(0, s.ea))}</span><span class="bar-cell c-hide">${days != null ? `<div class="meter ${low ? "bad" : days < 8 ? "warn" : ""}"><i style="width:${Math.min(100, (days / 30) * 100)}%"></i></div><span class="num" style="font-size:13px;min-width:30px;text-align:right">${days.toFixed(0)}d</span>` : `<span class="dim" style="font-size:13px">no recent sales</span>`}</span><span class="r c-hide">${s.price != null ? rs2(s.price) : "–"}</span></button>`; }).join("")}</div>`;
 }
 function qcStockGrid() {
   const rows = D.qcStock.slice().sort((a, b) => (b.crates || 0) - (a.crates || 0));
@@ -3242,8 +3303,8 @@ VIEWS.setup = () => {
   const tab = S.setupTab, searchable = tab === "distributors" || tab === "products";
   return `<div class="page">
     <div class="page-head"><div><h1 class="title">Setup</h1><div class="subtitle">Distributors, products and prices, company details, and a record of everything that was changed.</div></div>${tab === "distributors" ? `<div class="head-actions"><button class="btn btn-primary" data-act="distEdit">${ic("plus", "sm")} Add distributor</button></div>` : tab === "products" ? `<div class="head-actions"><button class="btn btn-primary" data-act="productEdit">${ic("plus", "sm")} Add product</button></div>` : ""}</div>
-    <div class="hstack gap-12 wrap">${seg("setupTab", tab, [["distributors", "Distributors", D.distributors.length], ["products", "Products & prices"], ["special", "Special prices"], ["settings", "Company & QC"], ["activity", "Activity"]])}${searchable ? `<div class="search">${ic("search", "sm")}<input class="input" id="setup-q" type="search" placeholder="${tab === "distributors" ? "Search distributors" : "Search products, codes or categories"}" value="${esc(S.setupQ)}" data-in="setupQ" autocomplete="off"></div>` : ""}</div>
-    <div id="setup-body">${tab === "distributors" ? distGrid() : tab === "products" ? catalogGrid() : tab === "special" ? specialHtml() : tab === "settings" ? settingsHtml() : activityHtml()}</div></div>`;
+    <div class="hstack gap-12 wrap">${seg("setupTab", tab, [["distributors", "Distributors", D.distributors.length], ["products", "Products & prices"], ["special", "Special prices"], ["settings", "Company & QC"], ["activity", "Activity log"]])}${searchable ? `<div class="search">${ic("search", "sm")}<input class="input" id="setup-q" type="search" placeholder="${tab === "distributors" ? "Search distributors" : "Search products, codes or categories"}" value="${esc(S.setupQ)}" data-in="setupQ" autocomplete="off"></div>` : ""}</div>
+    <div id="setup-body">${tab === "distributors" ? distGrid() : tab === "products" ? catalogGrid() : tab === "special" ? specialHtml() : tab === "settings" ? settingsHtml() : activityBody()}</div></div>`;
 };
 IN.setupQ = (el) => { S.setupQ = el.value; part("setup-body", S.setupTab === "distributors" ? distGrid() : catalogGrid()); };
 ACT.toggleSpecial = (el) => { const d = distByKey[key(el.dataset.name)]; d.special = !d.special; part("setup-body", specialHtml()); toast(d.special ? `${d.name} now gets special prices` : `${d.name} is back on the normal rate`); };
@@ -3264,7 +3325,7 @@ ACT.orderFor = (el) => { S.draft = newDraft(); S.draft.dist = el.dataset.name; c
 
 /* ===== MORE (phone) ===== */
 VIEWS.more = () => `<div class="page narrow"><div class="page-head"><h1 class="title">More</h1></div>
-  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["logistics", "Logistics", "Trips, transport cost and its share of sales", "truck", unloggedRuns().length], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].filter((x) => ROUTES[x[0]]).map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
+  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["activity", "Activity log", ADMIN ? "Who did what and when, with undo" : "Who did what and when", "clock"], ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["logistics", "Logistics", "Trips, transport cost and its share of sales", "truck", unloggedRuns().length], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].filter((x) => ROUTES[x[0]]).map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
   <div class="group"><button class="row" data-act="cmd"><span class="attn-ic info">${ic("search")}</span><span class="grow"><div class="row-title">Search everything</div><div class="row-sub">Distributors, products, orders</div></span>${ic("chevR", "sm chev")}</button>${HOST ? `<button class="row" data-act="account"><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow"><div class="row-title">${esc(ME.name)}</div><div class="row-sub">Account, team and sign out</div></span>${ic("chevR", "sm chev")}</button>` : ""}</div></div>`;
 
 /* ===== ACCOUNT (only on the staff-login page) ===== */
@@ -3277,7 +3338,7 @@ ACT.account = () => {
   if (!HOST) return;
   const owner = ROLE === "owner";
   S.inviteRole = S.inviteRole || "staff";
-  openSheet("Account", `<div class="card card-pad"><div class="hstack gap-12"><span class="avatar lg soft">${esc(initials(ME.name))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(ME.name)}</div><div class="row-sub">${ROLE_LABEL[ROLE]} · SahiReach LLP</div></div></div><div class="row-sub" style="margin-top:12px">${esc(ROLE_WHAT[ROLE])}</div><div id="pw-box" style="margin-top:14px">${pwBoxHtml(false)}</div></div>
+  openSheet("Account", `<div class="card card-pad"><div class="hstack gap-12"><span class="avatar lg soft">${esc(initials(ME.name))}</span><div class="grow"><div class="section-title" style="font-size:19px">${esc(ME.name)}</div><div class="row-sub">${ROLE_LABEL[ROLE]}${ADMIN ? " · System admin" : ""} · SahiReach LLP</div></div></div><div class="row-sub" style="margin-top:12px">${esc(ROLE_WHAT[ROLE])}${ADMIN ? " As system admin you can also undo anything in the Activity log." : ""}</div><div id="pw-box" style="margin-top:14px">${pwBoxHtml(false)}</div></div>
     <div style="margin-top:22px"><div class="group-label"><span>Team</span>${owner ? `<span>change a role or remove access</span>` : ""}</div><div class="group" id="team-list"><div class="row"><span class="row-sub">Loading…</span></div></div></div>
     ${owner ? `<div style="margin-top:22px"><div class="group-label"><span>Invite a teammate</span></div><div class="card card-pad" id="invite-box">${inviteBoxHtml()}</div></div>` : ""}`,
     `<button class="btn btn-secondary" data-act="signOut">${ic("logout", "sm")} Sign out</button>`);
@@ -3375,8 +3436,8 @@ function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
 /* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
-const VIEW_ACTS = new Set("qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
-const VIEW_INS = new Set("specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
+const VIEW_ACTS = new Set("actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_INS = new Set("actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {
   if (CAN_EDIT || !root || !root.querySelectorAll) return;
@@ -4193,7 +4254,7 @@ IN.pickQC = (el) => {
 
 /* ---------- confirm before a pick list goes out when stock crosses over ---------- */
 function xferList(kind) {
-  if (kind === "gt") { const P = S.pickList; return P && pickKey(P) === pickedOrders().map((o) => o.id).sort().join("|") ? pickQCList(P).map((x) => ({ name: x.name, n: x.n })) : []; }
+  if (kind === "gt") { const P = S.pickList; return (P && pickKey(P) === pickedOrders().map((o) => o.id).sort().join("|") ? pickQCList(P) : orderQCMoves(pickedOrders())).map((x) => ({ name: x.name, n: x.n })); }
   return qcDelivery().rows.filter((r) => r.fromOwn > 0).map((r) => ({ name: r.name, n: r.fromOwn }));
 }
 function xferGuard(kind, next) {
@@ -4211,7 +4272,8 @@ ACT.xferOK = (el) => { S.xferOK = el.dataset.sig; part(el.dataset.t, ""); const 
 {
   const dn = ACT.dispatchNow;
   ACT.dispatchNow = (el, e) => {
-    const sel = pickedOrders(), P = S.pickList, moves = P && P.qc && pickKey(P) === sel.map((o) => o.id).sort().join("|") ? pickQCList(P) : [];
+    /* what the pick list took from quick commerce stock; with no pick list, what the orders themselves were promised from it */
+    const sel = pickedOrders(), P = S.pickList, moves = P && pickKey(P) === sel.map((o) => o.id).sort().join("|") ? pickQCList(P) : orderQCMoves(sel);
     dn(el, e);
     if (!moves.length) return;
     moves.forEach((m) => { const q = qcBySap[m.sap], st = stockBySap[m.sap]; if (q) { q.crates = (q.crates || 0) - m.n; q.ea = q.crates * (q.upc || 1); q.move = `${nf(m.n)} crates used for distributor dispatch`; } if (st && st.upc) { st.ea += m.n * st.upc; st.crates = st.ea / st.upc; st.pcs = st.ea * (st.ppe || 1); st.move = `${nf(m.n)} crates taken from quick commerce stock for dispatch`; } });
@@ -4227,6 +4289,204 @@ ACT.xferOK = (el) => { S.xferOK = el.dataset.sig; part(el.dataset.t, ""); const 
   [["emailPick", "gt"], ["copyPick", "gt"], ["dispatchNow", "gt"], ["emailQCPick", "qc"], ["qcPickCopy", "qc"], ["qcPickSent", "qc"], ["qcDeliver", "qc"], ["qcDeliverAsk", "qc"]].forEach(([a, k]) => { const f = ACT[a]; if (!f) return; ACT[a] = (el, e) => { if (!xferGuard(k, a)) return; return f(el, e); }; });
 }
 
+/* ===== ACTIVITY LOG WITH UNDO (system admin) =====
+   Every save works out exactly what changed (field by field) and stores it, privately, against the activity
+   entries made in that save. Changes made without an activity entry get an "Edited" entry of their own.
+   Undo puts those fields back as they were, on the latest data; anything changed again since is listed first.
+   Undoing is itself an activity, so it can be undone too (redo). Only the system admin can read the changes. */
+const DIFF_ID = ["id", "po", "sap", "name", "time", "dist", "product"];
+const diffHint = (el) => { if (!el || typeof el !== "object" || Array.isArray(el)) return null; const h = {}; let n = 0; DIFF_ID.forEach((k) => { const v = el[k]; if (v != null && typeof v !== "object") { h[k] = v; n++; } }); return n ? h : null; };
+/* an empty list or record the app sets up by itself is not a change anyone made */
+const isEmpty = (v) => v == null || (Array.isArray(v) ? !v.length : typeof v === "object" && !Object.keys(v).length);
+const dKind = (v) => (Array.isArray(v) ? "arr" : v && typeof v === "object" ? "obj" : "val");
+function deepEq(a, b) {
+  if (a === b) return true; const ka = dKind(a), kb = dKind(b); if (ka !== kb || ka === "val") return false;
+  if (ka === "arr") return a.length === b.length && a.every((x, i) => deepEq(x, b[i]));
+  const A = Object.keys(a), B = Object.keys(b); return A.length === B.length && A.every((k) => k in b && deepEq(a[k], b[k]));
+}
+/* an element recorded by someone who could not see costs has those fields empty: they match anything */
+function looks(rec, cur) {
+  if (rec === null) return true; const k = dKind(rec); if (k !== dKind(cur)) return false; if (k === "val") return rec === cur;
+  if (k === "arr") return rec.length === cur.length && rec.every((x, i) => looks(x, cur[i]));
+  return Object.keys(rec).every((x) => looks(rec[x], cur[x]));
+}
+function wsDiff(a, b) {
+  const ops = [];
+  const walk = (x, y, p, h) => {
+    if (x === y) return;
+    const tx = dKind(x), ty = dKind(y);
+    if (tx === "obj" && ty === "obj") {
+      const keys = new Set(Object.keys(x).concat(Object.keys(y)));
+      keys.forEach((k) => { if (!p.length && k === "activity") return; const q = p.concat([k]); if (!(k in y)) ops.push({ p: q, h, f: x[k], ta: 1 }); else if (!(k in x)) { if (!isEmpty(y[k])) ops.push({ p: q, h, fa: 1, t: y[k] }); } else walk(x[k], y[k], q, h); });
+      return;
+    }
+    if (tx === "arr" && ty === "arr") {
+      if (x.length === y.length) { for (let i = 0; i < x.length; i++) { if (x[i] === y[i]) continue; const hi = diffHint(y[i]); walk(x[i], y[i], p.concat([i]), hi ? Object.assign({}, h, { [p.length]: hi }) : h); } return; }
+      /* items added or removed: keep the whole items */
+      const sx = x.map((e) => JSON.stringify(e)), sy = y.map((e) => JSON.stringify(e)), cy = new Map(), cx = new Map(), rm = [], ad = [];
+      sy.forEach((k) => cy.set(k, (cy.get(k) || 0) + 1)); sx.forEach((k) => cx.set(k, (cx.get(k) || 0) + 1));
+      sx.forEach((k, i) => { const c = cy.get(k); if (c) cy.set(k, c - 1); else rm.push([i, x[i]]); });
+      sy.forEach((k, i) => { const c = cx.get(k); if (c) cx.set(k, c - 1); else ad.push([i, y[i]]); });
+      if (rm.length || ad.length) ops.push({ p, h, s: 1, rm, ad });
+      return;
+    }
+    if (!deepEq(x, y)) ops.push({ p, h, f: x, t: y });
+  };
+  walk(a, b, [], {});
+  return ops;
+}
+function dFind(arr, i, hint) {
+  if (!hint) return i < arr.length ? i : -1;
+  const m = (el) => el && typeof el === "object" && Object.keys(hint).every((k) => el[k] === hint[k]);
+  return m(arr[i]) ? i : arr.findIndex(m);
+}
+/* follow a path in the latest data; an item in a list is found again by its id / name if it has moved */
+function dWalk(root, p, h, upto) {
+  let cur = root;
+  for (let i = 0; i < upto; i++) {
+    if (Array.isArray(cur)) { const j = dFind(cur, p[i], h && h[i]); if (j < 0) return undefined; cur = cur[j]; }
+    else if (cur && typeof cur === "object") cur = cur[p[i]]; else return undefined;
+  }
+  return cur;
+}
+/* put one save's changes back (newest first); returns what had been changed again since */
+function undoApply(root, ops) {
+  const clash = [];
+  for (let n = ops.length - 1; n >= 0; n--) {
+    const op = ops[n];
+    if (op.s) {
+      const arr = dWalk(root, op.p, op.h, op.p.length); if (!Array.isArray(arr)) { clash.push(op); continue; }
+      op.ad.slice().reverse().forEach(([i, el]) => { let j = i < arr.length && deepEq(arr[i], el) ? i : arr.findIndex((x) => deepEq(x, el)); if (j < 0) j = arr.findIndex((x) => looks(el, x)); if (j < 0) clash.push(op); else arr.splice(j, 1); });
+      op.rm.forEach(([i, el]) => arr.splice(Math.min(i, arr.length), 0, JSON.parse(JSON.stringify(el))));
+      continue;
+    }
+    const parent = dWalk(root, op.p, op.h, op.p.length - 1); if (!parent || typeof parent !== "object") { clash.push(op); continue; }
+    let k = op.p[op.p.length - 1];
+    if (Array.isArray(parent)) { k = dFind(parent, k, op.h && op.h[op.p.length - 1]); if (k < 0) { clash.push(op); continue; } }
+    const has = k in parent, now = parent[k];
+    if (op.ta ? has : !has || !deepEq(now, op.t)) clash.push(op);
+    if (op.fa) { if (Array.isArray(parent)) parent.splice(k, 1); else delete parent[k]; } else parent[k] = JSON.parse(JSON.stringify(op.f));
+  }
+  return clash;
+}
+/* ---------- words for the changes ---------- */
+const AREA = { orders: "Orders", orderLines: "Order lines", oos: "Missed sales", tod: "TOD", stock: "Stock", qcStock: "Quick commerce stock", qcPOs: "Quick commerce POs", qcLines: "Quick commerce PO lines", qcPick: "Quick commerce settings", qcPickLocks: "Sent QC pick lists", distributors: "Distributors", catalog: "Products", prices: "Prices", special: "Special prices", company: "Company details", purchases: "Stock received", hpo: "Hangyo orders", hpoLog: "Hangyo orders", repl: "Replenishment plan", logistics: "Logistics", transfers: "Credit notes / purchase invoices", notes: "Notes", pickSent: "Pick lists", slow: "Slow movers", orderAliases: "Order name matches", dash: "Dashboard", meta: "Settings" };
+const areaOf = (op) => AREA[op.p[0]] || String(op.p[0] || "Data").replace(/^\w/, (c) => c.toUpperCase());
+const opAreas = (ops) => [...new Set(ops.map(areaOf))];
+const itemName = (el) => (el && typeof el === "object" ? (el.dist ? el.dist + (el.id ? " " + el.id : "") : el.name || el.product || el.po || el.id || "") : "");
+const shortVal = (v) => (v === undefined ? "nothing" : v === null ? "empty" : typeof v === "object" ? "(details)" : typeof v === "number" ? nf(v, 2) : String(v).length > 40 ? String(v).slice(0, 40) + "…" : String(v));
+const FIELD = { ea: "boxes", crates: "crates", qty: "quantity", status: "status", dispatched: "dispatched on", value: "value", valueGst: "value incl. GST", received: "received", amount: "amount", email: "email", phone: "phone", special: "special prices", credit: "credit days", price: "price", rate: "rate", cost: "cost", name: "name" };
+const FIELD_QUIET = new Set(["pcs", "move", "updated", "timesEdited", "edited", "_", "delta"]);
+/* the changes as short lines, one per item: "Stock · Berry & Cream: boxes 54 → 66, crates 9 → 11" */
+function opLines(ops, root, back) {
+  const g = new Map(), extra = [];
+  ops.forEach((op) => {
+    if (op.s) { extra.push(opWords(op, root, back)); return; }
+    const field = op.p.slice(1).filter((x) => typeof x === "string").pop() || "";
+    const w = opWords(op, root, back), i = w.lastIndexOf(": "), head = field ? w.slice(0, w.lastIndexOf(" · " + field)) || w.slice(0, i) : w.slice(0, i);
+    if (FIELD_QUIET.has(field) && ops.length > 1) { if (!g.has(head)) g.set(head, []); return; }
+    if (!g.has(head)) g.set(head, []); g.get(head).push(`${FIELD[field] || field} ${w.slice(i + 2)}`);
+  });
+  return [...g.entries()].map(([h, l]) => (l.length ? `${h}: ${l.join(", ")}` : `${h}: updated`)).concat(extra);
+}
+function opWords(op, root, back) {
+  let item = "";
+  for (let i = op.p.length - 1; i > 0 && !item; i--) { const el = dWalk(root, op.p, op.h, i); if (el && typeof el === "object" && !Array.isArray(el)) item = itemName(el); }
+  if (!item && op.h) { const hs = Object.values(op.h); item = hs.length ? itemName(hs[hs.length - 1]) : ""; }
+  const head = areaOf(op) + (item ? " · " + item : "");
+  if (op.s) { const a = op.ad.map(([, e]) => itemName(e)).filter(Boolean), r = op.rm.map(([, e]) => itemName(e)).filter(Boolean); return `${head}: ${back ? `removes ${op.ad.length}${a.length ? " (" + a.slice(0, 3).join(", ") + ")" : ""}${op.rm.length ? `, puts back ${op.rm.length}${r.length ? " (" + r.slice(0, 3).join(", ") + ")" : ""}` : ""}` : `${op.ad.length ? "added " + op.ad.length + (a.length ? " (" + a.slice(0, 3).join(", ") + ")" : "") : ""}${op.ad.length && op.rm.length ? ", " : ""}${op.rm.length ? "removed " + op.rm.length + (r.length ? " (" + r.slice(0, 3).join(", ") + ")" : "") : ""}`}`; }
+  const field = op.p.slice(1).filter((x) => typeof x === "string").pop() || "";
+  return `${head}${field && field !== item ? " · " + field : ""}: ${back ? `${shortVal(op.ta ? undefined : op.t)} → ${shortVal(op.fa ? undefined : op.f)}` : `${shortVal(op.fa ? undefined : op.f)} → ${shortVal(op.ta ? undefined : op.t)}`}`;
+}
+/* ---------- recording (called from doSave) ---------- */
+function undoPrep(s) {
+  if (!HOST || !HOST.undoRecord || !SAVE.lastObj) return null;
+  const n = JSON.parse(s), ops = wsDiff(SAVE.lastObj, n); if (!ops.length) return null;
+  const old = new Set((SAVE.lastObj.activity || []).slice(0, 500).map((a) => a.id).filter(Boolean));
+  let acts = (n.activity || []).slice(0, 300).filter((a) => a.id && !old.has(a.id)).map((a) => a.id), relog = false;
+  if (!acts.length) {
+    const ref = opAreas(ops).join(", "), top = D.activity[0];
+    if (top && top.auto && top.id && top.by === ME.name && top.ref === ref && NOW() - toDate(top.time) < 10 * 60e3) acts = [top.id];
+    else { const L = opLines(ops, n, false); logActivity("Edited", ref, L.slice(0, 3).join(" · ") + (L.length > 3 ? ` · and ${L.length - 3} more` : "")); D.activity[0].auto = true; acts = [D.activity[0].id]; relog = true; }
+  }
+  return { acts, ops, relog };
+}
+function undoSend(rec) {
+  const q = SAVE.undoQ.splice(0).concat([rec]);
+  q.forEach((r) => Promise.resolve().then(() => HOST.undoRecord(r.acts, r.ops)).catch(() => { if (SAVE.undoQ.length < 50) SAVE.undoQ.push(r); }));
+  S.undoActs = null; /* the list of what can be undone is fetched again */
+}
+/* ---------- the Activity log screen ---------- */
+const ACT_DAYS = { today: 0, week: 7, month: 30, all: null };
+function actList() {
+  const per = S.actPeriod || "week", days = ACT_DAYS[per], q = key(S.actQ || ""), who = S.actWho || "";
+  const from = days == null ? "" : addDays(ymd(NOW()), -days);
+  return D.activity.filter((a) => (SEE_MONEY || !/tod|trip|price|cost|ss rate/i.test(a.action)) && (!from || String(a.time).slice(0, 10) >= from) && (!who || (a.by || "") === who) && (!q || key([a.action, a.ref, a.detail, a.by].join(" ")).includes(q)));
+}
+function actRowHtml(a) {
+  const undone = a.undone, can = ADMIN && HOST && a.id && S.undoActs && S.undoActs.has(a.id), redo = !!a.undoOf;
+  const tone = /undone|undo/i.test(a.action) ? "warn" : /cancel/i.test(a.action) ? "bad" : /dispatch|delivered|received/i.test(a.action) ? "good" : /edited/i.test(a.action) ? "warn" : "tint";
+  return `<div class="row" style="align-items:flex-start;${undone ? "opacity:.6" : ""}"><span class="avatar soft" title="${esc(a.by || "")}">${esc(initials(a.by || "–").slice(0, 2))}</span><span class="grow" style="min-width:0"><div class="row-title" style="white-space:normal"><span class="tl-dot ${tone}" style="display:inline-block;position:static;margin-right:6px;vertical-align:middle"></span>${esc(a.action)}${a.ref ? ` <span class="mono dim" style="font-size:12.5px">${esc(a.ref)}</span>` : ""}</div>${a.detail ? `<div class="row-sub" style="white-space:normal">${esc(a.detail)}</div>` : ""}<div class="row-sub dim">${fmtTime(a.time)} · <b>${esc(a.by || "Before sign-in")}</b>${undone ? ` · undone by ${esc(undone.by || "")} ${esc(fmtDT(undone.at))}` : ""}</div></span>
+    <span class="row-end">${undone ? `<span class="pill plain warn">Undone</span>` : can ? `<button class="btn btn-sm btn-secondary" data-act="actUndo" data-id="${esc(a.id)}">${ic("undo", "sm")} ${redo ? "Redo" : "Undo"}</button>` : ""}</span></div>`;
+}
+function activityBody() {
+  const all = actList(), shown = all.slice(0, S.actMax || 150), people = [...new Set(D.activity.map((a) => a.by).filter(Boolean))];
+  const days = []; shown.forEach((a) => { const d = String(a.time).slice(0, 10); let g = days[days.length - 1]; if (!g || g.d !== d) days.push((g = { d, list: [] })); g.list.push(a); });
+  if (ADMIN && HOST && HOST.undoActs && !S.undoActs && !S.undoLoading) { S.undoLoading = true; HOST.undoActs(iso(new Date(Date.now() - 120 * 864e5))).then((r) => { S.undoActs = new Set(Array.isArray(r) ? r : []); }, () => { S.undoActs = new Set(); }).then(() => { S.undoLoading = false; part("act-body", activityBody()); }); }
+  return `<div id="act-body" class="stack gap-16">
+    <div class="hstack gap-12 wrap">${seg("actPeriod", S.actPeriod || "week", [["today", "Today"], ["week", "7 days"], ["month", "30 days"], ["all", "All"]])}<div class="search" style="flex:1;min-width:200px">${ic("search", "sm")}<input class="input" id="act-q" type="search" placeholder="Search: order, product, distributor…" value="${esc(S.actQ || "")}" data-in="actQ" autocomplete="off"></div></div>
+    ${people.length ? `<div class="hstack gap-8 wrap"><button class="chip" data-act="actWho" data-who="" aria-pressed="${!S.actWho}">Everyone</button>${people.map((p) => `<button class="chip" data-act="actWho" data-who="${esc(p)}" aria-pressed="${S.actWho === p}">${esc(p)}</button>`).join("")}</div>` : ""}
+    ${ADMIN && HOST ? `<div class="banner info">${ic("undo", "sm")}<span>As system admin you can undo an entry: what it changed goes back to how it was. Entries from before ${esc(fmtDate("2026-11-23T00:00"))} have no undo.</span></div>` : ""}
+    ${days.length ? days.map((g) => `<div><div class="group-label"><span>${esc(dayLabel(g.d + "T12:00"))} · ${esc(fmtDate(g.d + "T12:00"))}</span><span>${g.list.length}</span></div><div class="group">${g.list.map(actRowHtml).join("")}</div></div>`).join("") : `<div class="group"><div class="empty"><div class="big">Nothing here</div>Change the period, the person or the search.</div></div>`}
+    ${all.length > shown.length ? `<button class="btn btn-secondary" data-act="actMore">Show more (${nf(all.length - shown.length)} older)</button>` : ""}</div>`;
+}
+VIEWS.activity = () => `<div class="page narrow"><div class="page-head"><div><h1 class="title">Activity log</h1><div class="subtitle">Who did what, and when.${ADMIN ? " You can undo any entry." : ""}</div></div></div>${activityBody()}</div>`;
+const actRefresh = () => part("act-body", activityBody());
+ACT.actWho = (el) => { S.actWho = el.dataset.who; S.actMax = 150; actRefresh(); };
+ACT.actMore = () => { S.actMax = (S.actMax || 150) + 300; actRefresh(); };
+IN.actQ = (el) => { S.actQ = el.value; clearTimeout(S.actQT); S.actQT = setTimeout(() => { actRefresh(); const i = $("#act-q"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 200); };
+/* ---------- undo ---------- */
+ACT.actUndo = async (el) => {
+  if (!ADMIN || !HOST || !HOST.undoGet) { toast("Only the system admin can undo", "alert"); return; }
+  const a = D.activity.find((x) => x.id === el.dataset.id); if (!a) return;
+  if (SAVE.busy || dirty()) { clearTimeout(SAVE.timer); await doSave(); }
+  if (SAVE.conflict || dirty()) { toast("Your last change has not saved yet. Try again in a moment", "alert"); return; }
+  let recs; try { recs = await HOST.undoGet(a.id); } catch (e) { toast((e && e.message) || "Could not load what this changed", "alert"); return; }
+  if (!Array.isArray(recs) || !recs.length) { toast("There is nothing stored to undo for this entry", "info"); return; }
+  const cur = JSON.parse(snapshot()), next = JSON.parse(JSON.stringify(cur)); let clash = [];
+  recs.slice().reverse().forEach((r) => { clash = clash.concat(undoApply(next, r.ops || [])); });
+  const ops = recs.flatMap((r) => r.ops || []), words = opLines(ops, cur, true);
+  S.undoPlan = { id: a.id, next, cur };
+  openSheet(a.undoOf ? "Redo this?" : "Undo this?", `<div class="card card-pad"><div class="row-title" style="white-space:normal">${esc(a.action)} ${a.ref ? `<span class="mono dim">${esc(a.ref)}</span>` : ""}</div>${a.detail ? `<div class="row-sub" style="white-space:normal">${esc(a.detail)}</div>` : ""}<div class="row-sub dim" style="margin-top:4px">${esc(fmtDT(a.time))} · ${esc(a.by || "")}</div></div>
+    <div><div class="group-label"><span>This puts back</span><span>${nf(words.length)} item${words.length === 1 ? "" : "s"}</span></div><div class="group">${words.slice(0, 12).map((w) => `<div class="row"><span class="row-sub" style="white-space:normal;color:var(--ink)">${esc(w)}</span></div>`).join("")}${words.length > 12 ? `<div class="row"><span class="row-sub">…and ${nf(words.length - 12)} more</span></div>` : ""}</div></div>
+    ${clash.length ? `<div class="banner warn">${ic("alert", "sm")}<span><b>${nf(clash.length)} of these ${clash.length === 1 ? "was" : "were"} changed again later</b> (${esc(opAreas(clash).join(", "))}). Undoing puts back the values from before this entry anyway. If a later entry depends on this one, undo that one first.</span></div>` : ""}
+    <div class="row-sub">Everyone's screen picks up the change. The undo is logged, and can itself be undone.</div>`,
+    `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="actUndoYes">${ic("undo", "sm")} ${a.undoOf ? "Redo" : "Undo"}</button>`, true);
+};
+ACT.actUndoYes = async (el) => {
+  const P = S.undoPlan; if (!P || !ADMIN) return;
+  const a = P.next.activity.find((x) => x.id === P.id); if (!a) return;
+  el.disabled = true;
+  const at = iso(NOW()), id = "A" + Date.now().toString(36) + "u" + Math.random().toString(36).slice(2, 5);
+  a.undone = { at, by: ME.name };
+  if (a.undoOf) { const orig = P.next.activity.find((x) => x.id === a.undoOf); if (orig) delete orig.undone; }
+  P.next.activity.unshift({ id, time: at, action: a.undoOf ? "Redone: " + a.action.replace(/^Undone: /, "") : "Undone: " + a.action, ref: a.ref, detail: `${a.by || "Someone"}'s entry of ${fmtDT(a.time)} was ${a.undoOf ? "redone" : "undone"}`, by: ME.name, undoOf: a.id });
+  const ops = wsDiff(P.cur, P.next), s = JSON.stringify(P.next);
+  SAVE.on = false; clearTimeout(SAVE.timer);
+  try {
+    const r = await HOST.save(s, SAVE.version);
+    SAVE.version = r && typeof r.version === "number" ? r.version : SAVE.version + 1; SAVE.last = s;
+    try { await HOST.undoRecord([id], ops); } catch (e) {}
+    S.undoPlan = null; closeSheet(); toast(a.undoOf ? "Redone · reloading" : "Undone · reloading", "undo");
+    setTimeout(() => { if (HOST.reload) HOST.reload(); else location.reload(); }, 700);
+  } catch (e) {
+    SAVE.on = true; el.disabled = false;
+    const m = (e && e.message) || "";
+    if (/CONFLICT/.test(m)) { SAVE.conflict = true; setSaveState("conflict"); conflictSheet(m); }
+    else toast("Not undone: " + (m || "could not save"), "alert");
+  }
+};
+
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
 (function buildShell() {
   const item = (r, extra = "") => `<button class="nav-item" data-act="nav" data-to="${r}" data-nav="${r}">${ic(ROUTES[r].icon)}<span>${ROUTES[r].label}</span>${extra}</button>`;
@@ -4235,7 +4495,7 @@ ACT.xferOK = (el) => { S.xferOK = el.dataset.sig; part(el.dataset.t, ""); const 
     <div class="nav-label">Sell</div>${item("orders")}${item("dispatch", `<span class="nav-badge hot" id="badge-dispatch" hidden></span>`)}${item("quick", `<span class="nav-badge" id="badge-quick" hidden></span>`)}
     <div class="nav-label">Stock</div>${item("stock")}${item("replenish")}
     ${SEE_MONEY ? `<div class="nav-label">Money</div>${item("tod")}${item("logistics")}` : ""}
-    <div class="nav-label">Manage</div>${item("setup")}
+    <div class="nav-label">Manage</div>${item("setup")}${item("activity")}
     <div class="side-foot"><button class="nav-item" data-act="cmd">${ic("search")}<span>Search</span><span class="nav-badge">⌘K</span></button><${HOST ? 'button class="me me-btn" data-act="account" aria-label="Account"' : 'div class="me"'}><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow" style="text-align:left;min-width:0"><span class="clip" style="display:block;font-weight:600;font-size:14px">${esc(ME.name)}</span><span class="brand-sub" style="display:block">${ROLE === "owner" ? "SahiReach LLP" : ROLE_LABEL[ROLE] + (CAN_EDIT ? "" : " · view only")}</span></span>${HOST ? ic("chevR", "sm chev") : ""}</${HOST ? "button" : "div"}></div>`;
   const tab = (r, label) => `<button class="tab" data-act="nav" data-to="${r}" data-nav="${r}">${ic(ROUTES[r].icon)}<span>${label}</span></button>`;
   $("#tabbar").innerHTML = tab("home", "Home") + tab("orders", "Orders") + tab("dispatch", "Dispatch") + tab("stock", "Stock") + tab("more", "More");
@@ -4255,13 +4515,13 @@ function snapshot() {
   });
   return JSON.stringify(out, (k, v) => (k.charCodeAt(0) === 95 ? undefined : v)); /* working fields starting with "_" are not saved */
 }
-const SAVE = { on: false, why: "", version: null, last: null, busy: false, again: false, timer: 0, state: "", conflict: false };
+const SAVE = { on: false, why: "", version: null, last: null, lastObj: null, undoQ: [], busy: false, again: false, timer: 0, state: "", conflict: false };
 (function initSave() {
   if (!HOST) return;
   if (!CAN_EDIT) { SAVE.why = "view"; return; }
   if (!HOST.save || HOST.version == null) { SAVE.why = "setup"; return; }
   if (DATA_OLD) { SAVE.why = "old"; return; }
-  SAVE.on = true; SAVE.version = HOST.version; SAVE.last = snapshot();
+  SAVE.on = true; SAVE.version = HOST.version; SAVE.last = snapshot(); try { SAVE.lastObj = JSON.parse(SAVE.last); } catch (e) {}
 })();
 function saveBadge() {
   let el = $("#save-state");
@@ -4280,11 +4540,15 @@ function queueSave() { if (!SAVE.on || SAVE.conflict) return; clearTimeout(SAVE.
 async function doSave() {
   if (!SAVE.on || SAVE.conflict) return;
   if (SAVE.busy) { SAVE.again = true; return; }
-  const s = snapshot(); if (s === SAVE.last) return;
+  let s = snapshot(); if (s === SAVE.last) return;
+  /* what this save changes, kept so the system admin can undo it from the Activity log */
+  let rec = null; try { rec = undoPrep(s); if (rec && rec.relog) s = snapshot(); } catch (e) { rec = null; }
   SAVE.busy = true; setSaveState("saving");
   try {
     const r = await HOST.save(s, SAVE.version);
     SAVE.version = r && typeof r.version === "number" ? r.version : SAVE.version + 1; SAVE.last = s; setSaveState("saved");
+    try { SAVE.lastObj = JSON.parse(s); } catch (e) {}
+    if (rec) undoSend(rec);
   } catch (e) {
     const m = (e && e.message) || "";
     if (/CONFLICT/.test(m)) { SAVE.conflict = true; setSaveState("conflict"); conflictSheet(m); }

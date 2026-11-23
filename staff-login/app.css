@@ -362,7 +362,7 @@ table.t th.sticky-col { background: var(--surface-2); z-index: 2; }
 .line-val .row-sub { font-size: 12px; }
 .line-rm { width: 30px; height: 30px; }
 .line-msg { grid-column: 2 / -1; font-size: 12.5px; display: flex; gap: 6px; align-items: center; margin-top: -2px; }
-.line-msg.warn { color: var(--warn); } .line-msg.bad { color: var(--bad); }
+.line-msg.warn { color: var(--warn); } .line-msg.bad { color: var(--bad); } .line-msg.tint { color: var(--tint); flex-wrap: wrap; }
 .info-btn { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--ink-3); color: var(--ink-2); font: italic 700 12px/1 Georgia, "Times New Roman", serif; display: grid; place-items: center; }
 .info-btn:hover, .info-btn:focus-visible { border-color: var(--tint); color: var(--tint); background: var(--tint-soft); }
 .pop { position: fixed; z-index: 80; background: var(--surface); color: var(--ink); border: 1px solid var(--hairline); border-radius: var(--r-md); box-shadow: var(--shadow-2); padding: 12px 14px; font-size: 13px; animation: pop-in 0.12s var(--ease); }
