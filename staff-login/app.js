@@ -765,7 +765,7 @@ VIEWS.home = () => {
   return `<div class="page">
     <div class="topbar mob-only"><div class="brand"><img src="${LOGO}" alt=""><div class="brand-name">Sahi<span>Reach</span></div></div><button class="icon-btn" data-act="cmd" aria-label="Search">${ic("search")}</button></div>
     <div class="page-head"><div><div class="eyebrow">${esc(dateStr)}</div><h1 class="title">${greeting()}, ${esc(FIRST)}</h1></div>
-      <div class="head-actions"><button class="btn btn-secondary desk-only" data-act="cmd">${ic("search", "sm")} Search <span class="dim" style="font-weight:500">⌘K</span></button><button class="btn btn-primary" data-act="newOrder">${ic("plus", "sm")} New order</button></div></div>
+      <div class="head-actions"><button class="btn btn-secondary" data-act="salesShare">${ic("arrowR", "sm")} Share sales</button><button class="btn btn-secondary desk-only" data-act="cmd">${ic("search", "sm")} Search <span class="dim" style="font-weight:500">⌘K</span></button><button class="btn btn-primary" data-act="newOrder">${ic("plus", "sm")} New order</button></div></div>
     ${dataUpdateBanner()}
     ${priceNudgeHome()}
     <div><div class="group-label"><span>Needs attention today</span></div><div class="attn">${attention(facts).map((a) => `<button class="attn-card" data-act="${a.act || "nav"}" data-to="${a.go || ""}"><span class="attn-ic ${a.cls}">${ic(a.ic)}</span><span class="grow"><div class="attn-title">${esc(a.title)}</div><div class="attn-sub">${esc(a.sub)}</div></span>${ic("chevR", "sm dim")}</button>`).join("")}</div></div>
@@ -989,6 +989,220 @@ ACT.whyProd = (el) => {
     <div><div class="group-label"><span>Who bought it</span><span>tap a distributor</span></div>${whyTable(["Distributor", "Crates", "Sales", "Gross profit", "Margin"], ds.map(dRow), ["Total", nf(crates, 1), rs(sales), rs(gp), m != null ? pct(m, 1) : "–"])}</div>
     <div><div class="group-label"><span>Every sale</span><span>${lines.length}</span></div>${whyTable(["Date · who · reference", "Crates", "Sales", "Gross profit"], lines.map(lRow))}</div>`,
     `${whyBack()}${stockBySap[k] || catBySap[k] ? `<button class="btn btn-secondary" data-act="productSheet" data-sap="${esc(k)}">Product details</button>` : ""}<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
+};
+
+/* ===== SALES UPDATE FOR THE TEAM (WhatsApp) =====
+   Two pictures, made in the browser: sales by distributor (grouped by district, with subtotals) and the district
+   summary, this month against the month before, plus a short message. One tap shares them to WhatsApp (the
+   phone's share sheet), or downloads them where sharing files is not possible. Distributor (GT) sales only,
+   excluding GST, by dispatch date, credit notes on their date: the same figures as the dashboard. */
+const SS_C = { brand: "#0f8a6b", brandDark: "#0b5e4a", ink: "#1d1d1f", ink2: "#5f6368", line: "#e6e8eb", band: "#f2f7f5", sub: "#e7f2ee", up: "#18794e", upBg: "#e3f5ea", down: "#c62828", downBg: "#fdecea", newBg: "#e0f2ef", flat: "#6e6e73", flatBg: "#f1f2f4", white: "#ffffff" };
+const ssMonths = () => { const out = [], t = NOW(); for (let i = 0; i < 12; i++) { const d = new Date(t.getFullYear(), t.getMonth() - i, 1); out.push(ymd(d).slice(0, 7)); } return out; };
+const ssMonthName = (m) => MONTH_LONG[+m.slice(5, 7) - 1];
+/* the two periods: a whole month against the whole month before; this month so far against the same days last month */
+function ssPeriods(m) {
+  const y = +m.slice(0, 4), mo = +m.slice(5, 7) - 1, today = ymd(NOW()), cur = today.slice(0, 7) === m;
+  const last = (yy, mm) => new Date(yy, mm + 1, 0).getDate();
+  const day = cur ? +today.slice(8, 10) : last(y, mo), pDay = Math.min(day, last(y, mo - 1));
+  const from = ymd(new Date(y, mo, 1)), to = ymd(new Date(y, mo, day)), pFrom = ymd(new Date(y, mo - 1, 1)), pTo = ymd(new Date(y, mo - 1, pDay));
+  const n = ssMonthName(m), p = ssMonthName(pFrom.slice(0, 7));
+  return { m, cur, from, to, pFrom, pTo, n, p, short: n.slice(0, 3), pShort: p.slice(0, 3), year: m.slice(0, 4),
+    title: cur ? `${n} so far` : `${n} ${y}`, vs: cur ? `1–${day} ${n.slice(0, 3)} vs 1–${pDay} ${p.slice(0, 3)}` : `${n} vs ${p}` };
+}
+function ssData(P) {
+  const by = {};
+  salesFacts().forEach((f) => {
+    if (f.ch !== "gt" || f.kind === "todx" || !f.dist) return;
+    const inCur = f.date >= P.from && f.date <= P.to, inPrev = f.date >= P.pFrom && f.date <= P.pTo; if (!inCur && !inPrev) return;
+    const r = (by[f.dist] = by[f.dist] || { name: f.dist, short: shortOf(f.dist), district: districtOf(f.dist), cur: 0, prev: 0 });
+    if (inCur) r.cur += f.value || 0; if (inPrev) r.prev += f.value || 0;
+  });
+  const rows = Object.values(by).map((r) => ({ ...r, cur: Math.round(r.cur), prev: Math.round(r.prev) })).filter((r) => r.cur || r.prev);
+  const D2 = {}; rows.forEach((r) => { const d = (D2[r.district] = D2[r.district] || { name: r.district, cur: 0, prev: 0, rows: [] }); d.cur += r.cur; d.prev += r.prev; d.rows.push(r); });
+  const districts = Object.values(D2).sort((a, b) => b.cur - a.cur); districts.forEach((d) => d.rows.sort((a, b) => b.cur - a.cur));
+  return { P, districts, cur: rows.reduce((a, r) => a + r.cur, 0), prev: rows.reduce((a, r) => a + r.prev, 0), rows };
+}
+/* growth: "New" when there was nothing before; none when there is nothing now either */
+const ssGrowth = (cur, prev) => (prev > 0 ? (Math.abs(cur - prev) / prev < 0.005 ? 0 : (cur - prev) / prev) : cur > 0 ? "new" : null);
+const ssRs = (v) => (v < 0 ? "−₹" : "₹") + Math.abs(Math.round(v)).toLocaleString("en-IN");
+const ssPct = (g) => (g === "new" ? "New" : g == null ? "–" : g === 0 ? "0%" : (g > 0 ? "▲ " : "▼ ") + Math.abs(Math.round(g * 100)) + "%");
+/* ---------- drawing ---------- */
+const SS_W = 1080, SS_PAD = 44;
+function ssFont() { return (getComputedStyle(document.body).fontFamily || "Arial, sans-serif"); }
+function ssCanvas(h) { const c = document.createElement("canvas"); c.width = SS_W * 2; c.height = h * 2; const x = c.getContext("2d"); x.scale(2, 2); x.textBaseline = "middle"; return { c, x }; }
+function ssRound(x, l, t, w, h, r, fill) { x.beginPath(); x.moveTo(l + r, t); x.arcTo(l + w, t, l + w, t + h, r); x.arcTo(l + w, t + h, l, t + h, r); x.arcTo(l, t + h, l, t, r); x.arcTo(l, t, l + w, t, r); x.closePath(); x.fillStyle = fill; x.fill(); }
+function ssText(x, s, l, y, o = {}) {
+  x.font = `${o.w || 500} ${o.size || 22}px ${ssFont()}`; x.fillStyle = o.color || SS_C.ink; x.textAlign = o.align || "left";
+  let t = String(s); if (o.max) { while (t.length > 1 && x.measureText(t).width > o.max) t = t.slice(0, -1); if (t !== String(s)) t = t.replace(/\s+\S?$/, "") + "…"; }
+  x.fillText(t, l, y); return x.measureText(t).width;
+}
+function ssPill(x, g, right, y) {
+  const s = ssPct(g), bg = g === "new" ? SS_C.newBg : g == null || g === 0 ? SS_C.flatBg : g > 0 ? SS_C.upBg : SS_C.downBg, fg = g === "new" ? SS_C.brand : g == null || g === 0 ? SS_C.flat : g > 0 ? SS_C.up : SS_C.down;
+  x.font = `700 20px ${ssFont()}`; const w = Math.max(92, x.measureText(s).width + 28);
+  ssRound(x, right - w, y - 18, w, 36, 18, bg); ssText(x, s, right - w / 2, y + 1, { w: 700, size: 20, color: fg, align: "center" });
+}
+function ssHeader(x, title, sub, P) {
+  const g = x.createLinearGradient(0, 0, SS_W, 0); g.addColorStop(0, SS_C.brandDark); g.addColorStop(1, SS_C.brand);
+  x.fillStyle = g; x.fillRect(0, 0, SS_W, 190);
+  ssText(x, "Sahi", SS_PAD, 52, { w: 800, size: 30, color: SS_C.white }); const sw = x.measureText("Sahi").width;
+  ssText(x, "Reach", SS_PAD + sw, 52, { w: 800, size: 30, color: "#9fe3cf" });
+  ssText(x, "Extending Reach. Creating Growth.", SS_W - SS_PAD, 52, { w: 500, size: 18, color: "rgba(255,255,255,.75)", align: "right" });
+  ssText(x, title, SS_PAD, 112, { w: 800, size: 40, color: SS_C.white });
+  ssText(x, sub, SS_PAD, 158, { w: 500, size: 21, color: "rgba(255,255,255,.85)" });
+}
+function ssFooter(x, y) { ssText(x, `Distributor sales, excl. GST · as on ${fmtDate(ymd(NOW()))}`, SS_W / 2, y, { w: 500, size: 17, color: SS_C.ink2, align: "center" }); }
+const ssCols = { name: SS_PAD + 20, cur: 700, prev: 880, pill: SS_W - SS_PAD - 14 };
+function ssColHead(x, y, P) {
+  ssText(x, "Distributor", ssCols.name, y, { w: 700, size: 18, color: SS_C.ink2 });
+  ssText(x, P.cur ? `${P.short} so far` : P.short, ssCols.cur, y, { w: 700, size: 18, color: SS_C.ink2, align: "right" });
+  ssText(x, P.pShort, ssCols.prev, y, { w: 700, size: 18, color: SS_C.ink2, align: "right" });
+  ssText(x, "Change", ssCols.pill - 46, y, { w: 700, size: 18, color: SS_C.ink2, align: "center" });
+}
+/* picture 1: every distributor, grouped by district */
+function ssDrawDistributors(S2) {
+  const P = S2.P, rowH = 54, n = S2.rows.length, dN = S2.districts.length;
+  const h = 190 + 30 + 44 + dN * (50 + 58 + 14) + n * rowH + 110 + 70;
+  const { c, x } = ssCanvas(h);
+  x.fillStyle = "#f5f6f7"; x.fillRect(0, 0, SS_W, h);
+  ssHeader(x, `Sales by distributor · ${P.title}`, `${P.vs} · ${S2.rows.filter((r) => r.cur > 0).length} distributors billed`, P);
+  let y = 190 + 30;
+  ssRound(x, SS_PAD - 14, y - 6, SS_W - 2 * SS_PAD + 28, h - y - 64, 22, SS_C.white);
+  y += 22; ssColHead(x, y, P); y += 22;
+  S2.districts.forEach((d) => {
+    y += 8; ssRound(x, SS_PAD, y, SS_W - 2 * SS_PAD, 42, 10, SS_C.band);
+    ssText(x, d.name.toUpperCase(), ssCols.name, y + 21, { w: 800, size: 19, color: SS_C.brandDark });
+    ssText(x, `${d.rows.length} distributor${d.rows.length > 1 ? "s" : ""}`, ssCols.pill, y + 21, { w: 600, size: 17, color: SS_C.ink2, align: "right" });
+    y += 50;
+    d.rows.forEach((r, i) => {
+      const cy = y + rowH / 2;
+      ssText(x, r.name, ssCols.name, cy, { w: 600, size: 21, max: 440 });
+      ssText(x, ssRs(r.cur), ssCols.cur, cy, { w: 700, size: 21, align: "right", color: r.cur < 0 ? SS_C.down : SS_C.ink });
+      ssText(x, r.prev ? ssRs(r.prev) : "–", ssCols.prev, cy, { w: 500, size: 21, align: "right", color: SS_C.ink2 });
+      ssPill(x, ssGrowth(r.cur, r.prev), ssCols.pill, cy);
+      if (i < d.rows.length - 1) { x.fillStyle = SS_C.line; x.fillRect(ssCols.name, y + rowH - 1, SS_W - SS_PAD - ssCols.name, 1); }
+      y += rowH;
+    });
+    ssRound(x, SS_PAD, y + 4, SS_W - 2 * SS_PAD, 50, 10, SS_C.sub);
+    const cy = y + 29;
+    ssText(x, `${d.name} total`, ssCols.name, cy, { w: 800, size: 21, color: SS_C.brandDark });
+    ssText(x, ssRs(d.cur), ssCols.cur, cy, { w: 800, size: 21, align: "right" });
+    ssText(x, d.prev ? ssRs(d.prev) : "–", ssCols.prev, cy, { w: 600, size: 21, align: "right", color: SS_C.ink2 });
+    ssPill(x, ssGrowth(d.cur, d.prev), ssCols.pill, cy);
+    y += 58 + 14;
+  });
+  ssRound(x, SS_PAD, y + 6, SS_W - 2 * SS_PAD, 66, 14, SS_C.brandDark);
+  const gy = y + 39;
+  ssText(x, "Grand total", ssCols.name, gy, { w: 800, size: 24, color: SS_C.white });
+  ssText(x, ssRs(S2.cur), ssCols.cur, gy, { w: 800, size: 24, align: "right", color: SS_C.white });
+  ssText(x, S2.prev ? ssRs(S2.prev) : "–", ssCols.prev, gy, { w: 600, size: 22, align: "right", color: "rgba(255,255,255,.8)" });
+  ssPill(x, ssGrowth(S2.cur, S2.prev), ssCols.pill, gy);
+  ssFooter(x, h - 36);
+  return c;
+}
+/* picture 2: the district summary, with a bar for each district's share */
+function ssDrawDistricts(S2) {
+  const P = S2.P, rowH = 104, n = S2.districts.length, h = 190 + 30 + 170 + 44 + n * rowH + 96 + 70;
+  const { c, x } = ssCanvas(h);
+  x.fillStyle = "#f5f6f7"; x.fillRect(0, 0, SS_W, h);
+  ssHeader(x, `Sales by district · ${P.title}`, P.vs, P);
+  let y = 190 + 30;
+  /* headline */
+  ssRound(x, SS_PAD - 14, y, SS_W - 2 * SS_PAD + 28, 150, 22, SS_C.white);
+  ssText(x, P.cur ? `${P.n} so far` : `${P.n} sales`, SS_PAD + 20, y + 42, { w: 600, size: 21, color: SS_C.ink2 });
+  ssText(x, ssRs(S2.cur), SS_PAD + 20, y + 96, { w: 800, size: 56 });
+  const g = ssGrowth(S2.cur, S2.prev);
+  ssText(x, `vs ${ssRs(S2.prev)} in ${P.p}${P.cur ? " (same days)" : ""}`, SS_W - SS_PAD - 20, y + 42, { w: 500, size: 19, color: SS_C.ink2, align: "right" });
+  x.font = `800 30px ${ssFont()}`; ssPillBig(x, g, SS_W - SS_PAD - 20, y + 100);
+  y += 150 + 20;
+  ssRound(x, SS_PAD - 14, y, SS_W - 2 * SS_PAD + 28, h - y - 70, 22, SS_C.white);
+  y += 24;
+  ssText(x, "District", ssCols.name, y, { w: 700, size: 18, color: SS_C.ink2 });
+  ssText(x, P.cur ? `${P.short} so far` : P.short, ssCols.cur, y, { w: 700, size: 18, color: SS_C.ink2, align: "right" });
+  ssText(x, P.pShort, ssCols.prev, y, { w: 700, size: 18, color: SS_C.ink2, align: "right" });
+  ssText(x, "Change", ssCols.pill - 46, y, { w: 700, size: 18, color: SS_C.ink2, align: "center" });
+  y += 22;
+  const max = Math.max(1, ...S2.districts.map((d) => Math.max(d.cur, 0)));
+  S2.districts.forEach((d, i) => {
+    const cy = y + 34;
+    ssText(x, d.name, ssCols.name, cy, { w: 700, size: 24 });
+    ssText(x, ssRs(d.cur), ssCols.cur, cy, { w: 800, size: 23, align: "right", color: d.cur < 0 ? SS_C.down : SS_C.ink });
+    ssText(x, d.prev ? ssRs(d.prev) : "–", ssCols.prev, cy, { w: 500, size: 22, align: "right", color: SS_C.ink2 });
+    ssPill(x, ssGrowth(d.cur, d.prev), ssCols.pill, cy);
+    const bw = SS_W - SS_PAD - 14 - ssCols.name, share = S2.cur > 0 ? Math.max(0, d.cur) / S2.cur : 0;
+    ssRound(x, ssCols.name, y + 62, bw, 10, 5, SS_C.flatBg);
+    if (d.cur > 0) ssRound(x, ssCols.name, y + 62, Math.max(10, bw * (Math.max(d.cur, 0) / max)), 10, 5, SS_C.brand);
+    ssText(x, `${Math.round(share * 100)}% of sales · ${d.rows.filter((r) => r.cur > 0).length} distributor${d.rows.filter((r) => r.cur > 0).length === 1 ? "" : "s"}`, SS_W - SS_PAD - 14, y + 88, { w: 500, size: 15, color: SS_C.ink2, align: "right" });
+    if (i < n - 1) { x.fillStyle = SS_C.line; x.fillRect(ssCols.name, y + rowH - 1, SS_W - SS_PAD - ssCols.name, 1); }
+    y += rowH;
+  });
+  ssRound(x, SS_PAD, y + 10, SS_W - 2 * SS_PAD, 66, 14, SS_C.brandDark);
+  const gy = y + 43;
+  ssText(x, "Grand total", ssCols.name, gy, { w: 800, size: 24, color: SS_C.white });
+  ssText(x, ssRs(S2.cur), ssCols.cur, gy, { w: 800, size: 24, align: "right", color: SS_C.white });
+  ssText(x, S2.prev ? ssRs(S2.prev) : "–", ssCols.prev, gy, { w: 600, size: 22, align: "right", color: "rgba(255,255,255,.8)" });
+  ssPill(x, g, ssCols.pill, gy);
+  ssFooter(x, h - 36);
+  return c;
+}
+function ssPillBig(x, g, right, y) {
+  const s = ssPct(g), bg = g === "new" ? SS_C.newBg : g == null || g === 0 ? SS_C.flatBg : g > 0 ? SS_C.upBg : SS_C.downBg, fg = g === "new" ? SS_C.brand : g == null || g === 0 ? SS_C.flat : g > 0 ? SS_C.up : SS_C.down;
+  x.font = `800 30px ${ssFont()}`; const w = x.measureText(s).width + 40;
+  ssRound(x, right - w, y - 27, w, 54, 27, bg); ssText(x, s, right - w / 2, y + 1, { w: 800, size: 30, color: fg, align: "center" });
+}
+/* ---------- the message that goes with the pictures ---------- */
+function ssCaption(S2) {
+  const P = S2.P, g = ssGrowth(S2.cur, S2.prev), lines = [];
+  lines.push(`*SahiReach · ${P.cur ? P.n + " sales so far" : P.n + " " + P.year + " sales"}* 📊`);
+  lines.push(`Total: *${ssRs(S2.cur)}* ${g === "new" || g == null ? "" : g === 0 ? `(same as ${P.p})` : `(${g > 0 ? "▲" : "▼"} ${Math.abs(Math.round(g * 100))}% vs ${P.p}${P.cur ? ", same days" : ""})`}`.trim());
+  const growers = S2.rows.filter((r) => r.prev >= 10000 && r.cur > r.prev).sort((a, b) => (b.cur - b.prev) / b.prev - (a.cur - a.prev) / a.prev).slice(0, 3);
+  if (growers.length) lines.push(`🚀 Top growth: ${growers.map((r) => `${r.short} ▲${Math.round(((r.cur - r.prev) / r.prev) * 100)}%`).join(", ")}`);
+  const fresh = S2.rows.filter((r) => r.prev <= 0 && r.cur > 0);
+  if (fresh.length) lines.push(`🆕 New this month: ${fresh.map((r) => r.short).join(", ")}`);
+  const top = S2.rows.slice().sort((a, b) => b.cur - a.cur)[0];
+  if (top && top.cur > 0) lines.push(`🏆 Highest sales: ${top.short} (${ssRs(top.cur)})`);
+  lines.push("");
+  lines.push("*By district*");
+  S2.districts.forEach((d) => { const dg = ssGrowth(d.cur, d.prev); lines.push(`• ${d.name}: ${ssRs(d.cur)}${dg === "new" ? " (new)" : dg == null || dg === 0 ? "" : ` (${dg > 0 ? "▲" : "▼"} ${Math.abs(Math.round(dg * 100))}%)`}`); });
+  lines.push("");
+  lines.push(g != null && g !== "new" && g < 0 ? "Let's push hard and turn these numbers around! 💪" : "Great work, team. Let's keep it going! 💪");
+  return lines.join("\n");
+}
+/* ---------- the sheet ---------- */
+function ssBuild() {
+  const m = S.ssMonth || ssMonths()[1], P = ssPeriods(m), S2 = ssData(P);
+  const c1 = ssDrawDistributors(S2), c2 = ssDrawDistricts(S2);
+  const tag = `${P.short}-${P.year}${P.cur ? "-so-far" : ""}`;
+  S.ss = { P, S2, caption: ssCaption(S2), urls: [c1.toDataURL("image/png"), c2.toDataURL("image/png")], files: null, names: [`SahiReach-sales-${tag}-distributors.png`, `SahiReach-sales-${tag}-districts.png`] };
+  Promise.all([c1, c2].map((c) => new Promise((ok) => c.toBlob(ok, "image/png")))).then((bl) => { if (S.ss && S.ss.P.m === P.m) S.ss.files = bl.map((b, i) => new File([b], S.ss.names[i], { type: "image/png" })); });
+}
+function ssBody() {
+  const s = S.ss, P = s.P, months = ssMonths();
+  return `<div class="field"><label class="label" for="ss-month">Which month</label><select class="select" id="ss-month" data-in="ssMonth">${months.map((m, i) => `<option value="${m}" ${m === P.m ? "selected" : ""}>${ssMonthName(m)} ${m.slice(0, 4)}${i === 0 ? " (so far, against the same days of " + ssMonthName(months[1]) + ")" : " against " + ssMonthName(months[i + 1] || ymd(new Date(+m.slice(0, 4), +m.slice(5, 7) - 2, 1)).slice(0, 7))}</option>`).join("")}</select></div>
+    ${s.S2.rows.length ? `<div class="stack gap-12"><div class="row-sub">These two pictures and the message go to WhatsApp together.</div>
+      <img src="${s.urls[0]}" alt="Sales by distributor" style="width:100%;border-radius:14px;border:1px solid var(--line)">
+      <img src="${s.urls[1]}" alt="Sales by district" style="width:100%;border-radius:14px;border:1px solid var(--line)">
+      <div class="card card-pad"><div class="label" style="margin-bottom:6px">Message</div><div style="white-space:pre-wrap;font-size:14px;line-height:1.5">${esc(s.caption)}</div></div></div>` : `<div class="group"><div class="empty"><div class="big">No distributor sales</div>Nothing was billed in ${esc(P.n)} or ${esc(P.p)}.</div></div>`}`;
+}
+ACT.salesShare = () => {
+  S.ssMonth = S.ssMonth || ssMonths()[1]; ssBuild();
+  openSheet("Share sales with the team", `<div id="ss-body" class="stack gap-16">${ssBody()}</div>`,
+    `<button class="btn btn-secondary" data-act="ssCopy">${ic("copy", "sm")} Copy message</button><button class="btn btn-secondary" data-act="ssDownload">${ic("down", "sm")} Download pictures</button><button class="btn btn-primary" data-act="ssShare">${ic("arrowR", "sm")} Share on WhatsApp</button>`, true);
+};
+IN.ssMonth = (el) => { S.ssMonth = el.value; ssBuild(); part("ss-body", ssBody()); };
+function ssDownloadAll() { S.ss.urls.forEach((u, i) => { const a = document.createElement("a"); a.href = u; a.download = S.ss.names[i]; document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 500); }); }
+ACT.ssDownload = () => { if (!S.ss) return; ssDownloadAll(); toast("Both pictures downloaded", "check"); };
+ACT.ssCopy = () => { if (!S.ss) return; copyText(S.ss.caption, "Message copied. Paste it in WhatsApp"); };
+ACT.ssShare = () => {
+  const s = S.ss; if (!s || !s.S2.rows.length) return;
+  /* phones (and some computers): the share sheet, with both pictures and the message; pick WhatsApp there */
+  if (s.files && navigator.canShare && navigator.canShare({ files: s.files })) {
+    navigator.share({ files: s.files, text: s.caption, title: `SahiReach sales · ${s.P.title}` }).catch((e) => { if (e && e.name !== "AbortError") { ssDownloadAll(); window.open("https://wa.me/?text=" + encodeURIComponent(s.caption), "_blank"); } });
+    return;
+  }
+  /* elsewhere: save the pictures, open WhatsApp with the message, attach the pictures there */
+  ssDownloadAll(); if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(s.caption).catch(() => {});
+  window.open("https://wa.me/?text=" + encodeURIComponent(s.caption), "_blank");
+  toast("Pictures downloaded and WhatsApp opened with the message: attach the two pictures there", "info");
 };
 
 /* ===== ORDERS: list, detail, sales order, new / edit order ===== */
@@ -3472,8 +3686,8 @@ function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
 /* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
-const VIEW_ACTS = new Set("actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
-const VIEW_INS = new Set("actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
+const VIEW_ACTS = new Set("salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_INS = new Set("ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {
   if (CAN_EDIT || !root || !root.querySelectorAll) return;
