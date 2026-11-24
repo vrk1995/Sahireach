@@ -1010,7 +1010,7 @@ function ssPeriods(m, cmp) {
   return { m, cur, full, day, mDays, pace: day / mDays, from, to, pFrom, pTo, n, p, short: n.slice(0, 3), pShort: p.slice(0, 3), year: m.slice(0, 4),
     title: cur ? `${n} so far` : `${n} ${y}`,
     vs: full ? `1–${day} ${n.slice(0, 3)} against all of ${p} · ${day} of ${mDays} days gone` : cur ? `1–${day} ${n.slice(0, 3)} vs 1–${pDay} ${p.slice(0, 3)}` : `${n} vs ${p}`,
-    prevHead: full ? `All ${p.slice(0, 3)}` : p.slice(0, 3), chgHead: full ? "Reached" : "Change" };
+    prevHead: full ? `All ${p.slice(0, 3)}` : p.slice(0, 3), chgHead: "Change" };
 }
 function ssData(P) {
   const by = {};
@@ -1027,18 +1027,17 @@ function ssData(P) {
 }
 /* growth: "New" when there was nothing before; none when there is nothing now either */
 /* "new" only when nothing at all was billed before; after a month of only a credit note it is just "up" */
-const ssGrowth = (cur, prev) => (prev > 0 ? (Math.abs(cur - prev) / prev < 0.005 ? 0 : (cur - prev) / prev) : prev < 0 ? (cur > prev ? "upFromNeg" : "downFromNeg") : cur > 0 ? "new" : null);
-const ssReach = (r) => (r >= 1 ? Math.round(r * 100) : Math.min(99, Math.round(r * 100))); /* never "100%" before it is reached */
-/* against all of last month: the share of it reached so far; green when on pace (or beaten), amber when behind */
-function ssMark(cur, prev, P) {
-  if (!P || !P.full) { const g = ssGrowth(cur, prev); return { g, txt: ssPct(g), kind: g === "new" ? "new" : g === "upFromNeg" ? "up" : g === "downFromNeg" ? "down" : g == null || g === 0 ? "flat" : g > 0 ? "up" : "down" }; }
-  if (prev < 0) return cur > prev ? { g: "upFromNeg", txt: "▲", kind: "up" } : { g: "downFromNeg", txt: "▼", kind: "down" };
-  if (!(prev > 0)) return cur > 0 ? { g: "new", txt: "New", kind: "new" } : { g: null, txt: "–", kind: "flat" };
-  const r = cur / prev; return { g: r, txt: (r >= 1 ? "✓ " : "") + ssReach(r) + "%", kind: r >= 1 || r >= P.pace - 0.005 ? "up" : "warn" };
+const ssGrowth = (cur, prev) => (prev > 0 ? (Math.abs(cur - prev) < 1 ? 0 : (cur - prev) / prev) : prev < 0 ? (cur > prev ? "upFromNeg" : "downFromNeg") : cur > 0 ? "new" : null);
+/* the pill: % increase or decrease (also against all of last month), "New", or nothing */
+function ssMark(cur, prev) {
+  const g = ssGrowth(cur, prev);
+  return { g, txt: ssPct(g), kind: g === "new" ? "new" : g === "upFromNeg" ? "up" : g === "downFromNeg" ? "down" : g == null || g === 0 ? "flat" : g > 0 ? "up" : "down" };
 }
 const SS_KIND = { new: ["newBg", "brand"], flat: ["flatBg", "flat"], up: ["upBg", "up"], down: ["downBg", "down"], warn: ["warnBg", "warn"] };
 const ssRs = (v) => (v < 0 ? "−₹" : "₹") + Math.abs(Math.round(v)).toLocaleString("en-IN");
-const ssPct = (g) => (g === "new" ? "New" : g === "upFromNeg" ? "▲" : g === "downFromNeg" ? "▼" : g == null ? "–" : g === 0 ? "0%" : (g > 0 ? "▲ " : "▼ ") + Math.abs(Math.round(g * 100)) + "%");
+const ssPct = (g) => (g === "new" ? "New" : g === "upFromNeg" ? "▲" : g === "downFromNeg" ? "▼" : g == null ? "–" : g === 0 ? "0%" : (g > 0 ? "▲ " : "▼ ") + ssPctNum(g) + "%");
+/* under 1%: one decimal, so a small drop never reads as "0%" */
+const ssPctNum = (g) => (Math.abs(g) < 0.0995 ? (Math.round(Math.abs(g) * 1000) / 10).toFixed(Math.abs(g) < 0.01 ? 1 : 0).replace(/\.0$/, "") : String(Math.abs(Math.round(g * 100))));
 /* ---------- drawing ---------- */
 const SS_W = 1080, SS_PAD = 44;
 function ssFont() { return (getComputedStyle(document.body).fontFamily || "Arial, sans-serif"); }
@@ -1063,7 +1062,7 @@ function ssHeader(x, title, sub, P) {
   ssText(x, title, SS_PAD, 112, { w: 800, size: 40, color: SS_C.white });
   ssText(x, sub, SS_PAD, 158, { w: 500, size: 21, color: "rgba(255,255,255,.85)" });
 }
-function ssFooter(x, y, P) { ssText(x, `Distributor sales, excl. GST · as on ${fmtDate(ymd(NOW()))}${P && P.full ? ` · Reached: share of all of ${P.p} so far, green = on pace (${Math.round(P.pace * 100)}% of the month gone)` : ""}`, SS_W / 2, y, { w: 500, size: 17, color: SS_C.ink2, align: "center" }); }
+function ssFooter(x, y, P) { ssText(x, `Distributor sales, excl. GST · as on ${fmtDate(ymd(NOW()))}${P && P.full ? ` · Change: ${P.n} so far against all of ${P.p}` : ""}`, SS_W / 2, y, { w: 500, size: 17, color: SS_C.ink2, align: "center" }); }
 const ssCols = { name: SS_PAD + 20, cur: 700, prev: 880, pill: SS_W - SS_PAD - 14 };
 function ssColHead(x, y, P) {
   ssText(x, "Distributor", ssCols.name, y, { w: 700, size: 18, color: SS_C.ink2 });
@@ -1125,7 +1124,7 @@ function ssDrawDistricts(S2) {
   ssText(x, ssRs(S2.cur), SS_PAD + 20, y + 96, { w: 800, size: 56 });
   const g = ssMark(S2.cur, S2.prev, P);
   if (P.cur) ssText(x, `On pace for ${ssRs((S2.cur / P.day) * P.mDays)} this month`, SS_PAD + 20, y + 152, { w: 600, size: 19, color: SS_C.brand });
-  ssText(x, `${P.full ? "of" : "vs"} ${ssRs(S2.prev)} in ${P.full ? "all of " + P.p : P.p}${P.cur && !P.full ? " (same days)" : ""}`, SS_W - SS_PAD - 20, y + 42, { w: 500, size: 19, color: SS_C.ink2, align: "right" });
+  ssText(x, `vs ${ssRs(S2.prev)} in ${P.full ? "all of " + P.p : P.p}${P.cur && !P.full ? " (same days)" : ""}`, SS_W - SS_PAD - 20, y + 42, { w: 500, size: 19, color: SS_C.ink2, align: "right" });
   x.font = `800 30px ${ssFont()}`; ssPillBig(x, g, SS_W - SS_PAD - 20, y + 100);
   y += hd + 20;
   ssRound(x, SS_PAD - 14, y, SS_W - 2 * SS_PAD + 28, h - y - 70, 22, SS_C.white);
@@ -1168,7 +1167,8 @@ function ssCaption(S2) {
   const P = S2.P, g = ssGrowth(S2.cur, S2.prev), lines = [], paceAmt = P.cur ? (S2.cur / P.day) * P.mDays : null;
   lines.push(`*SahiReach · ${P.cur ? P.n + " sales so far" : P.n + " " + P.year + " sales"}* 📊`);
   if (P.full) {
-    lines.push(`Total: *${ssRs(S2.cur)}*${S2.prev > 0 ? ` · ${ssReach(S2.cur / S2.prev)}% of all of ${P.p} (${ssRs(S2.prev)})` : ""}, with ${P.mDays - P.day} day${P.mDays - P.day === 1 ? "" : "s"} to go`);
+    const tg = ssGrowth(S2.cur, S2.prev);
+    lines.push(`Total: *${ssRs(S2.cur)}*${typeof tg === "number" ? ` (${tg === 0 ? "same as" : (tg > 0 ? "▲ " : "▼ ") + ssPctNum(tg) + "% vs"} all of ${P.p}, ${ssRs(S2.prev)})` : ""}, with ${P.mDays - P.day} day${P.mDays - P.day === 1 ? "" : "s"} to go`);
     if (S2.prev > 0) lines.push(`📈 On pace for ${ssRs(paceAmt)} this month (${paceAmt >= S2.prev ? "▲" : "▼"} ${Math.abs(Math.round((paceAmt / S2.prev - 1) * 100))}% vs ${P.p})`);
     const beaten = S2.rows.filter((r) => r.prev > 0 && r.cur >= r.prev);
     if (beaten.length) lines.push(`🏁 Already beaten ${P.p}: ${beaten.map((r) => r.short).join(", ")}`);
@@ -1176,13 +1176,13 @@ function ssCaption(S2) {
     if (fresh.length) lines.push(`🆕 New this month: ${fresh.map((r) => r.short).join(", ")}`);
     const top = S2.rows.slice().sort((a, b) => b.cur - a.cur)[0];
     if (top && top.cur > 0) lines.push(`🏆 Highest sales: ${top.short} (${ssRs(top.cur)})`);
-    lines.push(""); lines.push(`*By district* (share of ${P.p} reached)`);
-    S2.districts.forEach((d) => lines.push(`• ${d.name}: ${ssRs(d.cur)}${d.prev > 0 ? ` (${ssReach(d.cur / d.prev)}%)` : d.cur > 0 && !d.prev ? " (new)" : ""}`));
+    lines.push(""); lines.push(`*By district* (vs all of ${P.p})`);
+    S2.districts.forEach((d) => { const dg = ssGrowth(d.cur, d.prev); lines.push(`• ${d.name}: ${ssRs(d.cur)}${dg === "new" ? " (new)" : typeof dg === "number" && dg !== 0 ? ` (${dg > 0 ? "▲" : "▼"} ${ssPctNum(dg)}%)` : ""}`); });
     lines.push("");
     lines.push(S2.prev > 0 && S2.cur < S2.prev ? `${ssRs(S2.prev - S2.cur)} more to match ${P.p}. Let's get there! 💪` : `${P.p} already beaten. Let's finish strong! 💪`);
     return lines.join("\n");
   }
-  lines.push(`Total: *${ssRs(S2.cur)}* ${typeof g === "string" || g == null ? "" : g === 0 ? `(same as ${P.p})` : `(${g > 0 ? "▲" : "▼"} ${Math.abs(Math.round(g * 100))}% vs ${P.p}${P.cur ? ", same days" : ""})`}`.trim());
+  lines.push(`Total: *${ssRs(S2.cur)}* ${typeof g === "string" || g == null ? "" : g === 0 ? `(same as ${P.p})` : `(${g > 0 ? "▲" : "▼"} ${ssPctNum(g)}% vs ${P.p}${P.cur ? ", same days" : ""})`}`.trim());
   if (P.cur) lines.push(`📈 On pace for ${ssRs(paceAmt)} this month`);
   const growers = S2.rows.filter((r) => r.prev >= 10000 && r.cur > r.prev).sort((a, b) => (b.cur - b.prev) / b.prev - (a.cur - a.prev) / a.prev).slice(0, 3);
   if (growers.length) lines.push(`🚀 Top growth: ${growers.map((r) => `${r.short} ▲${Math.round(((r.cur - r.prev) / r.prev) * 100)}%`).join(", ")}`);
@@ -1192,7 +1192,7 @@ function ssCaption(S2) {
   if (top && top.cur > 0) lines.push(`🏆 Highest sales: ${top.short} (${ssRs(top.cur)})`);
   lines.push("");
   lines.push("*By district*");
-  S2.districts.forEach((d) => { const dg = ssGrowth(d.cur, d.prev); lines.push(`• ${d.name}: ${ssRs(d.cur)}${dg === "new" ? " (new)" : dg == null || dg === 0 || typeof dg === "string" ? "" : ` (${dg > 0 ? "▲" : "▼"} ${Math.abs(Math.round(dg * 100))}%)`}`); });
+  S2.districts.forEach((d) => { const dg = ssGrowth(d.cur, d.prev); lines.push(`• ${d.name}: ${ssRs(d.cur)}${dg === "new" ? " (new)" : dg == null || dg === 0 || typeof dg === "string" ? "" : ` (${dg > 0 ? "▲" : "▼"} ${ssPctNum(dg)}%)`}`); });
   lines.push("");
   lines.push(typeof g === "number" && g < 0 ? "Let's push hard and turn these numbers around! 💪" : "Great work, team. Let's keep it going! 💪");
   return lines.join("\n");
@@ -1208,7 +1208,7 @@ function ssBuild() {
 function ssBody() {
   const s = S.ss, P = s.P, months = ssMonths();
   return `<div class="field"><label class="label" for="ss-month">Which month</label><select class="select" id="ss-month" data-in="ssMonth">${months.map((m, i) => `<option value="${m}" ${m === P.m ? "selected" : ""}>${ssMonthName(m)} ${m.slice(0, 4)}${i === 0 ? " (so far)" : " against " + ssMonthName(months[i + 1] || ymd(new Date(+m.slice(0, 4), +m.slice(5, 7) - 2, 1)).slice(0, 7))}</option>`).join("")}</select></div>
-    ${P.cur ? `<div class="field"><div class="label">Compare with</div><div class="hstack gap-8 wrap"><button class="chip" data-act="ssCmp" data-v="same" aria-pressed="${!P.full}">Same days of ${esc(P.p)} (1–${P.day})</button><button class="chip" data-act="ssCmp" data-v="full" aria-pressed="${P.full}">All of ${esc(P.p)}</button></div>${P.full ? `<div class="row-sub" style="margin-top:6px">Each figure shows how much of ${esc(P.p)} is reached already: green when on pace (${P.day} of ${P.mDays} days gone), amber when behind.</div>` : ""}</div>` : ""}
+    ${P.cur ? `<div class="field"><div class="label">Compare with</div><div class="hstack gap-8 wrap"><button class="chip" data-act="ssCmp" data-v="same" aria-pressed="${!P.full}">Same days of ${esc(P.p)} (1–${P.day})</button><button class="chip" data-act="ssCmp" data-v="full" aria-pressed="${P.full}">All of ${esc(P.p)}</button></div>${P.full ? `<div class="row-sub" style="margin-top:6px">Change is ${esc(P.n)} so far (${P.day} of ${P.mDays} days) against all of ${esc(P.p)}.</div>` : ""}</div>` : ""}
     ${s.S2.rows.length ? `<div class="stack gap-12"><div class="row-sub">These two pictures and the message go to WhatsApp together.</div>
       <img src="${s.urls[0]}" alt="Sales by distributor" style="width:100%;border-radius:14px;border:1px solid var(--line)">
       <img src="${s.urls[1]}" alt="Sales by district" style="width:100%;border-radius:14px;border:1px solid var(--line)">
