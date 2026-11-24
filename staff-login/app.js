@@ -251,6 +251,12 @@ function salesFacts() {
   });
   D.notes.forEach((n) => {
     if (n.status !== "Active" || !n.sales) return;
+    /* a note with product lines: one entry per product. A return put back into stock gives its cost back; a damaged one is a loss */
+    if (Array.isArray(n.lines) && n.lines.length) {
+      const sg = n.sales < 0 ? -1 : 1;
+      n.lines.forEach((l) => { const uc = l.back && l.sap ? unitCost(l.sap) : null; f.push({ date: (n.date || "").slice(0, 10), ch: "gt", dist: canonDist(n.party), sap: l.sap || null, product: l.product, crates: sg * (l.crates || 0), value: sg * (l.value || 0), tod: 0, cost: uc != null ? sg * (l.ea || 0) * uc : 0, ref: n.no || n.id, kind: "note" }); });
+      return;
+    }
     const sap = n.sap || (catByName[key(n.product)] || {}).sap || null, back = /return/i.test(n.type || "") && sap && n.ea, uc = back ? unitCost(sap) : null;
     f.push({ date: (n.date || "").slice(0, 10), ch: "gt", dist: canonDist(n.party), sap, product: n.product, crates: -(n.crates || 0), value: n.sales, tod: 0, cost: uc != null ? -n.ea * uc : 0, ref: n.no, kind: "note" });
   });
@@ -3510,7 +3516,7 @@ function todHtml() {
 function notesHtml() {
   const shortType = (t) => String(t).split(" - ")[0];
   return `<div class="hstack between wrap gap-12"><div class="row-sub" style="max-width:60ch">Returns and credit notes come off sales on the dashboard. Raise the GST note in Vyapar as usual.</div><button class="btn btn-primary" data-act="noteSheet">${ic("plus", "sm")} New note</button></div>
-    <div class="group">${D.notes.slice().reverse().map((n) => `<div class="row"><span class="attn-ic ${/return/i.test(n.type) ? "warn" : "info"}">${ic(/return/i.test(n.type) ? "undo" : "rupee")}</span><span class="grow"><div class="row-title clip">${esc(n.party || "Hangyo")}</div><div class="row-sub clip">${esc(shortType(n.type))} · ${fmtDate(n.date)}${n.no ? " · " + esc(n.no) : ""}${n.product ? " · " + esc(shortName(n.product)) : ""}</div></span><span class="row-end">${statusPill(n.status || "Active")}<span class="row-value">${rs2(n.amount)}</span></span></div>`).join("")}</div>`;
+    <div class="group">${D.notes.slice().reverse().map((n) => `<div class="row tap" role="button" tabindex="0" data-act="noteOpen" data-id="${esc(n.id)}" style="cursor:pointer"><span class="attn-ic ${/return/i.test(n.type) ? "warn" : "info"}">${ic(/return/i.test(n.type) ? "undo" : "rupee")}</span><span class="grow"><div class="row-title clip">${esc(n.party || "Hangyo")}</div><div class="row-sub clip">${esc(shortType(n.type))} · ${fmtDate(n.date)}${n.no ? " · " + esc(n.no) : ""}${Array.isArray(n.lines) && n.lines.length > 1 ? " · " + n.lines.length + " products" : n.product ? " · " + esc(shortName(n.product)) : ""}</div></span><span class="row-end">${statusPill(n.status || "Active")}<span class="row-value">${rs2(n.amount)}</span>${ic("chevR", "sm chev")}</span></div>`).join("")}</div>`;
 }
 VIEWS.tod = () => `<div class="page narrow">
   <div class="page-head"><div><h1 class="title">TOD & notes</h1><div class="subtitle">What Hangyo owes you for special-price distributors, and every credit or debit note.</div></div></div>
@@ -3545,9 +3551,7 @@ ACT.todRecvSave = () => {
   logActivity("TOD received", $("#tr-ref").value || "Hangyo", `${rs2(orig)} for ${monthName(month)} sales${excess ? ` · ${rs2(excess)} excess` : ""}`); closeSheet(); render();
   toast(excess ? `${rs2(orig)} for ${monthName(month)}: ${rs2(excess)} more than recorded, kept as excess` : `${rs2(orig)} set against ${monthName(month)} TOD`, excess ? "alert" : "check");
 };
-const NOTE_TYPES = ["Sales return - credit note to distributor", "Purchase return - debit note to Hangyo", "Hangyo credit note (value only)", "Rate difference - credit note to distributor", "Rate difference - debit note to distributor"];
-ACT.noteSheet = () => openSheet("New credit or debit note", `<div class="card card-pad"><div class="form-grid"><div class="field full"><label class="label" for="nt-type">Note type</label><select class="select" id="nt-type">${NOTE_TYPES.map((t) => `<option>${esc(t)}</option>`).join("")}</select></div><div class="field"><label class="label" for="nt-party">Distributor</label><select class="select" id="nt-party">${D.distributors.map((d) => `<option>${esc(d.name)}</option>`).join("")}</select></div><div class="field"><label class="label" for="nt-date">Note date</label><input class="input" id="nt-date" type="date" value="${iso(NOW()).slice(0, 10)}"></div><div class="field"><label class="label" for="nt-no">Note number (Vyapar or Hangyo)</label><input class="input" id="nt-no" placeholder="SR/CN26-27/12"></div><div class="field"><label class="label" for="nt-reason">Reason</label><select class="select" id="nt-reason">${["Damaged", "Expired / near expiry", "Melted / cold chain issue", "Wrong or excess supply", "Quality complaint", "Rate difference", "TOD / special price", "Scheme", "Other"].map((t) => `<option>${t}</option>`).join("")}</select></div><div class="field full"><label class="label" for="nt-amt">Amount excl. GST (₹)</label><input class="input num-in" id="nt-amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div></div><div class="banner info">${ic("info", "sm")}<span>For returns, the real build lets you add each product as Good (back into stock) or Damaged (into damaged stock).</span></div>`, `<button class="btn btn-primary" data-act="noteSave">Save note</button>`);
-ACT.noteSave = () => { const amt = +$("#nt-amt").value || 0; if (amt <= 0) { toast("Type the note amount", "info"); return; } D.notes.push({ id: "CN-" + stamp(NOW()), type: $("#nt-type").value, no: $("#nt-no").value, date: $("#nt-date").value, party: $("#nt-party").value, reason: $("#nt-reason").value, amount: amt, gst: amt * 0.05, total: amt * 1.05, status: "Active" }); S.moneyTab = "notes"; closeSheet(); render(); toast("Note saved"); };
+/* the note form and its products: 06i-notes.js */
 
 /* ===== SETUP ===== */
 function distGrid() {
@@ -3718,7 +3722,7 @@ function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
 /* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
-const VIEW_ACTS = new Set("ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_ACTS = new Set("noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {
@@ -4903,6 +4907,168 @@ ACT.bkFileYes = async (el) => {
   if (!ADMIN || !S.bkFile) return;
   if (SAVE.busy || dirty()) { clearTimeout(SAVE.timer); await doSave(); }
   el.disabled = true; await bkGoBack(() => HOST.uploadWorkspace(S.bkFile), "Restored from the file · reopening");
+};
+
+/* ===== CREDIT AND DEBIT NOTES, WITH PRODUCTS =====
+   A sales return lists each product returned: quantity (crates, boxes or pieces), the rate (what that distributor was
+   last billed, which can be changed) and whether it came back Good or Damaged. The value of each line and the note's
+   total (excl. GST, GST, incl. GST) are worked out as you type. Saved notes count on the dashboard on their date:
+   returns and rate-difference credit notes reduce sales, a debit note to a distributor adds to them; Hangyo's notes
+   do not touch sales. Good returns can go back into SahiReach stock; a purchase return to Hangyo can come out of it. */
+const NOTE_TYPES = ["Sales return - credit note to distributor", "Rate difference - credit note to distributor", "Rate difference - debit note to distributor", "Purchase return - debit note to Hangyo", "Hangyo credit note (value only)"];
+const NOTE_REASONS = ["Damaged", "Expired / near expiry", "Melted / cold chain issue", "Wrong or excess supply", "Quality complaint", "Rate difference", "TOD / special price", "Scheme", "Other"];
+const ntKind = (t) => (/^sales return/i.test(t) ? "return" : /^purchase return/i.test(t) ? "preturn" : /^rate difference - credit/i.test(t) ? "rcredit" : /^rate difference - debit/i.test(t) ? "rdebit" : "hangyo");
+const ntHasLines = (k) => k === "return" || k === "preturn";
+const ntToHangyo = (k) => k === "preturn" || k === "hangyo";
+/* sales: a credit note to a distributor takes sales off, a debit note adds; notes with Hangyo do not change sales */
+const ntSalesSign = (k) => (k === "return" || k === "rcredit" ? -1 : k === "rdebit" ? 1 : 0);
+const ntUnitsOf = (sap) => { const st = stockBySap[sap] || {}, c = catBySap[sap] || {}; return { upc: st.upc || c.upc || null, ppe: st.ppe || c.ppe || 1 }; };
+/* the rate on the note: what this distributor was last billed for it, else their price list rate (special price if they have one) */
+function ntRate(sap, dist, k) {
+  if (k === "preturn") return ssRate(sap);
+  const last = D.orders.filter((o) => o.dist === dist && o.status !== "Cancelled").sort((a, b) => (a.time < b.time ? 1 : -1)).map((o) => (linesByOrder[o.id] || []).find((l) => l.sap === sap && l.billed > 0)).find(Boolean);
+  if (last) return last.billed;
+  const r = impRateFor(sap, dist); return r != null ? r : price(sap);
+}
+function ntCalc(l) {
+  const u = ntUnitsOf(l.sap), q = +l.qty || 0;
+  const ea = l.unit === "Crate" ? q * (u.upc || 0) : l.unit === "Pieces" ? q / (u.ppe || 1) : q;
+  const value = Math.round(ea * (+l.rate || 0) * 100) / 100;
+  return { ea: Math.round(ea * 1000) / 1000, crates: u.upc ? Math.round((ea / u.upc) * 1000) / 1000 : null, value };
+}
+const ntQtyTxt = (c) => `${c.crates != null ? nf(c.crates, 2) + (c.crates === 1 ? " crate · " : " crates · ") : ""}${nf(c.ea, 2)} ${c.ea === 1 ? "box" : "boxes"}`;
+function ntTotals() {
+  const N = S.nt, k = ntKind(N.type);
+  const amt = ntHasLines(k) ? Math.round(N.lines.reduce((a, l) => a + ntCalc(l).value, 0) * 100) / 100 : Math.round((+N.amount || 0) * 100) / 100;
+  return { amt, gst: Math.round(amt * 5) / 100, total: Math.round(amt * 105) / 100 };
+}
+function ntLineHtml(l, i) {
+  const k = ntKind(S.nt.type), c = ntCalc(l), cat = catBySap[l.sap] || {};
+  return `<div class="row" style="flex-wrap:wrap;gap:10px;align-items:center">
+    <span class="grow" style="min-width:200px"><div class="row-title" style="white-space:normal">${esc(cat.name || l.product)}</div><div class="row-sub" id="nt-sub-${i}">${ntQtyTxt(c)}</div></span>
+    <input class="input sm num-in" style="width:76px" type="number" min="0" step="any" inputmode="decimal" value="${esc(l.qty)}" data-in="ntLine" data-i="${i}" data-f="qty" aria-label="Quantity">
+    <select class="select sm" style="width:auto" data-in="ntLine" data-i="${i}" data-f="unit" aria-label="Unit">${[["Crate", "Crates"], ["EA (Box)", "Boxes"], ["Pieces", "Pieces"]].map(([v, t]) => `<option value="${v}" ${l.unit === v ? "selected" : ""}>${t}</option>`).join("")}</select>
+    <span class="hstack gap-8"><span class="row-sub">₹</span><input class="input sm num-in" style="width:96px" type="number" min="0" step="0.01" inputmode="decimal" value="${l.rate != null ? esc(l.rate) : ""}" placeholder="per box" data-in="ntLine" data-i="${i}" data-f="rate" aria-label="Rate per box"><span class="row-sub">/ box</span></span>
+    ${k === "return" ? `<select class="select sm" style="width:auto" data-in="ntLine" data-i="${i}" data-f="cond" aria-label="Condition"><option ${l.cond !== "Damaged" ? "selected" : ""}>Good</option><option ${l.cond === "Damaged" ? "selected" : ""}>Damaged</option></select>` : ""}
+    <span class="row-value num" style="min-width:96px;text-align:right" id="nt-v-${i}">${rs2(c.value)}</span>
+    <button class="icon-btn" data-act="ntRm" data-i="${i}" aria-label="Remove">${ic("trash", "sm")}</button></div>`;
+}
+function ntTotalHtml() {
+  const N = S.nt, k = ntKind(N.type), T = ntTotals(), sg = ntSalesSign(k);
+  return `<div class="sum-row"><span class="muted">Value excl. GST</span><b class="num">${rs2(T.amt)}</b></div><div class="sum-row"><span class="muted">GST 5%</span><span class="num">${rs2(T.gst)}</span></div><div class="sum-row total"><span>Total incl. GST</span><span class="num">${rs2(T.total)}</span></div>
+    <div class="row-sub" style="margin-top:8px">${sg < 0 ? `Takes ${rs2(T.amt)} off ${esc(shortOf(N.party || ""))}'s sales on ${fmtDate(N.date)}.` : sg > 0 ? `Adds ${rs2(T.amt)} to ${esc(shortOf(N.party || ""))}'s sales on ${fmtDate(N.date)}.` : "A note with Hangyo: sales do not change."}</div>`;
+}
+function ntBody() {
+  const N = S.nt, k = ntKind(N.type), lines = ntHasLines(k);
+  const good = N.lines.filter((l) => l.cond !== "Damaged").length;
+  return `<div class="card card-pad"><div class="form-grid">
+      <div class="field full"><label class="label" for="nt-type">Note type</label><select class="select" id="nt-type" data-in="ntF" data-f="type">${NOTE_TYPES.map((t) => `<option ${t === N.type ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div>
+      ${ntToHangyo(k) ? `<div class="field"><div class="label">With</div><div class="input" style="display:flex;align-items:center">Hangyo</div></div>` : `<div class="field"><label class="label" for="nt-party">Distributor</label><select class="select" id="nt-party" data-in="ntF" data-f="party">${D.distributors.map((d) => `<option ${d.name === N.party ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></div>`}
+      <div class="field"><label class="label" for="nt-date">Note date</label><input class="input" id="nt-date" type="date" value="${esc(N.date)}" data-in="ntF" data-f="date"></div>
+      <div class="field"><label class="label" for="nt-no">Note number (Vyapar or Hangyo)</label><input class="input" id="nt-no" value="${esc(N.no)}" placeholder="SR/CN26-27/12" data-in="ntF" data-f="no"></div>
+      <div class="field"><label class="label" for="nt-reason">Reason</label><select class="select" id="nt-reason" data-in="ntF" data-f="reason">${NOTE_REASONS.map((t) => `<option ${t === N.reason ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      ${lines ? "" : `<div class="field full"><label class="label" for="nt-amt">Amount excl. GST (₹)</label><input class="input num-in" id="nt-amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="${N.amount != null ? esc(N.amount) : ""}" data-in="ntF" data-f="amount"></div>`}
+    </div></div>
+    ${lines ? `<div><div class="group-label"><span>Products ${k === "return" ? "returned" : "sent back to Hangyo"}</span><span>${N.lines.length}</span></div>
+      <div class="search">${ic("search", "sm")}<input class="input" id="nt-q" type="search" placeholder="Add a product: search by name" value="${esc(N.q || "")}" data-in="ntQ" autocomplete="off"></div>
+      <div id="nt-res">${ntResults()}</div>
+      <div class="group" id="nt-lines" style="margin-top:10px">${N.lines.length ? N.lines.map(ntLineHtml).join("") : `<div class="empty">No products yet. Search above to add them.</div>`}</div>
+      ${k === "return" ? `<label class="row" style="cursor:pointer;margin-top:10px;padding:10px 12px;border-radius:12px;background:var(--fill)"><input type="checkbox" data-in="ntBack" ${N.back ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--tint)"><span class="grow"><div class="row-title">Put the Good products back into SahiReach stock</div><div class="row-sub">${good ? `${good} product${good > 1 ? "s" : ""} marked Good` : "Nothing marked Good"} · Damaged ones are not added to stock and their cost counts as a loss</div></span></label>` : `<label class="row" style="cursor:pointer;margin-top:10px;padding:10px 12px;border-radius:12px;background:var(--fill)"><input type="checkbox" data-in="ntBack" ${N.back ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--tint)"><span class="grow"><div class="row-title">Take these out of SahiReach stock</div><div class="row-sub">Untick if the stock was already adjusted</div></span></label>`}</div>` : ""}
+    <div class="card card-pad" id="nt-total">${ntTotalHtml()}</div>
+    <div class="row-sub">Raise the GST note in Vyapar as usual; this records it in the tool.</div>
+    <div id="nt-err"></div>`;
+}
+function ntResults() {
+  const q = (S.nt.q || "").trim(); if (q.length < 2) return "";
+  const list = searchProducts(q, 8);
+  if (!list.length) return `<div class="row-sub" style="padding:8px 4px">Nothing matches “${esc(q)}”.</div>`;
+  return `<div class="results" style="position:static;margin-top:6px">${list.map((x) => `<button class="res" data-act="ntAdd" data-sap="${esc(x.c.sap)}"><span class="grow"><div class="row-title">${esc(x.c.name)}</div><div class="row-sub">${esc(x.c.cat || "")}</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div>`;
+}
+const ntRedraw = () => { const sc = $("#sheet .sheet-body") || $("#sheet"), y = sc ? sc.scrollTop : 0; part("nt-body", ntBody()); if (sc) sc.scrollTop = y; };
+ACT.noteSheet = () => {
+  const d = D.distributors[0] || {};
+  S.nt = { type: NOTE_TYPES[0], party: d.name || "", date: ymd(NOW()), no: "", reason: "Damaged", amount: null, lines: [], back: true, q: "" };
+  openSheet("New credit or debit note", `<div id="nt-body" class="stack gap-16">${ntBody()}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="noteSave">Save note</button>`, true);
+};
+IN.ntF = (el) => {
+  const N = S.nt, f = el.dataset.f, before = ntKind(N.type);
+  N[f] = f === "amount" ? (el.value === "" ? null : +el.value) : el.value;
+  if (f === "type") { const k = ntKind(N.type); if (k !== before) { N.back = true; if (k === "rcredit" || k === "rdebit") N.reason = "Rate difference"; N.lines.forEach((l) => { l.rate = ntRate(l.sap, N.party, k); }); } ntRedraw(); return; }
+  if (f === "party") { N.lines.forEach((l) => { if (!l.rateTyped) l.rate = ntRate(l.sap, N.party, ntKind(N.type)); }); ntRedraw(); return; }
+  part("nt-total", ntTotalHtml());
+};
+IN.ntQ = (el) => { S.nt.q = el.value; part("nt-res", ntResults()); };
+IN.ntBack = (el) => { S.nt.back = el.checked; };
+ACT.ntAdd = (el) => {
+  const N = S.nt, sap = el.dataset.sap, k = ntKind(N.type), ex = N.lines.find((l) => l.sap === sap);
+  if (ex) ex.qty = (+ex.qty || 0) + 1;
+  else { const r = ntRate(sap, N.party, k); N.lines.push({ sap, product: (catBySap[sap] || {}).name || sap, qty: 1, unit: "EA (Box)", rate: r != null ? Math.round(r * 100) / 100 : null, cond: "Good" }); }
+  N.q = ""; ntRedraw();
+  const q = $("#nt-q"); if (q) q.focus({ preventScroll: true });
+};
+ACT.ntRm = (el) => { S.nt.lines.splice(+el.dataset.i, 1); ntRedraw(); };
+IN.ntLine = (el) => {
+  const N = S.nt, i = +el.dataset.i, l = N.lines[i], f = el.dataset.f; if (!l) return;
+  if (f === "qty") l.qty = el.value === "" ? "" : Math.max(0, +el.value);
+  else if (f === "rate") { l.rate = el.value === "" ? null : Math.max(0, +el.value); l.rateTyped = true; }
+  else l[f] = el.value;
+  if (f === "cond") { ntRedraw(); return; }
+  const c = ntCalc(l), v = $("#nt-v-" + i), sub = $("#nt-sub-" + i);
+  if (v) v.textContent = rs2(c.value); if (sub) sub.textContent = ntQtyTxt(c);
+  part("nt-total", ntTotalHtml());
+};
+/* stock: a Good return goes back on the shelf; a purchase return to Hangyo comes off it */
+function ntStock(n, dir) {
+  (n.lines || []).forEach((l) => {
+    if (!l.stocked) return; const st = stockBySap[l.sap]; if (!st || !st.upc) return;
+    const ea = dir * l.stocked; st.ea += ea; st.crates = st.ea / st.upc; st.pcs = st.ea * (st.ppe || 1);
+    st.move = `${n.no || n.id} (${n.party}): ${ea >= 0 ? "+" : ""}${nf(ea / st.upc, 2)} crates${dir < 0 ? " (note cancelled)" : ""}`;
+  });
+}
+ACT.noteSave = () => {
+  const N = S.nt, k = ntKind(N.type), T = ntTotals(), err = (m) => part("nt-err", `<div class="banner bad">${ic("alert", "sm")}<span>${esc(m)}</span></div>`);
+  if (!N.date) return err("Add the note date.");
+  if (!ntToHangyo(k) && !N.party) return err("Choose the distributor.");
+  if (ntHasLines(k)) {
+    const used = N.lines.filter((l) => +l.qty > 0);
+    if (!used.length) return err("Add at least one product with a quantity.");
+    if (used.some((l) => !(+l.rate > 0))) return err("Every product needs a rate per box.");
+  }
+  if (!(T.amt > 0)) return err("The note's value is zero. Add the products or the amount.");
+  const sg = ntSalesSign(k), base = "CN-" + stamp(NOW()); let id = base, j = 1; while (D.notes.some((x) => x.id === id)) id = base + "-" + ++j;
+  const lines = ntHasLines(k) ? N.lines.filter((l) => +l.qty > 0).map((l) => { const c = ntCalc(l), back = k === "return" ? !!N.back && l.cond !== "Damaged" : !!N.back; return { sap: l.sap, product: (catBySap[l.sap] || {}).name || l.product, qty: +l.qty, unit: l.unit, ea: c.ea, crates: c.crates, rate: +l.rate, value: c.value, cond: k === "return" ? l.cond || "Good" : null, back: k === "return" && back, stocked: back && stockBySap[l.sap] && stockBySap[l.sap].upc ? (k === "preturn" ? -c.ea : c.ea) : 0 }; }) : null;
+  const n = { id, type: N.type, no: N.no.trim(), date: N.date + "T00:00", party: ntToHangyo(k) ? "Hangyo" : N.party, reason: N.reason, amount: T.amt, gst: T.gst, total: T.total, sales: sg * T.amt, status: "Active", by: ME.name, time: iso(NOW()) };
+  if (lines) {
+    Object.assign(n, { lines, product: lines.length === 1 ? lines[0].product : `${lines.length} products`, ea: Math.round(lines.reduce((a, l) => a + l.ea, 0) * 1000) / 1000, crates: Math.round(lines.reduce((a, l) => a + (l.crates || 0), 0) * 1000) / 1000 });
+    const moved = lines.filter((l) => l.stocked);
+    n.stock = moved.length ? `${k === "preturn" ? "Taken out of" : "Put back into"} SahiReach stock: ${moved.map((l) => `${nf(Math.abs(l.stocked) / ((stockBySap[l.sap] || {}).upc || 1), 2)} cr ${shortName(l.product)}`).join(", ")}` : "No stock change";
+    ntStock(n, 1);
+  } else n.stock = "No stock change";
+  D.notes.push(n);
+  logActivity("Note saved", n.no || n.id, `${String(n.type).split(" - ")[0]} · ${n.party} · ${rs2(n.amount)}${lines ? ` · ${lines.length} product${lines.length > 1 ? "s" : ""}` : ""}${sg ? ` · sales ${sg < 0 ? "−" : "+"}${rs2(n.amount)}` : ""}`);
+  S.nt = null; S.moneyTab = "notes"; closeSheet(); render();
+  toast(`Note saved · ${rs2(n.amount)}${sg < 0 ? " taken off sales" : sg > 0 ? " added to sales" : ""}`, "check");
+};
+/* a saved note: its products, and cancelling it (stock changes reversed, it stops counting in sales) */
+ACT.noteOpen = (el, e, confirmCancel) => {
+  const n = D.notes.find((x) => x.id === el.dataset.id); if (!n) return;
+  const k = ntKind(n.type), L = Array.isArray(n.lines) ? n.lines : null;
+  openSheet(esc(String(n.type).split(" - ")[0]) + (n.no ? " · " + esc(n.no) : ""), `<div class="card card-pad"><div class="kv">
+      <div><div class="k">${ntToHangyo(k) ? "With" : "Distributor"}</div><div class="v">${esc(n.party || "Hangyo")}</div></div><div><div class="k">Date</div><div class="v">${fmtDate(n.date)}</div></div>
+      <div><div class="k">Type</div><div class="v">${esc(n.type)}</div></div><div><div class="k">Reason</div><div class="v">${esc(n.reason || "–")}</div></div>
+      <div><div class="k">Value excl. GST</div><div class="v num">${rs2(n.amount)}</div></div><div><div class="k">Total incl. GST</div><div class="v num">${rs2(n.total != null ? n.total : n.amount * 1.05)}</div></div>
+      <div><div class="k">Sales</div><div class="v">${n.status !== "Active" ? "Not counted (cancelled)" : n.sales ? (n.sales < 0 ? "−" : "+") + rs2(Math.abs(n.sales)) : "No change"}</div></div><div><div class="k">Stock</div><div class="v" style="font-size:14px">${esc(n.stock || "–")}</div></div></div></div>
+    ${L ? `<div><div class="group-label"><span>Products</span><span>${L.length}</span></div><div class="group">${L.map((l) => `<div class="row"><span class="grow"><div class="row-title" style="white-space:normal">${esc(l.product)}</div><div class="row-sub">${nf(l.qty, 2)} ${esc(l.unit === "Crate" ? "crates" : l.unit === "Pieces" ? "pieces" : "boxes")} · ${nf(l.ea, 2)} boxes × ${rs2(l.rate)}${l.cond ? " · " + esc(l.cond) : ""}${l.stocked ? (l.stocked > 0 ? " · back in stock" : " · out of stock") : ""}</div></span><span class="row-end"><span class="row-value">${rs2(l.value)}</span></span></div>`).join("")}</div></div>` : n.product ? `<div class="group"><div class="row"><span class="grow"><div class="row-title">${esc(n.product)}</div>${n.qty ? `<div class="row-sub">${nf(n.qty)} ${esc(n.unit || "")}${n.rate ? " × " + rs2(n.rate) : ""}</div>` : ""}</span></div></div>` : ""}
+    ${confirmCancel ? `<div class="confirm"><span><b>Cancel this note?</b> It stops counting in sales${L && L.some((l) => l.stocked) ? " and its stock change is reversed" : ""}.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="noteOpen" data-id="${esc(n.id)}">Keep it</button><button class="btn btn-sm btn-danger" data-act="noteCancelYes" data-id="${esc(n.id)}">Cancel note</button></span></div>` : ""}`,
+    n.status === "Active" && CAN_EDIT ? `<button class="btn btn-danger" data-act="noteCancelAsk" data-id="${esc(n.id)}">Cancel note</button><button class="btn btn-primary" data-act="closeSheet">Done</button>` : `<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
+};
+ACT.noteCancelAsk = (el) => ACT.noteOpen(el, null, true);
+ACT.noteCancelYes = (el) => {
+  const n = D.notes.find((x) => x.id === el.dataset.id); if (!n || n.status !== "Active") return;
+  if (Array.isArray(n.lines)) ntStock(n, -1);
+  n.status = "Cancelled"; n.cancelled = { at: iso(NOW()), by: ME.name };
+  logActivity("Note cancelled", n.no || n.id, `${String(n.type).split(" - ")[0]} · ${n.party} · ${rs2(n.amount)}`);
+  closeSheet(); render(); toast("Note cancelled", "undo");
 };
 
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
