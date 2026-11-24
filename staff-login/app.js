@@ -1287,7 +1287,7 @@ function showOrder(id, confirmCancel, confirmUndo) {
     ${o.status === "Pending" ? orderQCOfferHtml(o) : ""}
     ${o.notes ? `<div class="banner info">${ic("info", "sm")}<span>${esc(o.notes)}</span></div>` : ""}
     <div><div class="group-label"><span>Timeline</span></div><div class="card card-pad"><div class="timeline">${tl.join("")}</div></div></div>
-    ${lines.length ? `<div><div class="group-label"><span>${lines.length} line${lines.length > 1 ? "s" : ""}</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crate${l.crates === 1 ? "" : "s"} · ${nf(l.ea)} boxes × ${rs2(l.billed)}${l.tod ? ` · TOD ${rs2(l.tod)}` : ""}${l.qc > 0 ? ` · <span style="color:var(--tint);font-weight:600">${nf(l.qc, 2)} from quick commerce stock</span>` : ""}</div></span><span class="row-end"><span class="row-value">${rs2(l.value)}</span></span></div>`).join("")}</div></div>` : ""}
+    ${lines.length ? `<div><div class="group-label"><span>${lines.length} line${lines.length > 1 ? "s" : ""}</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crate${l.crates === 1 ? "" : "s"} · ${nf(l.ea)} boxes × ${rs2(l.billed)}${l.tod ? ` · TOD ${rs2(l.tod)}` : ""}${l.qc > 0 ? ` · <span style="color:var(--tint);font-weight:600">${nf(l.qc, 2)} from quick commerce stock</span>` : ""}${l.part || (l.crates % 1 && Math.abs(l.crates % 1) > 1e-6) ? ` · <span style="color:var(--tint);font-weight:600">broken crate</span>` : ""}</div></span><span class="row-end"><span class="row-value">${rs2(l.value)}</span></span></div>`).join("")}</div></div>` : ""}
     ${missed.length ? `<div><div class="group-label"><span>Not supplied in full</span></div><div class="group">${missed.map((m) => `<div class="row"><span class="attn-ic warn" style="width:28px;height:28px">${ic("alert", "sm")}</span><span class="grow"><div class="row-title clip">${esc(shortName(m.product))}</div><div class="row-sub">${esc(m.reason)}</div></span>${typeof m.missed === "number" ? `<span class="row-end"><span class="pill warn plain">${m.missed} missed</span></span>` : ""}</div>`).join("")}</div></div>` : ""}`;
   const foot = `<button class="btn btn-secondary" data-act="soPreview" data-id="${id}">${ic("doc", "sm")} Sales order</button>${o.status !== "Cancelled" && lines.length ? `<button class="btn btn-secondary" data-act="${o.status === "Dispatched" ? "emailDispatch" : "emailSO"}" data-id="${id}">${ic("arrowR", "sm")} ${o.status === "Dispatched" ? "Email: on its way" : "Email sales order"}</button>` : ""}${o.status === "Pending" ? `<button class="btn btn-danger" data-act="cancelOrderAsk" data-id="${id}">Cancel order</button><button class="btn btn-primary" data-act="editOrder" data-id="${id}">${ic("pencil", "sm")} Edit order</button>` : ""}${o.status === "Dispatched" && ROLE === "owner" ? `<button class="btn btn-secondary" data-act="undoDispatchAsk" data-id="${id}">${ic("undo", "sm")} Undo dispatch</button>` : ""}`;
   openSheet("Order", body, lines.length || o.status !== "Cancelled" ? foot : "");
@@ -1321,8 +1321,12 @@ function calcDraft() {
     const exact = !stocked ? null : ln.unit === "Crate" ? qty : ln.unit === "EA (Box)" ? qty / upc : qty / (upc * ppe);
     let req = stocked ? Math.ceil(Math.round(exact * 1e6) / 1e6) : null;
     const avail = stocked ? Math.max(0, (st.ea + (oldEA[ln.sap] || 0) - ownHeldEA(ln.sap)) / upc - (used[ln.sap] || 0)) : 0; /* minus crates held for a sent QC pick list */
-    /* orders go out in whole crates, except boxes ordered from loose boxes in stock (a part crate, e.g. from a return): those go exactly */
-    if (stocked && ln.unit !== "Crate" && avail + 1e-9 >= exact && avail < req - 1e-9) req = Math.round(exact * 1e6) / 1e6;
+    /* orders go out in whole crates. Exceptions: a line marked "broken crate" goes exactly (pieces rounded up to whole boxes),
+       and boxes ordered from loose boxes in stock (a part crate, e.g. from a return) go exactly too */
+    const exactReq = stocked ? (ln.unit === "Pieces" ? Math.ceil(Math.round(exact * upc * 1e6) / 1e6) / upc : Math.round(exact * 1e6) / 1e6) : null;
+    const loose = stocked && !ln.part && ln.unit !== "Crate" && avail + 1e-9 >= exact && avail < req - 1e-9;
+    if (stocked && (ln.part || loose) && exactReq > 0) req = exactReq;
+    const rounded = stocked && !ln.part && !loose && qty > 0 && req > exactReq + 1e-9;
     const own = stocked ? Math.max(0, Math.min(req, avail)) : 0;
     /* short of SahiReach stock: quick commerce stock can fill the rest, if the user says so */
     const qcFree = stocked && req > own + 1e-9 ? Math.max(0, Math.floor(orderQCFree(ln.sap, oldEA[ln.sap] || 0) - (usedQ[ln.sap] || 0) + 1e-9)) : 0;
@@ -1334,7 +1338,7 @@ function calcDraft() {
     const billed = special != null ? special : base, value = billed != null ? Math.round(ea * billed * 100) / 100 : null;
     const todEA = special != null && base != null ? Math.max(0, Math.round((base - special) * 100) / 100) : 0;
     const status = !qty ? "empty" : !stocked ? "notstocked" : supply <= 0 ? "out" : supply < req - 1e-9 ? "short" : "ok";
-    return { ln, st, c, upc, ppe, stocked, qty, req, avail, own, qcFree, qcTake, supply, ea, pcs: ea * ppe, normal, special, billed, value, todEA, tod: Math.round(ea * todEA * 100) / 100, status, needPrice: billed == null && qty > 0 && stocked && avail > 0 };
+    return { ln, st, c, upc, ppe, stocked, qty, req, exactReq, rounded, loose, avail, own, qcFree, qcTake, supply, ea, pcs: ea * ppe, normal, special, billed, value, todEA, tod: Math.round(ea * todEA * 100) / 100, status, needPrice: billed == null && qty > 0 && stocked && avail > 0 };
   });
   const sum = (f) => rows.reduce((a, r) => a + (f(r) || 0), 0);
   const net = Math.round(sum((r) => r.value) * 100) / 100;
@@ -1358,12 +1362,24 @@ function productResults() {
   S.draft.sel = Math.min(S.draft.sel || 0, list.length - 1);
   return `<div class="results" role="listbox">${list.map((x, i) => `<button class="res" role="option" aria-selected="${i === S.draft.sel}" data-act="addLine" data-sap="${esc(x.c.sap)}"><span class="stock-badge ${x.crates == null ? "none" : x.crates <= 0 ? "zero" : ""}">${x.crates == null ? "–" : x.crates > 0 && x.crates < 1 ? nf(x.crates, 1) : nf(Math.floor(x.crates))}</span><span class="grow"><div class="row-title">${esc(x.c.name)}</div><div class="row-sub">${esc(x.c.cat || "")} · ${x.crates == null ? "not in SahiReach stock" : x.crates <= 0 ? "out of stock" : x.crates < 1 ? `${nf(Math.round(x.st.ea))} loose boxes in stock` : "crates in stock"}${x.qc >= 1 && !(x.crates >= 1) ? ` · <span style="color:var(--tint);font-weight:600">quick commerce has ${nf(Math.floor(x.qc))}</span>` : x.crates == null ? ", logged as demand" : ""}${price(x.c.sap) != null ? " · " + rs2(price(x.c.sap)) + " / box" : " · no list price"}</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div><div class="row-sub" style="padding:6px 4px 0">↑ ↓ to choose · Enter to add · the cursor stays here for the next product</div>`;
 }
+/* full crates, or (once in a while) a broken crate: exactly what was asked for */
+const bx = (n) => `${nf(Math.round(n * 100) / 100)} box${Math.abs(n - 1) < 1e-9 ? "" : "es"}`;
+function linePartHtml(r, i) {
+  if (!r.stocked || !r.qty || r.status === "out") return "";
+  const btn = (txt, off) => `<button class="btn-plain" style="height:auto;padding:0;font-size:inherit;font-weight:600;color:var(--tint)" data-act="linePart" data-i="${i}"${off ? ' data-off="1"' : ""}>${txt}</button>`;
+  if (r.ln.part) return `<div class="line-msg tint">${ic("box", "sm")} <span><b>Broken crate:</b> exactly ${bx(r.exactReq * r.upc)} (${nf(r.exactReq, 2)} crate). ${btn("Full crates", true)}</span></div>`;
+  if (r.loose) return `<div class="line-msg tint">${ic("box", "sm")} <span>From loose boxes in stock: exactly ${bx(r.exactReq * r.upc)}.</span></div>`;
+  if (r.rounded) return `<div class="line-msg">${ic("info", "sm")} <span class="muted">Rounded up to ${r.req} full crate${r.req > 1 ? "s" : ""} (${bx(r.req * r.upc)}). ${btn(`Send exactly ${bx(r.exactReq * r.upc)} (broken crate)`)}</span></div>`;
+  return "";
+}
+ACT.linePart = (el) => { const l = S.draft.lines[+el.dataset.i]; if (!l) return; l.part = !el.dataset.off; refreshOrderLines(); };
 function lineCalcHtml(r, i) {
   let msg = "";
   if (r.status === "notstocked") msg = `<div class="line-msg warn">${ic("info", "sm")} Not in your range: logged as demand, nothing supplied.</div>`;
   else if (r.status === "out") msg = `<div class="line-msg bad">${ic("alert", "sm")} Out of stock: ${r.req} crate${r.req > 1 ? "s" : ""} logged as missed.</div>`;
   else if (r.status === "short") msg = `<div class="line-msg warn">${ic("alert", "sm")} Only ${nf(r.supply, 2)} crate${r.supply === 1 ? "" : "s"}${r.supply % 1 ? ` (${nf(Math.round(r.supply * r.upc))} boxes)` : ""} available: ${nf(r.req - r.supply, 2)} logged as missed.</div>`;
   msg += lineQCHtml(r, i);
+  msg += linePartHtml(r, i);
   if (r.needPrice) msg += `<div class="line-msg bad">${ic("tag", "sm")} No price in the South Kerala list. Price per box: <input class="input sm num-in" style="width:110px" id="mp-${i}" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="${r.ln.manual || ""}" data-in="manualPrice" data-i="${i}"></div>`;
   return `<div class="line-val"><div class="row-value">${r.value != null && r.qty && r.supply > 0 ? rs2(r.value) : "–"}</div><div class="row-sub nowrap">${r.stocked && r.qty ? `${nf(r.supply, 2)} cr · ${nf(r.ea)} bx` : ""}</div></div>${msg}`;
 }
@@ -1372,7 +1388,7 @@ function linesHtml(C) {
   return C.rows.map((r, i) => `<div class="line ${S.draft.flash === i ? "flash" : ""}" id="line-${i}"><span class="line-no">${i + 1}</span>
     <div class="line-name"><span class="line-title">${esc(r.c.name || r.ln.name)}</span>${r.special != null ? ` <span class="pill plain tint" style="height:20px;font-size:11.5px">special</span>` : ""}</div>
     <button class="info-btn" data-act="lineInfo" data-i="${i}" data-info="${i}" aria-label="Stock and price details for ${esc(r.c.name || r.ln.name)}">i</button>
-    <div class="line-qty"><div class="stepper sm"><button data-act="step" data-i="${i}" data-d="-1" aria-label="Less">${ic("minus", "sm")}</button><input id="qty-${i}" type="number" inputmode="numeric" min="0" value="${r.ln.qty}" data-in="qty" data-i="${i}" aria-label="Quantity"><button data-act="step" data-i="${i}" data-d="1" aria-label="More">${ic("plus", "sm")}</button></div>
+    <div class="line-qty"><div class="stepper sm"><button data-act="step" data-i="${i}" data-d="-1" aria-label="Less">${ic("minus", "sm")}</button><input id="qty-${i}" type="number" inputmode="decimal" step="any" min="0" value="${r.ln.qty}" data-in="qty" data-i="${i}" aria-label="Quantity"><button data-act="step" data-i="${i}" data-d="1" aria-label="More">${ic("plus", "sm")}</button></div>
       <select class="select sm unit-sel" id="unit-${i}" data-in="unit" data-i="${i}" aria-label="Unit">${Object.keys(UNIT_LABEL).map((u) => `<option value="${u}" ${u === r.ln.unit ? "selected" : ""}>${UNIT_LABEL[u]}</option>`).join("")}</select></div>
     <div id="calc-${i}" style="display:contents">${lineCalcHtml(r, i)}</div>
     <button class="icon-btn line-rm" data-act="rmLine" data-i="${i}" aria-label="Remove line">${ic("trash", "sm")}</button></div>`).join("");
@@ -1474,7 +1490,7 @@ ACT.clearDraft = () => { const was = S.draft.editId; S.draft = newDraft(); if (w
    stock or not stocked (those live only in the missed-sales log, so they have to be put back) */
 function requestedLines(o) {
   const d = distByKey[key(o.dist)] || {}, out = [], seen = new Set();
-  (linesByOrder[o.id] || []).forEach((l) => { out.push({ sap: l.sap, name: l.product, qty: l.qty, unit: l.unit || d.uom || "Crate", manual: /manual/i.test(l.src || "") ? l.billed : 0, useQC: l.qc > 0 }); seen.add(l.sap); });
+  (linesByOrder[o.id] || []).forEach((l) => { out.push({ sap: l.sap, name: l.product, qty: l.qty, unit: l.unit || d.uom || "Crate", manual: /manual/i.test(l.src || "") ? l.billed : 0, useQC: l.qc > 0, ...(l.part ? { part: true } : {}) }); seen.add(l.sap); });
   D.oos.filter((x) => x.id === o.id && x.sap && !seen.has(x.sap)).forEach((x) => {
     const m = /requested\s+([\d.]+)\s+(Crate|EA \(Box\)|Pieces)/i.exec(x.reason || "");
     const qty = x.askQty != null ? x.askQty : m ? +m[1] : typeof x.req === "number" ? x.req : 1, unit = x.askUnit || (m ? m[2] : "Crate");
@@ -1498,7 +1514,7 @@ ACT.saveOrder = () => {
   C.rows.filter((r) => r.qty > 0).forEach((r) => {
     if (r.supply > 0) {
       if (r.st.virtual) r.st = qcOnlyStockMake(r.ln.sap);
-      lines.push({ id: o.id, product: r.c.name, sap: r.ln.sap, unit: r.ln.unit, qty: r.qty, crates: r.supply, ea: r.ea, pcs: r.pcs, src: r.special != null ? "Special price" : r.normal != null ? "SK Master" : "Manual", normal: r.normal, billed: r.billed, value: r.value, tod: r.tod, ...(r.qcTake > 0 ? { qc: r.qcTake } : {}) });
+      lines.push({ id: o.id, product: r.c.name, sap: r.ln.sap, unit: r.ln.unit, qty: r.qty, crates: r.supply, ea: r.ea, pcs: r.pcs, src: r.special != null ? "Special price" : r.normal != null ? "SK Master" : "Manual", normal: r.normal, billed: r.billed, value: r.value, tod: r.tod, ...(r.qcTake > 0 ? { qc: r.qcTake } : {}), ...(r.ln.part ? { part: true } : {}) });
       /* crates taken from quick commerce stock leave SahiReach stock below zero until the pick list moves them across at dispatch */
       r.st.ea -= r.ea; r.st.crates = r.st.ea / r.upc; r.st.pcs = r.st.ea * r.ppe; r.st.move = `${o.id} (${C.d.name}): -${nf(r.supply, 2)} crates${r.qcTake > 0 ? ` (${nf(r.qcTake, 2)} from quick commerce stock)` : ""}`;
       if (r.tod > 0) D.tod.lines.push({ time: iso(now), id: o.id, month: "", dist: C.d.name, product: r.c.name, sap: r.ln.sap, crates: r.supply, ea: r.ea, normal: r.normal, special: r.special, perEA: r.todEA, amount: r.tod, status: "Expected", received: null });
