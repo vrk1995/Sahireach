@@ -1309,7 +1309,7 @@ ACT.cancelOrderYes = (el) => { cancelOrder(el.dataset.id); closeSheet(); render(
 ACT.newOrder = () => { if (S.draft.editId) S.draft = newDraft(); closeSheet(); go("new-order"); };
 function searchProducts(q, limit = 30) {
   const words = key(q).split(" ").filter(Boolean);
-  const list = D.catalog.filter((c) => c.sap && words.every((w) => key(c.name).includes(w))).map((c) => { const st = stockBySap[c.sap]; return { c, st, crates: st && st.upc ? st.ea / st.upc : null }; });
+  const list = D.catalog.filter((c) => c.sap && words.every((w) => key(c.name).includes(w))).map((c) => { const st = stockBySap[c.sap], q = qcBySap[c.sap]; return { c, st, crates: st && st.upc ? st.ea / st.upc : null, qc: q ? Math.max(0, (q.crates || 0) - (typeof qcHeld === "function" ? qcHeld(c.sap).q : 0)) : 0 }; });
   list.sort((a, b) => (b.crates > 0) - (a.crates > 0) || (b.crates != null) - (a.crates != null) || (b.crates || 0) - (a.crates || 0) || a.c.name.localeCompare(b.c.name));
   return list.slice(0, limit);
 }
@@ -1317,14 +1317,17 @@ function calcDraft() {
   const dr = S.draft, d = dr.dist ? distByKey[key(dr.dist)] : null, used = {}, usedQ = {}, oldEA = {};
   if (dr.editId) (dr.orig || []).forEach((l) => { oldEA[l.sap] = (oldEA[l.sap] || 0) + (l.ea || 0); });
   const rows = dr.lines.map((ln) => {
-    const st = stockBySap[ln.sap], c = catBySap[ln.sap] || {}, upc = st ? st.upc : null, ppe = (st && st.ppe) || c.ppe || 1, stocked = !!(st && upc > 0), qty = +ln.qty || 0;
+    const st = stockBySap[ln.sap] || qcOnlyStock(ln.sap), c = catBySap[ln.sap] || {}, upc = st ? st.upc : null, ppe = (st && st.ppe) || c.ppe || 1, stocked = !!(st && upc > 0), qty = +ln.qty || 0;
     const exact = !stocked ? null : ln.unit === "Crate" ? qty : ln.unit === "EA (Box)" ? qty / upc : qty / (upc * ppe);
-    const req = stocked ? Math.ceil(Math.round(exact * 1e6) / 1e6) : null;
+    let req = stocked ? Math.ceil(Math.round(exact * 1e6) / 1e6) : null;
     const avail = stocked ? Math.max(0, (st.ea + (oldEA[ln.sap] || 0) - ownHeldEA(ln.sap)) / upc - (used[ln.sap] || 0)) : 0; /* minus crates held for a sent QC pick list */
+    /* orders go out in whole crates, except boxes ordered from loose boxes in stock (a part crate, e.g. from a return): those go exactly */
+    if (stocked && ln.unit !== "Crate" && avail + 1e-9 >= exact && avail < req - 1e-9) req = Math.round(exact * 1e6) / 1e6;
     const own = stocked ? Math.max(0, Math.min(req, avail)) : 0;
     /* short of SahiReach stock: quick commerce stock can fill the rest, if the user says so */
     const qcFree = stocked && req > own + 1e-9 ? Math.max(0, Math.floor(orderQCFree(ln.sap, oldEA[ln.sap] || 0) - (usedQ[ln.sap] || 0) + 1e-9)) : 0;
-    const qcTake = ln.useQC && qcFree > 0 ? Math.min(req - own, qcFree) : 0, supply = own + qcTake;
+    const useQC = ln.useQC != null ? ln.useQC : !!(D.qcPick && D.qcPick.autoQC);
+    const qcTake = useQC && qcFree > 0 ? Math.min(req - own, qcFree) : 0, supply = own + qcTake;
     if (stocked) { used[ln.sap] = (used[ln.sap] || 0) + own; usedQ[ln.sap] = (usedQ[ln.sap] || 0) + qcTake; }
     const ea = supply * (upc || 0), normal = price(ln.sap), base = normal != null ? normal : ln.manual > 0 ? +ln.manual : null;
     const special = d && d.special && D.special.prices[ln.sap] != null ? D.special.prices[ln.sap] : null;
@@ -1335,7 +1338,7 @@ function calcDraft() {
   });
   const sum = (f) => rows.reduce((a, r) => a + (f(r) || 0), 0);
   const net = Math.round(sum((r) => r.value) * 100) / 100;
-  return { rows, d, crates: sum((r) => r.supply), req: sum((r) => r.req), net, gst: Math.round(net * 5) / 100, tod: sum((r) => r.tod), ea: sum((r) => r.ea), needPrice: rows.filter((r) => r.needPrice).length, short: rows.filter((r) => ["short", "out", "notstocked"].includes(r.status)).length, qcCan: rows.filter((r) => r.qcFree > 0 && !r.ln.useQC && r.qty > 0), qcTake: sum((r) => r.qcTake) };
+  return { rows, d, crates: sum((r) => r.supply), req: sum((r) => r.req), net, gst: Math.round(net * 5) / 100, tod: sum((r) => r.tod), ea: sum((r) => r.ea), needPrice: rows.filter((r) => r.needPrice).length, short: rows.filter((r) => ["short", "out", "notstocked"].includes(r.status)).length, qcCan: rows.filter((r) => r.qcFree > 0 && !(r.qcTake > 0) && r.qty > 0), qcTake: sum((r) => r.qcTake) };
 }
 function distCard(d) {
   const due = d.credit != null ? new Date(Date.now() + d.credit * 864e5) : null;
@@ -1353,13 +1356,13 @@ function productResults() {
   const list = searchProducts(q, 12);
   if (!list.length) return `<div class="results"><div class="empty" style="padding:22px">Nothing matches “${esc(q)}”.</div></div>`;
   S.draft.sel = Math.min(S.draft.sel || 0, list.length - 1);
-  return `<div class="results" role="listbox">${list.map((x, i) => `<button class="res" role="option" aria-selected="${i === S.draft.sel}" data-act="addLine" data-sap="${esc(x.c.sap)}"><span class="stock-badge ${x.crates == null ? "none" : x.crates <= 0 ? "zero" : ""}">${x.crates == null ? "–" : nf(Math.floor(x.crates))}</span><span class="grow"><div class="row-title">${esc(x.c.name)}</div><div class="row-sub">${esc(x.c.cat || "")} · ${x.crates == null ? "not stocked, logged as demand" : x.crates <= 0 ? "out of stock" : "crates in stock"}${price(x.c.sap) != null ? " · " + rs2(price(x.c.sap)) + " / box" : " · no list price"}</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div><div class="row-sub" style="padding:6px 4px 0">↑ ↓ to choose · Enter to add · the cursor stays here for the next product</div>`;
+  return `<div class="results" role="listbox">${list.map((x, i) => `<button class="res" role="option" aria-selected="${i === S.draft.sel}" data-act="addLine" data-sap="${esc(x.c.sap)}"><span class="stock-badge ${x.crates == null ? "none" : x.crates <= 0 ? "zero" : ""}">${x.crates == null ? "–" : x.crates > 0 && x.crates < 1 ? nf(x.crates, 1) : nf(Math.floor(x.crates))}</span><span class="grow"><div class="row-title">${esc(x.c.name)}</div><div class="row-sub">${esc(x.c.cat || "")} · ${x.crates == null ? "not in SahiReach stock" : x.crates <= 0 ? "out of stock" : x.crates < 1 ? `${nf(Math.round(x.st.ea))} loose boxes in stock` : "crates in stock"}${x.qc >= 1 && !(x.crates >= 1) ? ` · <span style="color:var(--tint);font-weight:600">quick commerce has ${nf(Math.floor(x.qc))}</span>` : x.crates == null ? ", logged as demand" : ""}${price(x.c.sap) != null ? " · " + rs2(price(x.c.sap)) + " / box" : " · no list price"}</div></span>${ic("plus", "sm dim")}</button>`).join("")}</div><div class="row-sub" style="padding:6px 4px 0">↑ ↓ to choose · Enter to add · the cursor stays here for the next product</div>`;
 }
 function lineCalcHtml(r, i) {
   let msg = "";
   if (r.status === "notstocked") msg = `<div class="line-msg warn">${ic("info", "sm")} Not in your range: logged as demand, nothing supplied.</div>`;
   else if (r.status === "out") msg = `<div class="line-msg bad">${ic("alert", "sm")} Out of stock: ${r.req} crate${r.req > 1 ? "s" : ""} logged as missed.</div>`;
-  else if (r.status === "short") msg = `<div class="line-msg warn">${ic("alert", "sm")} Only ${nf(r.supply, 2)} crate${r.supply === 1 ? "" : "s"} available: ${nf(r.req - r.supply, 2)} logged as missed.</div>`;
+  else if (r.status === "short") msg = `<div class="line-msg warn">${ic("alert", "sm")} Only ${nf(r.supply, 2)} crate${r.supply === 1 ? "" : "s"}${r.supply % 1 ? ` (${nf(Math.round(r.supply * r.upc))} boxes)` : ""} available: ${nf(r.req - r.supply, 2)} logged as missed.</div>`;
   msg += lineQCHtml(r, i);
   if (r.needPrice) msg += `<div class="line-msg bad">${ic("tag", "sm")} No price in the South Kerala list. Price per box: <input class="input sm num-in" style="width:110px" id="mp-${i}" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="${r.ln.manual || ""}" data-in="manualPrice" data-i="${i}"></div>`;
   return `<div class="line-val"><div class="row-value">${r.value != null && r.qty && r.supply > 0 ? rs2(r.value) : "–"}</div><div class="row-sub nowrap">${r.stocked && r.qty ? `${nf(r.supply, 2)} cr · ${nf(r.ea)} bx` : ""}</div></div>${msg}`;
@@ -1494,6 +1497,7 @@ ACT.saveOrder = () => {
   const lines = [];
   C.rows.filter((r) => r.qty > 0).forEach((r) => {
     if (r.supply > 0) {
+      if (r.st.virtual) r.st = qcOnlyStockMake(r.ln.sap);
       lines.push({ id: o.id, product: r.c.name, sap: r.ln.sap, unit: r.ln.unit, qty: r.qty, crates: r.supply, ea: r.ea, pcs: r.pcs, src: r.special != null ? "Special price" : r.normal != null ? "SK Master" : "Manual", normal: r.normal, billed: r.billed, value: r.value, tod: r.tod, ...(r.qcTake > 0 ? { qc: r.qcTake } : {}) });
       /* crates taken from quick commerce stock leave SahiReach stock below zero until the pick list moves them across at dispatch */
       r.st.ea -= r.ea; r.st.crates = r.st.ea / r.upc; r.st.pcs = r.st.ea * r.ppe; r.st.move = `${o.id} (${C.d.name}): -${nf(r.supply, 2)} crates${r.qcTake > 0 ? ` (${nf(r.qcTake, 2)} from quick commerce stock)` : ""}`;
@@ -2134,8 +2138,19 @@ ACT.undoDispatchYes = (el) => {
 /* crates of SahiReach stock already promised to distributor orders out of quick commerce stock */
 const gtFromQC = (sap) => { const st = stockBySap[sap]; return st && st.upc && st.ea < -1e-9 ? -st.ea / st.upc : 0; };
 /* quick commerce crates free for this order: not held for a sent Swiggy / Zepto pick list, not promised to another order */
+/* a product in quick commerce stock but not in the SahiReach stock list: an empty SahiReach record with its pack size,
+   so an order can take it from quick commerce stock; made for real when the order is saved */
+function qcOnlyStock(sap) {
+  const q = qcBySap[sap], c = catBySap[sap] || {}; if (!q || !(q.upc > 0)) return null;
+  return { sap, name: c.name || q.name, cat: c.cat || q.cat || "", trop: q.trop || "", ea: 0, crates: 0, pcs: 0, upc: q.upc, ppe: q.ppe || c.ppe || 1, cost: null, margin: null, virtual: true };
+}
+function qcOnlyStockMake(sap) {
+  if (stockBySap[sap]) return stockBySap[sap];
+  const v = qcOnlyStock(sap), st = { ...v }; delete st.virtual; st.move = "Added for an order filled from quick commerce stock";
+  D.stock.push(st); stockBySap[sap] = st; return st;
+}
 function orderQCFree(sap, oldEA) {
-  const q = qcBySap[sap], st = stockBySap[sap]; if (!q || !st || !st.upc) return 0;
+  const q = qcBySap[sap], st = stockBySap[sap] || qcOnlyStock(sap); if (!q || !st || !st.upc) return 0;
   const promised = Math.max(0, -(st.ea + (oldEA || 0)) / st.upc);
   return Math.max(0, (q.crates || 0) - qcHeld(sap).q - promised);
 }
@@ -2149,6 +2164,8 @@ function orderQCAllHtml(C) {
   return `<div class="banner info" style="margin-top:10px;flex-wrap:wrap;text-align:left">${ic("bolt", "sm")}<span class="grow" style="min-width:160px"><b>Quick commerce stock can fill ${C.qcCan.length} short line${C.qcCan.length > 1 ? "s" : ""}:</b> ${C.qcCan.map((r) => esc(shortName(r.c.name || r.ln.name))).join(", ")}.</span><button class="btn btn-sm btn-primary" data-act="allQC">Use it</button></div>`;
 }
 ACT.lineQC = (el) => { const l = S.draft.lines[+el.dataset.i]; if (!l) return; l.useQC = !el.dataset.off; refreshOrderLines(); };
+/* the setting: fill short lines from quick commerce stock without asking */
+ACT.autoQCToggle = (el) => { D.qcPick.autoQC = !D.qcPick.autoQC; logActivity("Quick commerce settings edited", "", D.qcPick.autoQC ? "Short order lines are filled from quick commerce stock automatically" : "Quick commerce stock is offered on short order lines, not used automatically"); el.setAttribute("aria-checked", String(!!D.qcPick.autoQC)); if (S.route === "new-order") refreshOrderLines(); toast(D.qcPick.autoQC ? "Short lines will use quick commerce stock automatically" : "Quick commerce stock will be offered, not used automatically", "bolt"); };
 ACT.allQC = () => { calcDraft().qcCan.forEach((r) => { r.ln.useQC = true; }); refreshOrderLines(); toast("Quick commerce stock added to the short lines", "bolt"); };
 {
   const sh = summaryHtml;
@@ -3918,6 +3935,7 @@ function settingsHtml() {
       ${fld("qf-trop", "Tropicana Logistics email(s) for pick lists", Q.tropEmail, { full: true, ph: "Separate several with commas" })}
       ${fld("qf-copy", "Send me a copy of every email", Q.copyTo, { full: true, ph: "Your email (optional)" })}
       ${fld("qf-zpto", "Zepto delivery point", Q.zeptoTo, { full: true })}${fld("qf-zpmin", "Zepto minimum per delivery (₹)", Q.minZepto, { type: "number", step: "1" })}
+      <div class="field full"><div class="row" style="padding:10px 12px;border-radius:12px;background:var(--fill)"><span class="grow"><div class="row-title">Fill short order lines from quick commerce stock</div><div class="row-sub">When SahiReach stock is short, distributor orders take the rest from Swiggy / Zepto stock without asking. Each line can still say no.</div></span><button class="toggle" role="switch" aria-checked="${!!Q.autoQC}" data-act="autoQCToggle" aria-label="Fill short order lines from quick commerce stock"></button></div></div>
       ${fld("qf-pct", "Special price discount (%)", Math.round(D.special.pct * 1000) / 10, { type: "number", hint: "Used to suggest special prices for new products.", disabled: !CAN_PRICE })}
     </div><button class="btn btn-primary" style="margin-top:16px" data-act="qcSettingsSave">${ic("check", "sm")} Save</button></div></div>`;
 }
