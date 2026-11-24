@@ -2175,11 +2175,12 @@ ACT.allQC = () => { calcDraft().qcCan.forEach((r) => { r.ln.useQC = true; }); re
 function orderQCOffer(o) {
   if (!o || o.status !== "Pending") return [];
   const seen = new Set();
-  return D.oos.filter((m) => m.id === o.id && m.sap && typeof m.missed === "number" && m.missed > 0).filter((m) => !seen.has(m.sap) && seen.add(m.sap)).map((m) => ({ m, free: Math.floor(orderQCFree(m.sap, 0) + 1e-9) })).filter((x) => x.free >= 1);
+  /* short lines, and lines logged as "not in range" for a product quick commerce stock now has */
+  return D.oos.filter((m) => m.id === o.id && m.sap && ((typeof m.missed === "number" && m.missed > 0) || (m.missed === "N/A" && qcBySap[m.sap]))).filter((m) => !seen.has(m.sap) && seen.add(m.sap)).map((m) => ({ m, free: Math.floor(orderQCFree(m.sap, 0) + 1e-9) })).filter((x) => x.free >= 1);
 }
 function orderQCOfferHtml(o) {
   const L = orderQCOffer(o); if (!L.length) return "";
-  return `<div class="banner info" style="flex-wrap:wrap"><span class="grow" style="min-width:220px">${ic("bolt", "sm")} <b>Quick commerce stock can fill what was missed:</b> ${L.map((x) => `${esc(shortName(x.m.product))} (${nf(x.m.missed, 2)} missed, quick commerce has ${nf(x.free)})`).join(", ")}.</span>${CAN_EDIT ? `<button class="btn btn-sm btn-primary" data-act="orderAddQC" data-id="${esc(o.id)}">Add from quick commerce</button>` : ""}</div>`;
+  return `<div class="banner info" style="flex-wrap:wrap"><span class="grow" style="min-width:220px">${ic("bolt", "sm")} <b>Quick commerce stock can fill what was missed:</b> ${L.map((x) => `${esc(shortName(x.m.product))} (${typeof x.m.missed === "number" ? nf(x.m.missed, 2) + " missed" : `${nf(x.m.askQty || 1)} ${esc(String(x.m.askUnit || "Crate").replace("EA (Box)", "box").toLowerCase())} asked for`}, quick commerce has ${nf(x.free)})`).join(", ")}.</span>${CAN_EDIT ? `<button class="btn btn-sm btn-primary" data-act="orderAddQC" data-id="${esc(o.id)}">Add from quick commerce</button>` : ""}</div>`;
 }
 ACT.orderAddQC = (el) => {
   const o = orderById(el.dataset.id); if (!o || o.status !== "Pending") return;
