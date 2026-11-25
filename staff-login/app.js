@@ -2536,7 +2536,7 @@ ACT.grnSheet = (el) => {
 };
 ACT.grnSave = (el) => {
   const p = D.qcPOs.find((x) => x.po === el.dataset.po), lines = (qcLinesByPO[p.po] || []).filter((l) => (l.delivered || 0) > 0); let acc = 0, back = 0;
-  lines.forEach((l, i) => { const a = Math.min(l.delivered, Math.max(0, +$("#grn-a-" + i).value || 0)), b = Math.min(l.delivered - a, Math.max(0, +$("#grn-b-" + i).value || 0)); l.accepted = a; l.short = l.delivered - a; l.valueAccepted = Math.round(a * l.price * 100) / 100; acc += a; back += b; const qc = qcBySap[l.sap]; if (qc && b) { qc.crates += b / (l.ppc || 1); } });
+  lines.forEach((l, i) => { const a = Math.min(l.delivered, Math.max(0, +$("#grn-a-" + i).value || 0)), b = Math.min(l.delivered - a, Math.max(0, +$("#grn-b-" + i).value || 0)); l.accepted = a; l.short = l.delivered - a; l.valueAccepted = Math.round(a * l.price * 100) / 100; acc += a; back += b; const qc = qcBySap[l.sap]; if (qc && b) { qc.crates += b / (l.ppc || 1); qc.ea = qc.crates * (qc.upc || 1); l.backs = (l.backs || []).concat({ time: iso(NOW()), crates: b / (l.ppc || 1), by: HOST ? ME.name : undefined }); } });
   p.pcsAccepted = acc; p.fill = acc / p.pcs; p.valueAccepted = (qcLinesByPO[p.po] || []).reduce((a, l) => a + (l.valueAccepted || 0), 0);
   logActivity("GRN saved", p.po, `${nf(acc)} accepted, ${nf(back)} back in stock`); closeSheet(); render(); toast("GRN saved");
 };
@@ -3516,9 +3516,218 @@ function stockBookSheets() {
     ],
   };
 }
-ACT.stockExcel = async (el) => {
+ACT.stockFull = async (el) => {
   const B = stockBookSheets();
   if (await downloadBook(el, B.sheets, B.file)) { logActivity("Stock report downloaded", "", "Excel"); toast("Stock report downloaded", "doc"); }
+};
+
+/* ===== STOCK STATEMENTS: GT (SahiReach) stock and quick commerce stock, as on a date and month by month =====
+   Every movement the tool makes is on record with its time: purchases, distributor orders, Swiggy / Zepto deliveries,
+   sales returns and purchase returns, and stock moved between SahiReach and quick commerce.
+   The stock at the start of each month is recorded the first time the tool is used that month (D.stockOpen).
+   Stock on any earlier day is worked out from the nearest recorded point after it (a month opening, or today)
+   by taking back the movements in between. Between two recorded points, anything the records do not explain
+   (a stock correction in Setup, a stock sheet uploaded, a GRN return) shows as "Stock corrections". */
+const STK_NOW = "9999-12-31T23:59";
+const stkMS = (m) => m + "-01T00:00";
+const stkNext = (m) => { const y = +m.slice(0, 4), mo = +m.slice(5, 7); return mo === 12 ? `${y + 1}-01` : `${y}-${pad2(mo + 1)}`; };
+const stkMonthName = (m) => `${["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][+m.slice(5, 7) - 1]} ${m.slice(0, 4)}`;
+const stkUpc = (sap) => ((stockBySap[sap] || qcBySap[sap] || catBySap[sap] || {}).upc || 0);
+const stkAt = (at) => String(at || "").replace("~", "");
+
+/* the movements in [from, to): own stock in boxes, quick commerce stock in crates */
+function stkMoves(from, to) {
+  const own = {}, qc = {}, inR = (t) => !!t && t >= from && t < to;
+  const O = (sap) => (own[sap] = own[sap] || { recv: 0, ret: 0, fromQC: 0, sold: 0, toPlat: 0, pret: 0 });
+  const Q = (sap) => (qc[sap] = qc[sap] || { recv: 0, back: 0, sw: 0, zp: 0, dist: 0 });
+  D.purchases.forEach((p) => { if (!p.sap || !inR(p.time)) return; if (/QC/i.test(p.pool || "")) { if (qcBySap[p.sap]) Q(p.sap).recv += +p.crates || 0; } else if (p.ea) O(p.sap).recv += +p.ea || 0; });
+  D.orders.forEach((o) => { if (o.status === "Cancelled" || !inR(o.time)) return; (linesByOrder[o.id] || []).forEach((l) => { if (l.sap && l.ea) O(l.sap).sold -= l.ea; }); });
+  (D.notes || []).forEach((n) => { if (n.status === "Cancelled" || !Array.isArray(n.lines) || !inR(n.time)) return; n.lines.forEach((l) => { if (!l.stocked || !l.sap) return; if (l.stocked > 0) O(l.sap).ret += l.stocked; else O(l.sap).pret += l.stocked; }); });
+  (D.transfers || []).forEach((t) => {
+    if (!inR(t.time)) return;
+    (t.lines || []).forEach((l) => {
+      const u = stkUpc(l.sap);
+      if (t.kind === "purchase") { O(l.sap).fromQC += l.crates * u; Q(l.sap).dist -= l.crates; }
+      else if (t.kind === "credit") { O(l.sap).toPlat -= l.crates * u; Q(l.sap)[/zepto/i.test(t.ref || "") ? "zp" : "sw"] += l.crates; /* sent from SahiReach stock, not from quick commerce stock */ }
+    });
+  });
+  D.qcPOs.forEach((p) => {
+    const L = qcLinesByPO[p.po] || [];
+    L.forEach((l) => (l.backs || []).forEach((b) => { if (inR(b.time)) Q(l.sap).back += b.crates || 0; }));
+    if (p.status !== "Delivered" || !inR(p.deliveredOn)) return;
+    const k = /zepto/i.test(p.platform || "") ? "zp" : "sw";
+    L.forEach((l) => { if (!(l.delivered > 0) || !l.sap) return; const ppc = l.ppc || (qcBySap[l.sap] || {}).ppc || 0; if (ppc) Q(l.sap)[k] -= l.delivered / ppc; });
+  });
+  return { own, qc };
+}
+const stkNet = (m) => (m ? Object.keys(m).reduce((a, k) => a + m[k], 0) : 0);
+/* recorded points: each month's opening, and the stock right now */
+function stkPoints() {
+  const own = {}, qc = {};
+  D.stock.forEach((s) => { own[s.sap] = s.ea || 0; }); D.qcStock.forEach((s) => { qc[s.sap] = s.crates || 0; });
+  const P = Object.keys(D.stockOpen || {}).map((m) => Object.assign({ m }, D.stockOpen[m])).filter((p) => p.at && p.own && p.qc).sort((a, b) => (a.at < b.at ? -1 : 1));
+  P.push({ at: STK_NOW, own, qc, now: true });
+  return P;
+}
+/* the stock at moment T, per product, for one pool ("own" in boxes, "qc" in crates) */
+function stkValueAt(T, pool, pts) {
+  pts = pts || stkPoints(); const p = pts.find((x) => x.at >= T), out = Object.assign({}, p[pool]);
+  const mv = stkMoves(T, p.at)[pool];
+  Object.keys(mv).forEach((sap) => { out[sap] = (out[sap] || 0) - stkNet(mv[sap]); });
+  return { v: out, from: p };
+}
+const stkFromTxt = (p) => (p.now ? "today's stock" : `the opening stock recorded for ${stkMonthName(p.m)}`);
+
+/* record the opening stock of this month (from the stock as it stood before this month's first change) */
+function stockOpenTake(src, at) {
+  const m = ymd(NOW()).slice(0, 7); D.stockOpen = D.stockOpen || {};
+  if (D.stockOpen[m] || !src) return false;
+  const own = {}, qc = {}; (src.stock || []).forEach((s) => { if (s.sap) own[s.sap] = Math.round((s.ea || 0) * 1000) / 1000; }); (src.qcStock || []).forEach((s) => { if (s.sap) qc[s.sap] = Math.round((s.crates || 0) * 1000) / 1000; });
+  D.stockOpen[m] = { at, by: HOST ? ME.name : undefined, own, qc };
+  logActivity("Opening stock recorded", stkMonthName(m), "For the monthly stock statement");
+  return true;
+}
+function stockOpenCheck(fromSave) {
+  if (typeof D === "undefined" || !CAN_EDIT) return false;
+  const m = ymd(NOW()).slice(0, 7), ms = stkMS(m); if ((D.stockOpen || {})[m]) return false;
+  /* records made from the "at" minute on count as after the opening (times are kept to the minute) */
+  if (fromSave) { if (!SAVE.lastObj) return false; return stockOpenTake(SAVE.lastObj, SAVE.lastAt && SAVE.lastAt >= ms ? SAVE.lastAt : ms); }
+  const mv = stkMoves(ms, STK_NOW), moved = Object.keys(mv.own).length + Object.keys(mv.qc).length > 0;
+  return stockOpenTake({ stock: D.stock, qcStock: D.qcStock }, moved ? iso(NOW()) : ms);
+}
+
+/* ---------- product details shared by the statements ---------- */
+const stkInfo = (sap) => { const s = stockBySap[sap] || qcBySap[sap] || catBySap[sap] || {}, c = catBySap[sap] || {}; return { name: s.name || c.name || sap, trop: s.trop || "", cat: s.cat || c.cat || "", upc: s.upc || c.upc || 0, ppe: s.ppe || c.ppe || 1, ppc: (qcBySap[sap] || {}).ppc || (s.upc || 0) * (s.ppe || 1) }; };
+const stkR2 = (x) => (x == null || isNaN(x) ? null : Math.round(x * 100) / 100);
+const stkSort = (a, b) => (a.i.cat || "").localeCompare(b.i.cat || "") || a.i.name.localeCompare(b.i.name);
+const stkSS = (sap) => { const r = ssRate(sap); if (r != null) return r; const s = stockBySap[sap]; return s && s.cost != null ? s.cost : null; };
+
+/* ---------- stock as on a date ---------- */
+function stkAsOnSheets(d, pool) {
+  const today = ymd(NOW()); if (!d || d > today) d = today;
+  const live = d === today, T = live ? STK_NOW : ymd(new Date(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10) + 1)) + "T00:00", pts = stkPoints();
+  const when = live ? `as of ${stampOf(NOW())}` : `as on ${dmyOf(d)} (end of the day)`, sheets = [];
+  if (pool !== "qc") {
+    const A = stkValueAt(T, "own", pts), V = A.v;
+    /* saved orders not yet dispatched at that moment: their boxes are still physically at Tropicana */
+    const booked = {}; D.orders.forEach((o) => { if (o.status === "Cancelled" || !(o.time < T)) return; const out = o.status === "Dispatched" && o.dispatched && o.dispatched < T; if (out) return; (linesByOrder[o.id] || []).forEach((l) => { if (l.sap && l.ea) booked[l.sap] = (booked[l.sap] || 0) + l.ea; }); });
+    const saps = new Set([...D.stock.map((s) => s.sap), ...Object.keys(V), ...Object.keys(booked)]);
+    const rows = [...saps].map((sap) => ({ sap, i: stkInfo(sap), ea: V[sap] || 0, bk: booked[sap] || 0 })).filter((r) => r.i.upc && (stockBySap[r.sap] || Math.abs(r.ea) > 1e-6 || r.bk)).sort(stkSort);
+    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Boxes per crate", "Stock (crates)", "Stock (boxes)", "Pieces", "Saved orders not yet dispatched (crates)", "Physically at Tropicana (crates)"].concat(live ? ["Held for sent Swiggy / Zepto pick lists (crates)", "Free to sell (crates)"] : [], ["SS rate / box", "Value at SS rate"]);
+    const aoa = [[`GT STOCK STATEMENT · SahiReach LLP own stock at Tropicana · ${when}`],
+      [live ? "Stock is after saved orders: an order takes its stock off when it is saved. Orders saved but not yet dispatched are still physically at Tropicana." : `Worked out from ${stkFromTxt(A.from)} by taking back the recorded movements after ${dmyOf(d)}.`], head];
+    const tot = { cr: 0, ea: 0, pcs: 0, bk: 0, ph: 0, held: 0, free: 0, val: 0 };
+    rows.forEach((r) => {
+      const u = r.i.upc, cr = r.ea / u, bk = r.bk / u, held = live ? ownHeldEA(r.sap) / u : 0, ss = stkSS(r.sap), val = ss != null ? r.ea * ss : null;
+      tot.cr += cr; tot.ea += r.ea; tot.pcs += r.ea * r.i.ppe; tot.bk += bk; tot.ph += cr + bk; tot.held += held; tot.free += cr - held; tot.val += val || 0;
+      aoa.push([r.i.trop, r.i.name, r.sap, r.i.cat, u, stkR2(cr), stkR2(r.ea), stkR2(r.ea * r.i.ppe), stkR2(bk), stkR2(cr + bk)].concat(live ? [stkR2(held), stkR2(cr - held)] : [], [ss != null ? stkR2(ss) : null, stkR2(val)]));
+    });
+    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.cr), stkR2(tot.ea), stkR2(tot.pcs), stkR2(tot.bk), stkR2(tot.ph)].concat(live ? [stkR2(tot.held), stkR2(tot.free)] : [], ["", stkR2(tot.val)]));
+    sheets.push({ name: "GT stock", aoa, cols: [14, 46, 11, 16, 9, 10, 10, 10, 14, 14].concat(live ? [16, 11] : [], [11, 14]) });
+  }
+  if (pool !== "gt") {
+    const A = stkValueAt(T, "qc", pts), V = A.v;
+    const saps = new Set([...D.qcStock.map((s) => s.sap), ...Object.keys(V)]);
+    const rows = [...saps].map((sap) => ({ sap, i: stkInfo(sap), q: qcBySap[sap] || {}, cr: V[sap] || 0 })).filter((r) => qcBySap[r.sap] || Math.abs(r.cr) > 1e-6).sort(stkSort);
+    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Pieces per crate", "Crates"].concat(live ? ["Held for sent pick lists (crates)", "On open POs (crates)", "Free after open POs (crates)", "Swiggy price / piece", "Zepto price / piece"] : [], ["SS rate / box", "Value at SS rate"]);
+    const aoa = [[`QUICK COMMERCE STOCK STATEMENT · Swiggy and Zepto stock at Tropicana · ${when}`],
+      [live ? "One stock shared by Swiggy and Zepto, in crates. Crates held for a sent pick list are still in stock until it is marked delivered." : `Worked out from ${stkFromTxt(A.from)} by taking back the recorded movements after ${dmyOf(d)}.`], head];
+    const tot = { cr: 0, held: 0, open: 0, val: 0 };
+    rows.forEach((r) => {
+      const u = r.q.upc || r.i.upc, ss = stkSS(r.sap), val = ss != null && u ? r.cr * u * ss : null, held = live ? qcHeld(r.sap).q : 0;
+      tot.cr += r.cr; tot.held += held; tot.open += live ? r.q.openCrates || 0 : 0; tot.val += val || 0;
+      aoa.push([r.q.trop || r.i.trop, r.i.name, r.sap, r.q.cat || r.i.cat, r.q.ppc || r.i.ppc || null, stkR2(r.cr)].concat(live ? [stkR2(held), stkR2(r.q.openCrates || 0), r.q.free != null ? stkR2(r.q.free) : null, stkR2(r.q.swPrice || null), stkR2(r.q.zpPrice || null)] : [], [ss != null ? stkR2(ss) : null, stkR2(val)]));
+    });
+    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.cr)].concat(live ? [stkR2(tot.held), stkR2(tot.open), "", "", ""] : [], ["", stkR2(tot.val)]));
+    sheets.push({ name: "Quick commerce stock", aoa, cols: [16, 46, 11, 16, 9, 9].concat(live ? [14, 12, 12, 11, 11] : [], [11, 14]) });
+  }
+  const label = pool === "gt" ? "GT stock statement" : pool === "qc" ? "quick commerce stock statement" : "stock statement (GT and quick commerce)";
+  return { file: `SahiReach ${label} as on ${dmyOf(d)}.xlsx`, sheets, d };
+}
+
+/* ---------- month movement statement: opening + in − out ± corrections = closing ---------- */
+function stkMonthData(m) {
+  const ms = stkMS(m), me = stkMS(stkNext(m)), cur = me > iso(NOW()), pts = stkPoints(), end = cur ? STK_NOW : me;
+  const pO = pts.find((x) => x.at >= ms), pC = cur ? pts[pts.length - 1] : pts.find((x) => x.at >= me);
+  const toO = stkMoves(ms, pO.at), toC = stkMoves(end, pC.at), mv = stkMoves(ms, end);
+  const exact = !pO.now && pO.m === m, out = {};
+  ["own", "qc"].forEach((pool) => {
+    const saps = new Set([...Object.keys(pO[pool]), ...Object.keys(pC[pool]), ...Object.keys(mv[pool]), ...(pool === "own" ? D.stock : D.qcStock).map((s) => s.sap)]);
+    out[pool] = [...saps].map((sap) => {
+      const open = (pO[pool][sap] || 0) - stkNet(toO[pool][sap]), close = (pC[pool][sap] || 0) - stkNet(toC[pool][sap]), M = mv[pool][sap] || {}, corr = close - open - stkNet(M);
+      return { sap, i: stkInfo(sap), open, close, M, corr: Math.abs(corr) < 1e-6 ? 0 : corr };
+    }).filter((r) => Math.abs(r.open) > 1e-6 || Math.abs(r.close) > 1e-6 || r.corr || Object.keys(r.M).some((k) => Math.abs(r.M[k]) > 1e-6)).sort(stkSort);
+  });
+  return { m, ms, me, cur, exact, pO, pC, own: out.own, qc: out.qc, toTxt: cur ? `${dmyOf(ymd(NOW()))} (today)` : dmyOf(ymd(new Date(+m.slice(0, 4), +m.slice(5, 7), 0))) };
+}
+function stkMonthSheets(m, pool) {
+  const R = stkMonthData(m), name = stkMonthName(m), short = name.slice(0, 3) + " " + m.slice(0, 4), sheets = [];
+  const openTxt = R.exact ? `Opening stock: recorded on ${fmtDT(stkAt(R.pO.at))}${R.pO.by ? " (" + R.pO.by + " was the first to use the tool that month)" : ""}.` : `Opening stock: worked out from ${stkFromTxt(R.pO)} by taking back the recorded movements. Stock corrections in that time cannot be separated, so they are inside the opening figure.`;
+  const closeTxt = R.cur ? "Closing stock: today's stock." : R.pC.now ? "Closing stock: worked out from today's stock by taking back the recorded movements since." : `Closing stock: the opening stock recorded for ${stkMonthName(R.pC.m)}.`;
+  if (pool !== "qc") {
+    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Boxes per crate", "Opening (crates)", "Received from Hangyo", "Sales returns (good)", "Taken from quick commerce stock", "Sold to distributors", "Sent with Swiggy / Zepto deliveries", "Returned to Hangyo", "Stock corrections", "Closing (crates)", "Closing (boxes)", "SS rate / box", "Opening value at SS rate", "Closing value at SS rate"];
+    const aoa = [[`GT STOCK STATEMENT · SahiReach LLP own stock · ${name}${R.cur ? " so far" : ""} (01-${m.slice(5, 7)}-${m.slice(0, 4)} to ${R.toTxt})`], [openTxt + " " + closeTxt], ["All quantities in crates. Opening + received + returns + from quick commerce − sold − sent − returned to Hangyo ± corrections = closing. Orders count when they are saved."], [], head];
+    const K = ["recv", "ret", "fromQC", "sold", "toPlat", "pret"], tot = { open: 0, close: 0, corr: 0, ea: 0, ov: 0, cv: 0 }; K.forEach((k) => (tot[k] = 0));
+    R.own.forEach((r) => {
+      const u = r.i.upc || 1, ss = stkSS(r.sap), c = (x) => stkR2(x / u);
+      tot.open += r.open / u; tot.close += r.close / u; tot.corr += r.corr / u; tot.ea += r.close; K.forEach((k) => (tot[k] += (r.M[k] || 0) / u)); if (ss != null) { tot.ov += r.open * ss; tot.cv += r.close * ss; }
+      aoa.push([r.i.trop, r.i.name, r.sap, r.i.cat, r.i.upc || null, c(r.open)].concat(K.map((k) => c(r.M[k] || 0)), [c(r.corr), c(r.close), stkR2(r.close), ss != null ? stkR2(ss) : null, ss != null ? stkR2(r.open * ss) : null, ss != null ? stkR2(r.close * ss) : null]));
+    });
+    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.open)].concat(K.map((k) => stkR2(tot[k])), [stkR2(tot.corr), stkR2(tot.close), stkR2(tot.ea), "", stkR2(tot.ov), stkR2(tot.cv)]));
+    sheets.push({ name: "GT movement " + short, aoa, cols: [14, 46, 11, 16, 8, 10, 10, 10, 12, 11, 12, 10, 11, 10, 10, 11, 14, 14] });
+  }
+  if (pool !== "gt") {
+    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Pieces per crate", "Opening (crates)", "Received from Hangyo", "Came back good (GRN)", "Delivered to Swiggy", "Delivered to Zepto", "Used for distributor orders", "Stock corrections", "Closing (crates)", "SS rate / box", "Opening value at SS rate", "Closing value at SS rate"];
+    const aoa = [[`QUICK COMMERCE STOCK STATEMENT · Swiggy and Zepto · ${name}${R.cur ? " so far" : ""} (01-${m.slice(5, 7)}-${m.slice(0, 4)} to ${R.toTxt})`], [openTxt + " " + closeTxt], ["All quantities in crates. Opening + received + came back − delivered − used for distributors ± corrections = closing. Deliveries count when they are marked delivered."], [], head];
+    const K = ["recv", "back", "sw", "zp", "dist"], tot = { open: 0, close: 0, corr: 0, ov: 0, cv: 0 }; K.forEach((k) => (tot[k] = 0));
+    R.qc.forEach((r) => {
+      const q = qcBySap[r.sap] || {}, u = q.upc || r.i.upc, ss = stkSS(r.sap);
+      tot.open += r.open; tot.close += r.close; tot.corr += r.corr; K.forEach((k) => (tot[k] += r.M[k] || 0)); if (ss != null && u) { tot.ov += r.open * u * ss; tot.cv += r.close * u * ss; }
+      aoa.push([q.trop || r.i.trop, r.i.name, r.sap, q.cat || r.i.cat, q.ppc || r.i.ppc || null, stkR2(r.open)].concat(K.map((k) => stkR2(r.M[k] || 0)), [stkR2(r.corr), stkR2(r.close), ss != null ? stkR2(ss) : null, ss != null && u ? stkR2(r.open * u * ss) : null, ss != null && u ? stkR2(r.close * u * ss) : null]));
+    });
+    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.open)].concat(K.map((k) => stkR2(tot[k])), [stkR2(tot.corr), stkR2(tot.close), "", stkR2(tot.ov), stkR2(tot.cv)]));
+    sheets.push({ name: "QC movement " + short, aoa, cols: [16, 46, 11, 16, 8, 10, 10, 10, 10, 10, 12, 11, 10, 11, 14, 14] });
+  }
+  const label = pool === "gt" ? "GT stock movement" : pool === "qc" ? "quick commerce stock movement" : "stock movement (GT and quick commerce)";
+  return { file: `SahiReach ${label} ${name}${R.cur ? " so far" : ""}.xlsx`, sheets, R };
+}
+
+/* ---------- the download choice on the Stock page ---------- */
+function stkMonths() {
+  const now = ymd(NOW()).slice(0, 7); let first = now;
+  D.orders.forEach((o) => { const m = (o.time || "").slice(0, 7); if (m && m < first) first = m; });
+  Object.keys(D.stockOpen || {}).forEach((m) => { if (m < first) first = m; });
+  const out = []; for (let m = now; m >= first && out.length < 24; ) { out.push(m); const y = +m.slice(0, 4), mo = +m.slice(5, 7); m = mo === 1 ? `${y - 1}-12` : `${y}-${pad2(mo - 1)}`; }
+  return out;
+}
+function stkBody() {
+  const K = S.stk, today = ymd(NOW()), months = stkMonths();
+  const poolBtn = (v, l) => `<button data-act="stkPool" data-v="${v}" aria-pressed="${K.pool === v}">${l}</button>`;
+  const rec = D.stockOpen || {}, mo = K.m || months[0];
+  return `<div class="field"><div class="label">Which stock</div><div class="seg" role="group">${poolBtn("gt", "GT (SahiReach)")}${poolBtn("qc", "Quick commerce")}${poolBtn("both", "Both")}</div></div>
+    <div class="card card-pad"><div class="card-title">Stock statement as on a date</div><div class="row-sub" style="margin-top:4px">Every product with crates, boxes and value.${K.pool !== "qc" ? " GT also shows saved orders not yet dispatched and what is physically at Tropicana." : ""} For today it also shows what is held for sent pick lists and what is free.</div>
+      <div class="hstack gap-12 wrap" style="margin-top:12px;align-items:flex-end"><div class="field" style="min-width:170px"><label class="label" for="stk-date">As on</label><input class="input" type="date" id="stk-date" max="${today}" value="${esc(K.d || today)}" data-in="stkDate"></div><button class="btn btn-primary" data-act="stkAsOn">${ic("doc", "sm")} Download</button></div></div>
+    <div class="card card-pad"><div class="card-title">Month movement statement</div><div class="row-sub" style="margin-top:4px">For each product: opening stock, what came in, what went out, corrections and closing stock for the month.</div>
+      <div class="hstack gap-12 wrap" style="margin-top:12px;align-items:flex-end"><div class="field" style="min-width:200px"><label class="label" for="stk-month">Month</label><select class="select" id="stk-month" data-in="stkMonth">${months.map((m, i) => `<option value="${m}" ${m === mo ? "selected" : ""}>${stkMonthName(m)}${i === 0 ? " (so far)" : ""}</option>`).join("")}</select></div><button class="btn btn-primary" data-act="stkMonthDl">${ic("doc", "sm")} Download</button></div>
+      <div class="row-sub" style="margin-top:10px" id="stk-month-note">${stkMonthNote(mo, rec)}</div></div>
+    <div class="card card-pad"><div class="hstack between wrap gap-12"><div><div class="card-title">Full stock report</div><div class="row-sub">Own stock, quick commerce stock, purchases and missed sales in one file.</div></div><button class="btn btn-secondary" data-act="stockFull">${ic("doc", "sm")} Download</button></div></div>`;
+}
+const stkMonthNote = (m, rec) => (rec[m] && stkAt(rec[m].at) === stkMS(m) ? `Opening stock for ${stkMonthName(m)} was recorded on 1 ${stkMonthName(m).split(" ")[0]}.` : rec[m] ? `Opening stock for ${stkMonthName(m)} was recorded on ${fmtDT(stkAt(rec[m].at))}; movements before that are taken back from it.` : `The opening stock for ${stkMonthName(m)} is worked out from later stock by taking back the recorded movements. From now on the tool records each month's opening stock itself, on the first use of the month.`);
+ACT.stockExcel = () => {
+  S.stk = S.stk || { pool: "both", d: ymd(NOW()), m: null };
+  openSheet("Download stock", `<div id="stk-body" class="stack gap-16">${stkBody()}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Close</button>`);
+};
+ACT.stkPool = (el) => { S.stk.pool = el.dataset.v; part("stk-body", stkBody()); };
+IN.stkDate = (el) => { S.stk.d = el.value; };
+IN.stkMonth = (el) => { S.stk.m = el.value; part("stk-month-note", stkMonthNote(el.value, D.stockOpen || {})); };
+const stkPoolTxt = (p) => (p === "gt" ? "GT stock" : p === "qc" ? "Quick commerce stock" : "GT and quick commerce stock");
+ACT.stkAsOn = async (el) => {
+  const d = ($("#stk-date") || {}).value || ymd(NOW()), B = stkAsOnSheets(d, S.stk.pool);
+  if (await downloadBook(el, B.sheets, B.file)) { logActivity("Stock statement downloaded", stkPoolTxt(S.stk.pool), "As on " + dmyOf(B.d)); toast(`${stkPoolTxt(S.stk.pool)} as on ${dmyOf(B.d)} downloaded`, "doc"); }
+};
+ACT.stkMonthDl = async (el) => {
+  const m = ($("#stk-month") || {}).value || stkMonths()[0], B = stkMonthSheets(m, S.stk.pool);
+  if (await downloadBook(el, B.sheets, B.file)) { logActivity("Stock statement downloaded", stkPoolTxt(S.stk.pool), "Movement for " + stkMonthName(m)); toast(`${stkPoolTxt(S.stk.pool)} movement for ${stkMonthName(m)} downloaded`, "doc"); }
 };
 
 /* ===== TOD & NOTES ===== */
@@ -3756,8 +3965,8 @@ function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
 /* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
-const VIEW_ACTS = new Set("noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
-const VIEW_INS = new Set("ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
+const VIEW_ACTS = new Set("stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_INS = new Set("stkDate stkMonth ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {
   if (CAN_EDIT || !root || !root.querySelectorAll) return;
@@ -5141,6 +5350,7 @@ const SAVE = { on: false, why: "", version: null, last: null, lastObj: null, und
   if (!HOST.save || HOST.version == null) { SAVE.why = "setup"; return; }
   if (DATA_OLD) { SAVE.why = "old"; return; }
   SAVE.on = true; SAVE.version = HOST.version; SAVE.last = snapshot(); try { SAVE.lastObj = JSON.parse(SAVE.last); } catch (e) {}
+  SAVE.lastAt = iso(NOW()); try { stockOpenCheck(false); } catch (e) {} /* the month's opening stock, for the stock statement; saved by the safety net below */
 })();
 function saveBadge() {
   let el = $("#save-state");
@@ -5159,13 +5369,14 @@ function queueSave() { if (!SAVE.on || SAVE.conflict) return; clearTimeout(SAVE.
 async function doSave() {
   if (!SAVE.on || SAVE.conflict) return;
   if (SAVE.busy) { SAVE.again = true; return; }
+  try { stockOpenCheck(true); } catch (e) {} /* first change of a new month in a tab left open: record the opening stock first */
   let s = snapshot(); if (s === SAVE.last) return;
   /* what this save changes, kept so the system admin can undo it from the Activity log */
   let rec = null; try { rec = undoPrep(s); if (rec && rec.relog) s = snapshot(); } catch (e) { rec = null; }
   SAVE.busy = true; setSaveState("saving");
   try {
     const r = await HOST.save(s, SAVE.version);
-    SAVE.version = r && typeof r.version === "number" ? r.version : SAVE.version + 1; SAVE.last = s; setSaveState("saved");
+    SAVE.version = r && typeof r.version === "number" ? r.version : SAVE.version + 1; SAVE.last = s; SAVE.lastAt = iso(NOW()); setSaveState("saved");
     try { SAVE.lastObj = JSON.parse(s); } catch (e) {}
     if (rec) undoSend(rec);
   } catch (e) {
