@@ -2382,7 +2382,7 @@ ACT.dispatchNow = () => {
   sel.forEach((o) => { o.status = "Dispatched"; o.dispatched = now; delete S.picked[o.id]; });
   logActivity("Orders dispatched", `${sel.length} order(s)`, sel.map((o) => shortOf(o.dist)).join(", "));
   closeSheet(); render(); toast(`${sel.length} order${sel.length > 1 ? "s" : ""} marked dispatched`, "truck");
-  setTimeout(() => openSheet("Let them know?", `<div class="success"><div class="tick">${ic("truck")}</div><div class="section-title">${sel.length} order${sel.length > 1 ? "s" : ""} on the way</div><div class="muted">Send each distributor a short “your order is on its way” email with the crates and the payment due date.</div></div><div class="group">${sel.map((o) => { const d = distByKey[key(o.dist)] || {}; return `<div class="row"><span class="grow"><div class="row-title">${esc(o.dist)}</div><div class="row-sub">${d.email ? esc(d.email) : `<span style="color:var(--warn)">No email saved</span>`}</div></span><span class="row-end">${nf(o.crates, 2)} crates</span></div>`; }).join("")}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Not now</button><button class="btn btn-secondary" data-act="tripSelf" data-orders="${sel.map((o) => o.id).join(",")}">Self pickup</button><button class="btn btn-secondary" data-act="tripForm" data-orders="${sel.map((o) => o.id).join(",")}">${ic("truck", "sm")} Log the trip</button><button class="btn btn-primary" data-act="emailDispatch" data-ids="${sel.map((o) => o.id).join(",")}">${ic("arrowR", "sm")} Preview and send</button>`), 450);
+  setTimeout(() => openSheet("Let them know?", `<div class="success"><div class="tick">${ic("truck")}</div><div class="section-title">${sel.length} order${sel.length > 1 ? "s" : ""} on the way</div><div class="muted">Send each distributor a short “your order is on its way” email with the crates and the payment due date.</div></div><div class="group">${sel.map((o) => { const d = distByKey[key(o.dist)] || {}; return `<div class="row"><span class="grow"><div class="row-title">${esc(o.dist)}</div><div class="row-sub">${d.email ? esc(d.email) : `<span style="color:var(--warn)">No email saved</span>`}</div></span><span class="row-end">${nf(o.crates, 2)} crates</span></div>`; }).join("")}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Not now</button><button class="btn btn-secondary" data-act="tripSelf" data-orders="${sel.map((o) => o.id).join(",")}">Self pickup</button>${logi().trips.length ? `<button class="btn btn-secondary" data-act="tripJoin" data-orders="${sel.map((o) => o.id).join(",")}">Same vehicle as a trip</button>` : ""}<button class="btn btn-secondary" data-act="tripForm" data-orders="${sel.map((o) => o.id).join(",")}">${ic("truck", "sm")} Log the trip</button><button class="btn btn-primary" data-act="emailDispatch" data-ids="${sel.map((o) => o.id).join(",")}">${ic("arrowR", "sm")} Preview and send</button>`), 450);
 };
 
 /* ===== QUICK COMMERCE ===== */
@@ -4476,7 +4476,7 @@ VIEWS.logistics = () => {
   const chips = (name, list, val) => list.map(([v, l]) => `<button class="chip" data-act="logiF" data-f="${name}" data-v="${esc(v)}" aria-pressed="${val === v}">${esc(l)}</button>`).join("");
   return `<div class="page">
     <div class="page-head"><div><h1 class="title">Logistics</h1><div class="subtitle">What each trip cost and what share of the invoiced sales it takes.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="logiExcel">${ic("doc", "sm")} Download Excel</button><button class="btn btn-secondary" data-act="logiTransporters">${ic("truck", "sm")} Transporters</button><button class="btn btn-primary" data-act="tripForm">${ic("plus", "sm")} Log a trip</button></div></div>
-    ${runs.length ? `<div><div class="group-label"><span>No trip logged yet</span><span>${runs.length}</span></div><div class="group">${runs.map((r) => `<div class="row" style="flex-wrap:wrap;gap:10px"><span class="attn-ic warn" style="width:30px;height:30px">${ic(r.kind === "QC" ? "bolt" : "truck", "sm")}</span><span class="grow" style="min-width:200px"><div class="row-title clip">${esc(fmtDate(r.date))} · ${esc(runLabel(r))}</div><div class="row-sub">${r.kind === "QC" ? `Quick commerce · ${r.qc.length} PO${r.qc.length > 1 ? "s" : ""}${r.qc.some((po) => { const q = qcTripInfo(D.qcPOs.find((x) => x.po === po) || {}); return q && q.sent; }) ? " · pick list sent, not delivered yet" : ""}` : `Distributors · ${r.orders.length} order${r.orders.length > 1 ? "s" : ""}`}</div></span><span class="row-end hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="tripSelf" data-run="${esc(r.key)}">Self pickup</button><button class="btn btn-sm btn-primary" data-act="tripForm" data-run="${esc(r.key)}">${ic("plus", "sm")} Log trip</button></span></div>`).join("")}</div></div>` : ""}
+    ${runs.length ? `<div><div class="group-label"><span>No trip logged yet</span><span>${runs.length}</span></div><div class="group">${runs.map((r) => `<div class="row" style="flex-wrap:wrap;gap:10px"><span class="attn-ic warn" style="width:30px;height:30px">${ic(r.kind === "QC" ? "bolt" : "truck", "sm")}</span><span class="grow" style="min-width:200px"><div class="row-title clip">${esc(fmtDate(r.date))} · ${esc(runLabel(r))}</div><div class="row-sub">${r.kind === "QC" ? `Quick commerce · ${r.qc.length} PO${r.qc.length > 1 ? "s" : ""}${r.qc.some((po) => { const q = qcTripInfo(D.qcPOs.find((x) => x.po === po) || {}); return q && q.sent; }) ? " · pick list sent, not delivered yet" : ""}` : `Distributors · ${r.orders.length} order${r.orders.length > 1 ? "s" : ""}`}</div></span><span class="row-end hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="tripSelf" data-run="${esc(r.key)}">Self pickup</button>${r.kind === "GT" && L.trips.length ? `<button class="btn btn-sm btn-secondary" data-act="tripJoin" data-run="${esc(r.key)}">${ic("truck", "sm")} Same vehicle as a trip</button>` : ""}<button class="btn btn-sm btn-primary" data-act="tripForm" data-run="${esc(r.key)}">${ic("plus", "sm")} Log trip</button></span></div>`).join("")}</div></div>` : ""}
     <div class="hstack gap-12 wrap"><div class="chips" style="margin:0">${chips("preset", [["month", "This month"], ["lastMonth", "Last month"], ["3m", "Last 3 months"], ["all", "All time"]], F.preset)}</div><div class="chips" style="margin:0">${chips("type", [["all", "GT and QC"], ["GT", "GT"], ["QC", "QC"]], F.type)}</div>
       <select class="select sm" style="width:auto" data-in="logiTr" aria-label="Transporter"><option value="all">All transporters</option>${[...new Set(L.trips.map((t) => t.transporter || "").filter(Boolean))].sort().map((n) => `<option ${F.tr === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div class="tiles tiles-4">
@@ -4494,7 +4494,7 @@ VIEWS.logistics = () => {
     </div>
     <div><div class="group-label"><span>Trips · ${esc(R.label)}</span><span>${trips.length}</span></div>
       ${trips.length ? `<div class="dg" style="--cols:84px minmax(0,2fr) 70px 70px 104px 92px 70px minmax(90px,130px);--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span class="c-hide">Date</span><span>Sellers</span><span class="r c-hide">Crates</span><span class="r c-hide">Km</span><span class="r c-hide">Revenue</span><span class="r">Cost</span><span class="r c-hide">%</span><span class="c-hide">Transporter</span></div>
-      ${trips.map((t) => `<button class="dg-row" data-act="tripForm" data-id="${esc(t.id)}"><span class="c-hide num">${fmtDate(t.date)}</span><span><div class="strong clip">${esc(t.sellers || "–")}</div><div class="row-sub clip"><span class="mob-only">${fmtDate(t.date)} · </span>${esc(t.type)}${t.route && t.type !== "QC" ? " · " + esc(t.route) : ""}${t.halting ? ` · ${nf(t.halting, 1)} h halting` : ""}${t.note ? " · " + esc(t.note) : ""}${(t.orders || []).length + (t.qc || []).length ? ` · ${(t.orders || []).length + (t.qc || []).length} linked` : ""}</div></span><span class="r c-hide">${t.crates != null ? nf(t.crates) : "–"}</span><span class="r c-hide">${t.km != null ? nf(t.km) : "–"}</span><span class="r c-hide">${t.revenue != null ? rs(t.revenue) : "–"}</span><span class="r strong">${t.cost != null ? rs(t.cost) : `<span class="pill warn">Add cost</span>`}<div class="row-sub mob-only">${tripPct(t) != null ? pct(tripPct(t), 1) : ""}</div></span><span class="r c-hide">${pctCell(tripPct(t))}</span><span class="c-hide clip">${esc(t.transporter || "–")}</span></button>`).join("")}</div>` : `<div class="group"><div class="empty"><div class="big">No trips here</div>Change the filters, or log a trip.</div></div>`}</div>
+      ${trips.map((t) => `<button class="dg-row" data-act="tripForm" data-id="${esc(t.id)}"><span class="c-hide num">${fmtDate(t.date)}</span><span><div class="strong clip">${esc(t.sellers || "–")}</div><div class="row-sub clip"><span class="mob-only">${fmtDate(t.date)} · </span>${esc(t.type)}${t.route && t.type !== "QC" ? " · " + esc(t.route) : ""}${t.halting ? ` · ${nf(t.halting, 1)} h halting` : ""}${t.note ? " · " + esc(t.note) : ""}${(t.orders || []).length + (t.qc || []).length ? ` · ${(t.orders || []).length + (t.qc || []).length} linked` : ""}${typeof tripCredits === "function" && tripCredits(t.id).n ? ` · ${tripCredits(t.id).n} credit note${tripCredits(t.id).n > 1 ? "s" : ""} taken off` : ""}</div></span><span class="r c-hide">${t.crates != null ? nf(t.crates) : "–"}</span><span class="r c-hide">${t.km != null ? nf(t.km) : "–"}</span><span class="r c-hide">${t.revenue != null ? rs(t.revenue) : "–"}</span><span class="r strong">${t.cost != null ? rs(t.cost) : `<span class="pill warn">Add cost</span>`}<div class="row-sub mob-only">${tripPct(t) != null ? pct(tripPct(t), 1) : ""}</div></span><span class="r c-hide">${pctCell(tripPct(t))}</span><span class="c-hide clip">${esc(t.transporter || "–")}</span></button>`).join("")}</div>` : `<div class="group"><div class="empty"><div class="big">No trips here</div>Change the filters, or log a trip.</div></div>`}</div>
   </div>`;
 };
 ACT.logiF = (el) => { S.logi[el.dataset.f] = el.dataset.v; render(); };
@@ -4504,7 +4504,7 @@ function tripCands(T) {
   /* what can go on this trip: its own links, plus dispatches in the 3 weeks before its date not on any other trip */
   const L = logi(), other = new Set(), otherQ = new Set();
   L.trips.forEach((t) => { if (t.id === T.id) return; (t.orders || []).forEach((i) => other.add(i)); (t.qc || []).forEach((p) => otherQ.add(p)); });
-  const lo = addDays(T.date || ymd(NOW()), -21), hi = addDays(T.date || ymd(NOW()), 2);
+  const lo = addDays(T.date || ymd(NOW()), -21), hi = addDays(T.date || ymd(NOW()), T.isNew ? 2 : 30); /* a saved trip can take a later dispatch that went on the same vehicle */
   const os = D.orders.filter((o) => o.status === "Dispatched" && o.dispatched && (T.orders.includes(o.id) || (!other.has(o.id) && o.dispatched.slice(0, 10) >= (lo > L.since ? lo : L.since) && o.dispatched.slice(0, 10) <= hi))).sort((a, b) => (a.dispatched < b.dispatched ? 1 : -1));
   const qs = D.qcPOs.map((p) => ({ p, q: qcTripInfo(p) })).filter(({ p, q }) => T.qc.includes(p.po) || (q && !otherQ.has(p.po) && q.date >= (lo > L.since ? lo : L.since) && q.date <= hi)).sort((a, b) => ((a.q || {}).date < (b.q || {}).date ? 1 : -1)).map(({ p }) => p);
   return { os, qs };
@@ -4515,8 +4515,10 @@ function tripAuto(T) {
   const sellers = [...new Set(os.map((o) => shortOf(o.dist)).concat(qs.map((p) => p.platform)))].join(", ");
   const qv = qs.map((p) => qcTripInfo(p) || { crates: 0, revenue: 0 });
   const crates = Math.round((os.reduce((a, o) => a + (o.crates || 0), 0) + qv.reduce((a, q) => a + (q.crates || 0), 0)) * 10) / 10;
-  const revenue = Math.round((os.reduce((a, o) => a + (o.value || 0), 0) + qv.reduce((a, q) => a + (q.revenue || 0), 0)) * 100) / 100;
-  return { sellers, crates, revenue, type: os.length ? "GT" : "QC" };
+  /* sales return credit notes adjusted against this trip take their value and crates off it */
+  const cn = T.id && typeof tripCredits === "function" ? tripCredits(T.id) : { amt: 0, crates: 0 };
+  const revenue = Math.round((os.reduce((a, o) => a + (o.value || 0), 0) + qv.reduce((a, q) => a + (q.revenue || 0), 0) - cn.amt) * 100) / 100;
+  return { sellers, crates: Math.round((crates - cn.crates) * 10) / 10, revenue, type: os.length ? "GT" : "QC" };
 }
 /* self pickup: the buyer collected it from the cold store, so there is no transport cost */
 const SELF = "Self pickup";
@@ -4557,7 +4559,7 @@ function tripBody() {
   const num = (f, v, ph, extra = "") => `<input class="input num-in" type="number" step="any" min="0" value="${v != null ? v : ""}" placeholder="${ph || ""}" data-in="tripF" data-f="${f}" ${extra}>`;
   const auto = (f) => (A && !T.own[f] ? `<span class="pill plain" style="height:20px;font-size:11px">from the orders</span>` : "");
   const pick = C.os.length || C.qs.length ? `<div class="group" style="max-height:260px;overflow:auto">${C.os.map((o) => `<label class="row" style="cursor:pointer"><input type="checkbox" data-in="tripLink" data-k="o" data-v="${esc(o.id)}" ${T.orders.includes(o.id) ? "checked" : ""}><span class="grow"><div class="row-title clip">${esc(o.dist)}</div><div class="row-sub">Dispatched ${fmtDate(o.dispatched)} · ${nf(o.crates, 1)} crates · ${rs(o.value)}</div></span></label>`).join("")}${C.qs.map((q) => `<label class="row" style="cursor:pointer"><input type="checkbox" data-in="tripLink" data-k="q" data-v="${esc(q.po)}" ${T.qc.includes(q.po) ? "checked" : ""}><span class="grow"><div class="row-title clip">${platDot(q.platform)}${esc(q.platform)} <span class="mono">${esc(q.po)}</span></div><div class="row-sub">${(() => { const t = qcTripInfo(q); return t && t.sent ? `Pick list sent for ${fmtDate(t.date)} · not delivered yet · ${rs(t.revenue)} as sent` : q.deliveredOn ? `Delivered ${fmtDate(q.deliveredOn)} · ${rs(q.valueAccepted || 0)}` : "Not delivered"; })()}</div></span></label>`).join("")}</div>` : `<div class="row-sub">No dispatched orders or deliveries around this date that are not already on a trip. Fill in the details below.</div>`;
-  return `<div><div class="group-label"><span>1 · What went on this trip</span><span>${T.orders.length + T.qc.length} ticked</span></div>${pick}</div>
+  return `${typeof tripCreditHtml === "function" ? tripCreditHtml(T) : ""}<div><div class="group-label"><span>1 · What went on this trip</span><span>${T.orders.length + T.qc.length} ticked</span></div>${pick}</div>
     <div><div class="group-label"><span>2 · The trip</span></div><div class="card card-pad"><div class="form-grid">
       <div class="field"><label class="label">Date</label><input class="input" type="date" value="${esc(T.date)}" data-in="tripF" data-f="date"></div>
       <div class="field full"><label class="row" style="cursor:pointer;padding:10px 12px;border-radius:12px;background:var(--fill)"><input type="checkbox" data-in="tripSelf" ${T.selfPickup ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--tint)"><span class="grow"><div class="row-title">Self pickup</div><div class="row-sub">The buyer collected it from the cold store: no transporter, no transport cost</div></span></label></div>
@@ -4618,7 +4620,7 @@ ACT.tripSelf = (el) => {
 };
 ACT.tripDelAsk = () => { part("trip-sum", `<div class="confirm" style="width:100%"><span><b>Delete this trip?</b> Its orders go back to "no trip logged".</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="tripDelNo">Keep it</button><button class="btn btn-sm btn-danger" data-act="tripDel">Delete</button></span></div>`); };
 ACT.tripDelNo = () => part("trip-sum", tripSum(S.trip));
-ACT.tripDel = () => { const L = logi(), T = S.trip; L.trips = L.trips.filter((x) => x.id !== T.id); logActivity("Trip deleted", fmtDate(T.date), T.sellers || ""); S.trip = null; closeSheet(); render(); toast("Trip deleted"); };
+ACT.tripDel = () => { const L = logi(), T = S.trip; L.trips = L.trips.filter((x) => x.id !== T.id); if (typeof tripUnlinkNotes === "function") tripUnlinkNotes(T.id); logActivity("Trip deleted", fmtDate(T.date), T.sellers || ""); S.trip = null; closeSheet(); render(); toast("Trip deleted"); };
 /* ---------- transporters ---------- */
 ACT.logiTransporters = () => {
   const L = logi();
@@ -5200,7 +5202,7 @@ function ntLineHtml(l, i) {
 function ntTotalHtml() {
   const N = S.nt, k = ntKind(N.type), T = ntTotals(), sg = ntSalesSign(k);
   return `<div class="sum-row"><span class="muted">Value excl. GST</span><b class="num">${rs2(T.amt)}</b></div><div class="sum-row"><span class="muted">GST 5%</span><span class="num">${rs2(T.gst)}</span></div><div class="sum-row total"><span>Total incl. GST</span><span class="num">${rs2(T.total)}</span></div>
-    <div class="row-sub" style="margin-top:8px">${sg < 0 ? `Takes ${rs2(T.amt)} off ${esc(shortOf(N.party || ""))}'s sales on ${fmtDate(N.date)}.` : sg > 0 ? `Adds ${rs2(T.amt)} to ${esc(shortOf(N.party || ""))}'s sales on ${fmtDate(N.date)}.` : "A note with Hangyo: sales do not change."}</div>`;
+    <div class="row-sub" style="margin-top:8px">${sg < 0 ? `Takes ${rs2(T.amt)} off ${esc(shortOf(N.party || ""))}'s sales on ${fmtDate(N.date)}.` : sg > 0 ? `Adds ${rs2(T.amt)} to ${esc(shortOf(N.party || ""))}'s sales on ${fmtDate(N.date)}.` : "A note with Hangyo: sales do not change."}${k === "return" && N.trip ? " " + ntTripTxt(N, T.amt, Math.round(N.lines.reduce((a, l) => a + (ntCalc(l).crates || 0), 0) * 100) / 100) : ""}</div>`;
 }
 function ntBody() {
   const N = S.nt, k = ntKind(N.type), lines = ntHasLines(k);
@@ -5211,6 +5213,7 @@ function ntBody() {
       <div class="field"><label class="label" for="nt-date">Note date</label><input class="input" id="nt-date" type="date" value="${esc(N.date)}" data-in="ntF" data-f="date"></div>
       <div class="field"><label class="label" for="nt-no">Note number (Vyapar or Hangyo)</label><input class="input" id="nt-no" value="${esc(N.no)}" placeholder="SR/CN26-27/12" data-in="ntF" data-f="no"></div>
       <div class="field"><label class="label" for="nt-reason">Reason</label><select class="select" id="nt-reason" data-in="ntF" data-f="reason">${NOTE_REASONS.map((t) => `<option ${t === N.reason ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      ${k === "return" ? ntTripField(N) : ""}
       ${lines ? "" : `<div class="field full"><label class="label" for="nt-amt">Amount excl. GST (₹)</label><input class="input num-in" id="nt-amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="${N.amount != null ? esc(N.amount) : ""}" data-in="ntF" data-f="amount"></div>`}
     </div></div>
     ${lines ? `<div><div class="group-label"><span>Products ${k === "return" ? "returned" : "sent back to Hangyo"}</span><span>${N.lines.length}</span></div>
@@ -5231,13 +5234,17 @@ function ntResults() {
 const ntRedraw = () => { const sc = $("#sheet .sheet-body") || $("#sheet"), y = sc ? sc.scrollTop : 0; part("nt-body", ntBody()); if (sc) sc.scrollTop = y; };
 ACT.noteSheet = () => {
   const d = D.distributors[0] || {};
-  S.nt = { type: NOTE_TYPES[0], party: d.name || "", date: ymd(NOW()), no: "", reason: "Damaged", amount: null, lines: [], back: true, q: "" };
+  S.nt = { type: NOTE_TYPES[0], party: d.name || "", date: ymd(NOW()), no: "", reason: "Damaged", amount: null, lines: [], back: true, q: "", trip: "" };
+  S.nt.trip = ntTripDefault(S.nt.party, S.nt.date);
   openSheet("New credit or debit note", `<div id="nt-body" class="stack gap-16">${ntBody()}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="noteSave">Save note</button>`, true);
 };
 IN.ntF = (el) => {
   const N = S.nt, f = el.dataset.f, before = ntKind(N.type);
   N[f] = f === "amount" ? (el.value === "" ? null : +el.value) : el.value;
   if (f === "type") { const k = ntKind(N.type); if (k !== before) { N.back = true; if (k === "rcredit" || k === "rdebit") N.reason = "Rate difference"; N.lines.forEach((l) => { l.rate = ntRate(l.sap, N.party, k); }); } ntRedraw(); return; }
+  if (f === "trip") { N.tripTyped = true; part("nt-total", ntTotalHtml()); return; }
+  if ((f === "party" || f === "date") && !N.tripTyped) N.trip = ntTripDefault(N.party, N.date);
+  if (f === "date") { const sel = $("#nt-trip"); if (sel) sel.innerHTML = tripOpts(N.party, N.date, N.trip || ""); part("nt-total", ntTotalHtml()); return; }
   if (f === "party") { N.lines.forEach((l) => { if (!l.rateTyped) l.rate = ntRate(l.sap, N.party, ntKind(N.type)); }); ntRedraw(); return; }
   part("nt-total", ntTotalHtml());
 };
@@ -5288,6 +5295,7 @@ ACT.noteSave = () => {
     n.stock = moved.length ? `${k === "preturn" ? "Taken out of" : "Put back into"} SahiReach stock: ${moved.map((l) => `${nf(Math.abs(l.stocked) / ((stockBySap[l.sap] || {}).upc || 1), 2)} cr ${shortName(l.product)}`).join(", ")}` : "No stock change";
     ntStock(n, 1);
   } else n.stock = "No stock change";
+  if (k === "return" && N.trip && tripById(N.trip)) noteTripSet(n, N.trip);
   D.notes.push(n);
   logActivity("Note saved", n.no || n.id, `${String(n.type).split(" - ")[0]} · ${n.party} · ${rs2(n.amount)}${lines ? ` · ${lines.length} product${lines.length > 1 ? "s" : ""}` : ""}${sg ? ` · sales ${sg < 0 ? "−" : "+"}${rs2(n.amount)}` : ""}`);
   S.nt = null; S.moneyTab = "notes"; closeSheet(); render();
@@ -5303,6 +5311,7 @@ ACT.noteOpen = (el, e, confirmCancel) => {
       <div><div class="k">Value excl. GST</div><div class="v num">${rs2(n.amount)}</div></div><div><div class="k">Total incl. GST</div><div class="v num">${rs2(n.total != null ? n.total : n.amount * 1.05)}</div></div>
       <div><div class="k">Sales</div><div class="v">${n.status !== "Active" ? "Not counted (cancelled)" : n.sales ? (n.sales < 0 ? "−" : "+") + rs2(Math.abs(n.sales)) : "No change"}</div></div><div><div class="k">Stock</div><div class="v" style="font-size:14px">${esc(n.stock || "–")}</div></div></div></div>
     ${L ? `<div><div class="group-label"><span>Products</span><span>${L.length}</span></div><div class="group">${L.map((l) => `<div class="row"><span class="grow"><div class="row-title" style="white-space:normal">${esc(l.product)}</div><div class="row-sub">${nf(l.qty, 2)} ${esc(l.unit === "Crate" ? "crates" : l.unit === "Pieces" ? "pieces" : "boxes")} · ${nf(l.ea, 2)} boxes × ${rs2(l.rate)}${l.cond ? " · " + esc(l.cond) : ""}${l.stocked ? (l.stocked > 0 ? " · back in stock" : " · out of stock") : ""}</div></span><span class="row-end"><span class="row-value">${rs2(l.value)}</span></span></div>`).join("")}</div></div>` : n.product ? `<div class="group"><div class="row"><span class="grow"><div class="row-title">${esc(n.product)}</div>${n.qty ? `<div class="row-sub">${nf(n.qty)} ${esc(n.unit || "")}${n.rate ? " × " + rs2(n.rate) : ""}</div>` : ""}</span></div></div>` : ""}
+    ${ntTripView(n)}
     ${confirmCancel ? `<div class="confirm"><span><b>Cancel this note?</b> It stops counting in sales${L && L.some((l) => l.stocked) ? " and its stock change is reversed" : ""}.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="noteOpen" data-id="${esc(n.id)}">Keep it</button><button class="btn btn-sm btn-danger" data-act="noteCancelYes" data-id="${esc(n.id)}">Cancel note</button></span></div>` : ""}`,
     n.status === "Active" && CAN_EDIT ? `<button class="btn btn-danger" data-act="noteCancelAsk" data-id="${esc(n.id)}">Cancel note</button><button class="btn btn-primary" data-act="closeSheet">Done</button>` : `<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
 };
@@ -5310,9 +5319,110 @@ ACT.noteCancelAsk = (el) => ACT.noteOpen(el, null, true);
 ACT.noteCancelYes = (el) => {
   const n = D.notes.find((x) => x.id === el.dataset.id); if (!n || n.status !== "Active") return;
   if (Array.isArray(n.lines)) ntStock(n, -1);
+  if (n.trip && n.tripAdj) tripApply(n, -1); /* the trip gets its revenue and crates back */
   n.status = "Cancelled"; n.cancelled = { at: iso(NOW()), by: ME.name };
   logActivity("Note cancelled", n.no || n.id, `${String(n.type).split(" - ")[0]} · ${n.party} · ${rs2(n.amount)}`);
   closeSheet(); render(); toast("Note cancelled", "undo");
+};
+
+/* ===== TRIPS, SALES RETURNS AND RE-BILLED GOODS =====
+   Goods that went out on a vehicle and came back on a sales return credit note are taken off that trip: the note
+   asks which trip carried them, and its value (excl. GST) and crates come off that trip's revenue and crates.
+   When the same goods are billed to someone else, that dispatch did not need a new vehicle: it can be added to
+   any earlier trip ("same vehicle"), which adds its value and crates there instead of asking for a new trip. */
+const tripById = (id) => (id ? logi().trips.find((t) => t.id === id) || null : null);
+const tripLbl = (t) => `${fmtDate(t.date)} · ${t.sellers || "–"}${t.transporter ? " · " + t.transporter : ""}`;
+function tripCredits(id) {
+  const out = { amt: 0, crates: 0, n: 0, list: [] }; if (!id) return out;
+  (D.notes || []).forEach((x) => { if (x.trip === id && x.status === "Active" && x.tripAdj) { out.amt += x.tripAdj.amt || 0; out.crates += x.tripAdj.crates || 0; out.n++; out.list.push(x); } });
+  return out;
+}
+/* take a note off its trip (dir 1) or put it back (dir -1) */
+function tripApply(n, dir) {
+  const t = tripById(n.trip); if (!t || !n.tripAdj) return;
+  if (t.revenue != null) t.revenue = Math.round((t.revenue - dir * (n.tripAdj.amt || 0)) * 100) / 100;
+  if (t.crates != null) t.crates = Math.round((t.crates - dir * (n.tripAdj.crates || 0)) * 10) / 10;
+}
+function noteTripSet(n, id) {
+  if (n.trip && n.tripAdj && n.status === "Active") tripApply(n, -1);
+  n.trip = id || null; n.tripAdj = id ? { amt: n.amount || 0, crates: Math.round((n.crates || 0) * 1000) / 1000 } : null;
+  if (id && n.status === "Active") tripApply(n, 1);
+}
+function tripUnlinkNotes(id) { (D.notes || []).forEach((n) => { if (n.trip === id) { n.trip = null; n.tripAdj = null; } }); }
+/* trips a note could belong to: the ones that carried this distributor first, then others around the note date */
+function tripChoices(party, date) {
+  const d = String(date || ymd(NOW())).slice(0, 10), lo = addDays(d, -45), hi = addDays(d, 7);
+  const carried = (t) => (t.orders || []).some((id) => { const o = orderById(id); return o && o.dist === party; });
+  return logi().trips.map((t) => ({ t, mine: !!party && carried(t) })).filter((x) => x.mine || (x.t.date >= lo && x.t.date <= hi))
+    .sort((a, b) => b.mine - a.mine || (a.t.date < b.t.date ? 1 : a.t.date > b.t.date ? -1 : 0)).slice(0, 40);
+}
+function ntTripDefault(party, date) {
+  const d = String(date || ymd(NOW())).slice(0, 10), C = tripChoices(party, d).filter((c) => c.mine);
+  const x = C.find((c) => c.t.date <= d) || C[0]; return x ? x.t.id : "";
+}
+function tripOpts(party, date, sel) {
+  const C = tripChoices(party, date); if (sel && !C.some((c) => c.t.id === sel)) { const t = tripById(sel); if (t) C.unshift({ t, mine: false }); }
+  const o = (c) => `<option value="${esc(c.t.id)}" ${c.t.id === sel ? "selected" : ""}>${esc(tripLbl(c.t))}</option>`, mine = C.filter((c) => c.mine), rest = C.filter((c) => !c.mine);
+  return `<option value="" ${!sel ? "selected" : ""}>No trip: do not adjust any vehicle</option>${mine.length ? `<optgroup label="Trips that carried ${esc(shortOf(party || ""))}">${mine.map(o).join("")}</optgroup>` : ""}${rest.length ? `<optgroup label="Other trips around this date">${rest.map(o).join("")}</optgroup>` : ""}`;
+}
+function ntTripField(N) {
+  const none = !logi().trips.length;
+  return `<div class="field full"><label class="label" for="nt-trip">Which trip (vehicle) carried these goods?</label><select class="select" id="nt-trip" data-in="ntF" data-f="trip" ${none ? "disabled" : ""}>${tripOpts(N.party, N.date, N.trip || "")}</select><div class="row-sub" style="margin-top:6px">${none ? "No trips logged yet." : "The returned value and crates come off that trip, so its logistics % stays right. If the goods are billed to someone else, add that dispatch to the same trip."}</div></div>`;
+}
+const ntTripTxt = (N, amt, crates) => { const t = tripById(N.trip); return t ? `Also takes ${rs2(amt)}${crates ? ` and ${nf(crates, 2)} crates` : ""} off the trip of ${esc(tripLbl(t))}.` : ""; };
+/* a saved note: see or change its trip */
+function ntTripView(n) {
+  if (ntKind(n.type) !== "return") return "";
+  const t = tripById(n.trip), info = t ? `Takes ${rs2((n.tripAdj || {}).amt || 0)}${(n.tripAdj || {}).crates ? ` and ${nf(n.tripAdj.crates, 2)} crates` : ""} off this trip's revenue and crates.` : "Not adjusted against any trip.";
+  if (n.status === "Active" && CAN_EDIT) return `<div class="card card-pad"><div class="field"><label class="label" for="nt-trip-x">Trip (vehicle) this return is adjusted against</label><select class="select" id="nt-trip-x" data-in="noteTrip" data-id="${esc(n.id)}">${tripOpts(n.party, n.date, n.trip || "")}</select><div class="row-sub" style="margin-top:6px">${info}</div></div></div>`;
+  return t ? `<div class="row-sub">Adjusted against the trip of ${esc(tripLbl(t))}${n.status !== "Active" ? " (no longer, the note is cancelled)" : ""}.</div>` : "";
+}
+IN.noteTrip = (el) => {
+  const n = D.notes.find((x) => x.id === el.dataset.id); if (!n || n.status !== "Active" || (n.trip || "") === el.value) return;
+  noteTripSet(n, el.value);
+  logActivity("Credit note adjusted against a trip", n.no || n.id, el.value ? tripLbl(tripById(el.value)) : "No trip");
+  ACT.noteOpen({ dataset: { id: n.id } }); render();
+  toast(el.value ? "Taken off that trip's revenue" : "No longer adjusted against a trip", "truck");
+};
+/* the trip form: which credit notes come off it */
+function tripCreditHtml(T) {
+  const C = tripCredits(T.id); if (!C.n) return "";
+  return `<div class="banner info">${ic("info", "sm")}<span><b>${C.n} sales return${C.n > 1 ? "s" : ""} taken off this trip:</b> ${C.list.map((n) => `${esc(n.no || n.id)} (${esc(shortOf(n.party))}${SEE_MONEY ? ", " + rs2(n.tripAdj.amt) : ""})`).join(", ")}. The revenue and crates below are net of ${C.n > 1 ? "them" : "it"}.</span></div>`;
+}
+
+/* ---------- a dispatch on the same vehicle as an earlier trip ---------- */
+const dDiff = (a, b) => Math.round((toDate(a) - toDate(b)) / 864e5);
+ACT.tripJoin = (el) => {
+  let orders = [], qc = [], date = ymd(NOW());
+  if (el.dataset.run) { const r = unloggedRuns().find((x) => x.key === el.dataset.run); if (!r) return; orders = r.orders.slice(); qc = r.qc.slice(); date = r.date; }
+  if (el.dataset.orders) { orders = el.dataset.orders.split(",").filter(Boolean); const o = orderById(orders[0]); if (o && o.dispatched) date = o.dispatched.slice(0, 10); }
+  S.join = { orders, qc, date, all: false };
+  openSheet("Same vehicle as which trip?", `<div id="join-body" class="stack gap-16">${joinBody()}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button>`, true);
+};
+function joinBody() {
+  const J = S.join, os = J.orders.map(orderById).filter(Boolean), names = [...new Set(os.map((o) => shortOf(o.dist)))].join(", ");
+  const cr = os.reduce((a, o) => a + (o.crates || 0), 0), val = os.reduce((a, o) => a + (o.value || 0), 0);
+  let list = logi().trips.map((t) => ({ t, cn: tripCredits(t.id), d: Math.abs(dDiff(t.date, J.date)) }));
+  const all = list.length; if (!J.all) list = list.filter((x) => x.cn.n || (x.t.date >= addDays(J.date, -30) && x.t.date <= addDays(J.date, 3)));
+  list.sort((a, b) => (b.cn.n > 0) - (a.cn.n > 0) || (a.t.date < b.t.date ? 1 : a.t.date > b.t.date ? -1 : 0));
+  return `<div class="banner info">${ic("truck", "sm")}<span><b>${esc(names || "This dispatch")}</b> · ${nf(cr, 1)} crates${SEE_MONEY ? " · " + rs(val) : ""}. Choose the trip whose vehicle carried it (for example, goods taken back on a credit note and billed to someone else). It is added to that trip's crates${SEE_MONEY ? " and revenue" : ""}; no new trip is needed.</span></div>
+    ${list.length ? `<div class="group">${list.map((x) => `<button class="row" data-act="tripJoinTo" data-id="${esc(x.t.id)}" style="width:100%;text-align:left"><span class="grow"><div class="row-title clip">${esc(tripLbl(x.t))}</div><div class="row-sub">${esc(x.t.type || "GT")} · ${x.t.crates != null ? nf(x.t.crates, 1) + " crates" : "crates not set"}${SEE_MONEY && x.t.revenue != null ? " · " + rs(x.t.revenue) : ""}${x.t.selfPickup ? " · self pickup" : ""}${x.cn.n ? ` · <span style="color:var(--tint);font-weight:600">${x.cn.n} sales return${x.cn.n > 1 ? "s" : ""} taken off (${x.cn.list.map((n) => esc(shortOf(n.party))).join(", ")})</span>` : ""}</div></span>${ic("chevR", "sm chev")}</button>`).join("")}</div>` : `<div class="group"><div class="empty">No trips around ${esc(fmtDate(J.date))}.</div></div>`}
+    ${!J.all && all > list.length ? `<button class="btn btn-secondary" data-act="joinAll">Show all ${all} trips</button>` : ""}`;
+}
+ACT.joinAll = () => { S.join.all = true; part("join-body", joinBody()); };
+ACT.tripJoinTo = (el) => {
+  const J = S.join, t = tripById(el.dataset.id); if (!J || !t) return;
+  const L = logi(), on = new Set(), onQ = new Set(); L.trips.forEach((x) => { (x.orders || []).forEach((i) => on.add(i)); (x.qc || []).forEach((p) => onQ.add(p)); });
+  const os = J.orders.filter((id) => !on.has(id)).map(orderById).filter(Boolean), qs = J.qc.filter((po) => !onQ.has(po)).map((po) => D.qcPOs.find((p) => p.po === po)).filter(Boolean);
+  if (!os.length && !qs.length) { closeSheet(); toast("Already on a trip", "info"); return; }
+  const qv = qs.map((p) => qcTripInfo(p) || { crates: 0, revenue: 0 });
+  const addR = os.reduce((a, o) => a + (o.value || 0), 0) + qv.reduce((a, q) => a + (q.revenue || 0), 0), addC = os.reduce((a, o) => a + (o.crates || 0), 0) + qv.reduce((a, q) => a + (q.crates || 0), 0);
+  t.orders = (t.orders || []).concat(os.map((o) => o.id)); t.qc = (t.qc || []).concat(qs.map((p) => p.po));
+  t.revenue = Math.round(((t.revenue || 0) + addR) * 100) / 100; t.crates = Math.round(((t.crates || 0) + addC) * 10) / 10;
+  const names = os.map((o) => shortOf(o.dist)).concat(qs.map((p) => p.platform)), have = String(t.sellers || "").split(/,\s*/).filter(Boolean);
+  names.forEach((n) => { if (!have.includes(n)) have.push(n); }); t.sellers = have.join(", ");
+  logActivity("Dispatch added to a trip", fmtDate(t.date), `${[...new Set(names)].join(", ")} · same vehicle as the trip of ${fmtDate(t.date)}`);
+  S.join = null; closeSheet(); render(); toast(`Added to the trip of ${fmtDate(t.date)} · no new trip needed`, "truck");
 };
 
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
