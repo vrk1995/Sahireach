@@ -1539,15 +1539,17 @@ ACT.nav2 = (el) => { closeSheet(); go(el.dataset.to); };
 
 /* ---------- words ---------- */
 const IMP_SIZES = new Set([20, 30, 35, 40, 50, 55, 60, 65, 70, 80, 100, 110, 125, 170, 500, 700, 1000, 1500, 2000, 4000]);
-const IMP_FIX = { vanila: "vanilla", vannila: "vanilla", vanill: "vanilla", venilla: "vanilla", choclate: "chocolate", chocklate: "chocolate", chocolat: "chocolate", chocolates: "chocolate", choc: "chocolate", strawbery: "strawberry", srawberry: "strawberry", straw: "strawberry", stawberry: "strawberry", strobry: "strawberry", strobery: "strawberry", strowberry: "strawberry", strwberry: "strawberry", stroberry: "strawberry", chocko: "choco", choko: "choco", choclate: "chocolate", butterscoch: "butterscotch", buterscotch: "butterscotch", creame: "cream", creem: "cream", cones: "cone", cups: "cup", bars: "bar", candies: "candy", kulfis: "kulfi", koolfi: "kulfi", kulfee: "kulfi", sticks: "stick", tubs: "tub", balls: "ball", sandwiches: "sandwich", sundae: "sundae", pista: "pista", pistachio: "pista", alphonsa: "alphonso", alphanso: "alphonso", almd: "almond", tofee: "toffee", toffe: "toffee", current: "currant", blackcurrent: "blackcurrant", bscotch: "butterscotch", btrscotch: "butterscotch", ripple: "ripple", fills: "fills", fill: "fills", googli: "googly", gugly: "googly", rasmalai: "rasmalai", dryfruit: "dryfruits", dryfruits: "dryfruits", fruits: "fruit", ltr: "l", ltrs: "l", litre: "l", litres: "l", liter: "l", liters: "l", lit: "l", lt: "l" };
+const IMP_FIX = { kulfy: "kulfi", tripple: "triple", trippl: "triple", vanila: "vanilla", vannila: "vanilla", vanill: "vanilla", venilla: "vanilla", choclate: "chocolate", chocklate: "chocolate", chocolat: "chocolate", chocolates: "chocolate", choc: "chocolate", strawbery: "strawberry", srawberry: "strawberry", straw: "strawberry", stawberry: "strawberry", strobry: "strawberry", strobery: "strawberry", strowberry: "strawberry", strwberry: "strawberry", stroberry: "strawberry", chocko: "choco", choko: "choco", choclate: "chocolate", butterscoch: "butterscotch", buterscotch: "butterscotch", creame: "cream", creem: "cream", cones: "cone", cups: "cup", bars: "bar", candies: "candy", kulfis: "kulfi", koolfi: "kulfi", kulfee: "kulfi", sticks: "stick", tubs: "tub", balls: "ball", sandwiches: "sandwich", sundae: "sundae", pista: "pista", pistachio: "pista", alphonsa: "alphonso", alphanso: "alphonso", almd: "almond", tofee: "toffee", toffe: "toffee", current: "currant", blackcurrent: "blackcurrant", bscotch: "butterscotch", btrscotch: "butterscotch", ripple: "ripple", fills: "fills", fill: "fills", googli: "googly", gugly: "googly", rasmalai: "rasmalai", dryfruit: "dryfruits", dryfruits: "dryfruits", fruits: "fruit", ltr: "l", ltrs: "l", litre: "l", litres: "l", liter: "l", liters: "l", lit: "l", lt: "l" };
 const IMP_JOIN = [[/\bbutter\s+scotch\b/g, "butterscotch"], [/\bsip\s*-?\s*up\b/g, "sipup"], [/\bcho(?:c|ck|k)o\s*-?\s*bar\b/g, "chocobar"], [/\bblack\s+curr[ae]nt\b/g, "blackcurrant"], [/\bdry\s+fruits?\b/g, "dryfruits"], [/\bras\s+malai\b/g, "rasmalai"], [/\bpop\s*-?\s*up\b/g, "popup"], [/\bgud\s*-?\s*bud\b/g, "gudbud"], [/\bfun\s+bites?\b/g, "funbites"], [/\bice\s*cream\b/g, " "]];
-const IMP_STOP = new Set(["hangyo", "x", "ml", "the", "and", "of", "with", "new", "mrp", "np", "fd", "pre", "nos", "no", "pcs", "pc", "order", "primary", "flavour", "flavor", "pack", "packs", "box", "boxes", "crate", "crates", "crt", "ctn", "qty", "piece", "pieces", "ea", "oval", "ovel", "p", "sm", "lit", "a", "in"]);
+const IMP_STOP = new Set(["hangyo", "ho", "x", "ml", "the", "and", "of", "with", "new", "mrp", "np", "fd", "pre", "nos", "no", "pcs", "pc", "order", "primary", "flavour", "flavor", "pack", "packs", "box", "boxes", "crate", "crates", "crt", "ctn", "qty", "piece", "pieces", "ea", "oval", "ovel", "p", "sm", "lit", "a", "in"]);
 const IMP_GENERIC = new Set(["cone", "cup", "bar", "stick", "mini", "big", "small", "tub", "candy", "kulfi", "judwa", "bulk", "parlour", "premium", "gourmet", "slice", "ball", "dolly", "sipup", "sandwich", "catering", "paper"]);
 const IMP_CAT = { "Sticks": ["bar", "stick"], "Big Cups": ["cup"], "Small Cups": ["cup", "small"], "Big Cones": ["cone", "big"], "Mini Cones": ["cone", "mini"], "Kulfis": ["kulfi"], "Candies": ["candy"], "Judwa": ["judwa"], "Tubs 100 ml": ["cup"], "Tubs 125 ml": ["tub", "cup"], "Tubs 500 ml": ["tub"], "Tubs 1000 ml": ["tub"], "Tubs 1500 ml": ["tub"], "Paper Packs 1000 ml": ["brick"], "Paper Packs 2000 ml": ["brick"], "Bulk Packs 4000 ml": ["bulk"], "Parlour Paper Packs 4000 ml": ["parlour", "bulk"], "Parlour Tubs 4000 ml": ["parlour", "tub"], "Sip Up": ["sipup"], "Dolly": ["dolly", "bar"], "Ball": ["ball"], "Sandwich": ["sandwich"], "Cassatta": ["cassata", "slice"], "Premium Product (Tourist Spot)": ["premium"], "Gourmet Series": ["gourmet"] };
 const IMP_CAT_GROUP = (cat) => { const c = String(cat || ""); return /cone/i.test(c) ? "cone" : /cup|tubs 1(00|25) ml/i.test(c) ? "cup" : /tubs|paper packs (1000|2000)/i.test(c) ? "tub" : /4000/.test(c) ? "bulk" : /sticks|dolly|candies|sip up/i.test(c) ? "stick" : c.toLowerCase(); };
 function impNorm(s) {
   let t = " " + String(s || "").toLowerCase().replace(/&/g, " and ").replace(/f\.\s*d\.?/g, " fd ").replace(/\bpre\.\s*/g, " premium ").replace(/\bnew\s*mrp\b|\bnp\b\s*-?/g, " ") + " ";
   /* a price: "20 rs", "rs 20", "₹20", "20/-" is the MRP of one piece, never a quantity or a size */
+  /* "Chocobar#45" (billing software): #45 is the MRP of one piece */
+  t = t.replace(/#\s*(\d{1,3})\b/g, " p$1 ");
   t = t.replace(/(?:\brs\.?|₹|\binr)\s*(\d+)(?:\s*\/-)?/g, " p$1 ").replace(/(\d+)\s*(?:rs\b\.?|rupees?\b|\/-)/g, " p$1 ");
   t = t.replace(/(\d)\s*[x×*]\s*(\d)/g, "$1 x $2").replace(/(\d+)\s*x\s*(?=\d+(?:\.\d+)?\s*(?:ml|l|ltrs?|litres?|liters?|lit)\b)/g, (m, n) => (+n > 1 ? ` c${+n} ` : " "));
   t = t.replace(/\b(\d{1,2})\s*(?:pcs?|pieces|nos)\b/g, (m, n) => (+n > 1 ? ` c${+n} ` : " ")); /* "(16PCS)" = 16 in a box, like "16 x" */
@@ -1680,7 +1682,7 @@ function impFromText(text) {
 function impFromRows(rows) {
   rows = rows.map((r) => (r || []).map((v) => (v == null ? "" : String(v).trim())));
   let hr = -1, nameCol = -1;
-  for (let i = 0; i < Math.min(rows.length, 20) && hr < 0; i++) rows[i].forEach((v, j) => { if (hr < 0 && /^(product( name)?|products|items?( name)?|item description|particulars|description|sku( name)?|product description|flavou?rs?|name of (the )?(item|product))$/i.test(v.replace(/\s+/g, " ").trim())) { hr = i; nameCol = j; } });
+  for (let i = 0; i < Math.min(rows.length, 20) && hr < 0; i++) rows[i].forEach((v, j) => { if (hr < 0 && /^(product( name)?|products|items?( name)?|item description|particulars|description( of goods)?|sku( name)?|product description|flavou?rs?|name of (the )?(item|product))$/i.test(v.replace(/\s+/g, " ").trim())) { hr = i; nameCol = j; } });
   if (hr < 0) return { lines: impFromText(rows.map((r) => r.filter(Boolean).join(" ")).join("\n")), header: false };
   const H = rows[hr].map((h) => h.replace(/\s+/g, " ").trim()), cand = [];
   const unitCol = H.findIndex((h) => /^(unit|units|uom|unit of measure)$/i.test(h)), priceCol = H.findIndex((h) => /price|rate/i.test(h) && !/mrp|amount|value|total|gst/i.test(h));
@@ -1690,13 +1692,16 @@ function impFromRows(rows) {
     if (p) cand.push({ j, p, unit: /crt|crate|ctn|case/i.test(h) ? "Crate" : /box/i.test(h) ? "EA (Box)" : /pcs|piece|nos|units?$/i.test(h) ? "Pieces" : null });
   });
   cand.sort((a, b) => b.p - a.p);
+  const qtyCol = H.findIndex((h) => /^(qty|quantity)\.?$/i.test(h));
   const out = []; let skipped = 0;
   rows.slice(hr + 1).forEach((r) => {
     const nm = r[nameCol] || ""; if (!nm || /^total\b/i.test(nm)) return;
     let got = null;
     for (const c of cand) { const v = r[c.j]; if (v === "" || v == null) continue; const m = String(v).match(new RegExp(`^(\\d+(?:\\.\\d+)?)\\s*(${IMP_UNIT_RE})?\\.?$`, "i")); if (m && +m[1] > 0) { got = { qty: +m[1], unit: IMP_UNIT(m[2]) || c.unit }; break; } }
+    /* "12 X 25" (in the quantity or the unit column): 12 boxes of 25 pieces */
+    if (!got) { const qx = [qtyCol, unitCol].filter((j) => j >= 0).map((j) => r[j]).join(" ").trim().match(/^(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+)$/i); if (qx && +qx[1] > 0) got = { qty: +qx[1], unit: "EA (Box)", packOf: +qx[2] }; }
     if (!got) { skipped++; return; }
-    const ut = unitCol >= 0 ? r[unitCol] || "" : "", pr = priceCol >= 0 ? +String(r[priceCol] || "").replace(/[^\d.]/g, "") || null : null;
+    const ut = got.packOf ? `boxes of ${got.packOf}` : unitCol >= 0 ? r[unitCol] || "" : "", pr = priceCol >= 0 ? +String(r[priceCol] || "").replace(/[^\d.]/g, "") || null : null;
     if (!got.unit && IMP_UNIT(ut)) got.unit = IMP_UNIT(ut);
     out.push({ raw: `${nm} — ${got.qty}${ut ? " " + ut : got.unit ? " " + UNIT_LABEL[got.unit].toLowerCase() : ""}${pr ? " @ ₹" + pr : ""}`, name: nm, qty: got.qty, unit: got.unit, unitText: ut, price: pr });
   });
@@ -2083,16 +2088,21 @@ function pdfTable(pages) {
       cols = C; const low = Math.min(...hs.map((i) => i.y)); body = items.filter((i) => i.y < low - 4);
     } else if (!cols) { head.push(...pdfLines(items)); continue; }
     const colOf = (i) => { let best = -1, bo = 0; cols.forEach((c, j) => { const o = Math.min(i.x + i.w, c.r + 6) - Math.max(i.x, c.l - 6); if (o > bo) { bo = o; best = j; } }); if (best >= 0) return best; let d = 1e9; cols.forEach((c, j) => { const dd = Math.abs(i.x + i.w / 2 - (c.l + c.r) / 2); if (dd < d) { d = dd; best = j; } }); return best; };
-    const nameIdx = cols.findIndex((c) => PDF_NAME_H.test(c.label.replace(/[:]/g, ""))), noIdx = cols.findIndex((c) => /^(#|sl\.?\s*no\.?|s\.?\s*no\.?|sr\.?(\s*no\.?)?|no\.?)$/i.test(c.label)), qtyIdx = cols.findIndex((c) => /qty|quantity/i.test(c.label));
+    const nameIdx = cols.findIndex((c) => PDF_NAME_H.test(c.label.replace(/[:]/g, ""))), noIdx = cols.findIndex((c) => /^(#|sl\.?\s*no\.?|s\.?\s*no\.?|s\.?\s*n\.?|sr\.?(\s*no\.?)?|no\.?)$/i.test(c.label.replace(/\s+/g, ""))), qtyIdx = cols.findIndex((c) => /qty|quantity/i.test(c.label));
     const tagged = body.map((i) => ({ ...i, c: colOf(i) }));
     const tot = tagged.filter((i) => ((i.c === nameIdx || i.c === noIdx || i.c === 0) && /^(grand\s*|sub\s*)?total\b/i.test(i.s)) || /^(grand\s+)?total\s+(taxable|amount|value|qty|quantity)|^amount\s+in\s+words|terms\s*(and|&)\s*conditions/i.test(i.s)).sort((a, b) => b.y - a.y)[0];
     const live = tagged.filter((i) => !tot || i.y > tot.y + 2);
     const aIdx = noIdx >= 0 ? noIdx : qtyIdx; if (aIdx < 0) continue;
-    const anchors = live.filter((i) => i.c === aIdx && /^\d+(\.\d+)?$/.test(i.s.replace(/,/g, ""))).sort((a, b) => b.y - a.y);
+    const anchors = live.filter((i) => i.c === aIdx && (aIdx === noIdx ? /^\d+\.?$/ : /^\d+(\.\d+)?$/).test(i.s.replace(/,/g, ""))).sort((a, b) => b.y - a.y); /* row numbers can be "1." */
     if (!anchors.length) continue;
     const gaps = anchors.slice(1).map((a, k) => anchors[k].y - a.y).sort((a, b) => a - b), gap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 40;
     const R = anchors.map(() => cols.map(() => []));
-    live.forEach((i) => { let k = -1, d = 1e9; anchors.forEach((a, n) => { const dd = Math.abs(a.y - i.y); if (dd < d) { d = dd; k = n; } }); if (k >= 0 && d <= Math.max(18, gap * 0.75)) R[k][i.c].push(i); });
+    live.forEach((i) => {
+      let k = -1, d = 1e9; anchors.forEach((a, n) => { const dd = Math.abs(a.y - i.y); if (dd < d) { d = dd; k = n; } });
+      /* a section heading ("L22 HANGYO_LOW AND STICKS") sits a whole row above its first item: not part of that item's name */
+      if (k >= 0 && i.c === nameIdx && i.y - anchors[k].y > gap * 0.6 && !live.some((j) => j !== i && Math.abs(j.y - i.y) < 3 && j.c !== nameIdx)) return;
+      if (k >= 0 && d <= Math.max(18, gap * 0.75)) R[k][i.c].push(i);
+    });
     R.forEach((r) => rows.push(r.map((cell) => cell.sort((a, b) => b.y - a.y || a.x - b.x).map((i) => i.s).join(" ").replace(/\s+/g, " ").trim())));
     if (tot) break;
   }
