@@ -433,23 +433,27 @@ function recomputeRepl() {
   const cycle = xr(Math.min(30, Math.max(5, C.truck / Math.max(0.01, G10 + qcPerDay))), 1);
   let qcPlan = 0;
   const qcSug = (q, crates) => Math.max(0, roundUp(xr(q.target - crates - q.onOrder - 0.1, 4)));
+  /* quick commerce stock available for sale: less what distributor orders were promised from it (crates held for sent pick lists are part of the open POs already in the target) */
+  const qcAvail = (q) => (q.crates || 0) - (typeof gtFromQC === "function" ? gtFromQC(q.sap) : 0);
   qcRows.forEach((q) => {
     const pcsPerCrate = (q.upc || 0) * (q.ppe || 0) || q.ppc || 0;
     let open = 0; D.qcPOs.forEach((p) => { if (p.status !== "Open" || p.expiry.slice(0, 10) < today) return; (qcLinesByPO[p.po] || []).forEach((l) => { if (l.sap === q.sap && l.status === "Open") open += l.pcs; }); });
     q.openPcs = open; q.openCrates = pcsPerCrate ? xr(open / pcsPerCrate, 2) : 0;
     q.onOrder = D.hpoLog.filter((l) => l.sap === q.sap && /QC/i.test(l.pool) && (l.status === "Open" || l.status === "Part received")).reduce((a, l) => a + Math.max(0, (l.crates || 0) - (l.upc ? (l.received || 0) / l.upc : 0)), 0);
     q.target = xr(q.perDay * (C.lead + cycle + C.qcSafety) + q.openCrates, 2);
-    q.suggested = qcSug(q, q.crates || 0);
+    q.suggested = qcSug(q, qcAvail(q));
     q.final = q.yours != null && q.yours !== "" ? +q.yours : q.suggested; qcPlan += q.final;
-    q.daysAfter = q.perDay > 0 ? xr(((q.crates || 0) + q.onOrder - q.openCrates) / q.perDay, 1) : null;
+    q.daysAfter = q.perDay > 0 ? xr((qcAvail(q) + q.onOrder - q.openCrates) / q.perDay, 1) : null;
   });
   /* classes, stock, targets */
+  const PEND = pendingEA();
   rows.forEach((r) => {
     r.share = G10 > 0 ? r.perDay / G10 : 0;
     r._al = G10 > 0 ? rows.reduce((a, x) => a + (x.perDay > r.perDay ? x.perDay : 0), 0) / G10 : 0;
     r.clsData = r._to ? "Same SKU" : r.perDay <= 0 ? "No sales" : r._al < C.heroShare && r.orders >= C.heroMinOrders * orders28 ? "Hero" : r._al < C.coreShare ? "Core" : "Tail";
     r.cls = r._to ? "Same SKU" : r.rule && r.rule !== "Auto" ? r.rule : r.clsData;
-    const ownEA = (s) => { const st = stockBySap[s.sap]; return st ? st.ea || 0 : 0; }, ordEA = (s) => D.hpoLog.filter((l) => l.sap === s.sap && /own/i.test(l.pool) && (l.status === "Open" || l.status === "Part received")).reduce((a, l) => a + Math.max(0, (l.boxes || (l.crates || 0) * (l.upc || 0)) - (l.received || 0)), 0);
+    /* stock available for sale: at Tropicana, less what is reserved for orders not yet dispatched and Swiggy / Zepto pick lists */
+    const ownEA = (s) => { const st = stockBySap[s.sap]; return st ? stockSplit(st, PEND).avail : 0; }, ordEA = (s) => D.hpoLog.filter((l) => l.sap === s.sap && /own/i.test(l.pool) && (l.status === "Open" || l.status === "Part received")).reduce((a, l) => a + Math.max(0, (l.boxes || (l.crates || 0) * (l.upc || 0)) - (l.received || 0)), 0);
     const linked = rows.filter((x) => x._to === r), upc = r.upc || (stockBySap[r.sap] || {}).upc || 0;
     r.stock = upc ? (ownEA(r) + linked.reduce((a, x) => a + ownEA(x), 0)) / upc : 0;
     r.onOrder = upc ? (ordEA(r) + linked.reduce((a, x) => a + ordEA(x), 0)) / upc : 0;
@@ -527,7 +531,7 @@ function recomputeRepl() {
   /* when can a full truck go? Walk forward day by day, stock falling at each product's sales rate */
   const qcTyped = D.repl.qcCrates != null && D.repl.qcCrates !== "";
   const fillsOn = (k) => {
-    const qcK = qcTyped ? +D.repl.qcCrates : qcRows.reduce((a, q) => a + (q.yours != null && q.yours !== "" ? +q.yours : qcSug(q, Math.max(0, (q.crates || 0) - q.perDay * k))), 0);
+    const qcK = qcTyped ? +D.repl.qcCrates : qcRows.reduce((a, q) => a + (q.yours != null && q.yours !== "" ? +q.yours : qcSug(q, Math.max(0, (q.crates || 0) - (typeof gtFromQC === "function" ? gtFromQC(q.sap) : 0) - q.perDay * k))), 0);
     const capK = D.repl.ownOverride > 0 ? +D.repl.ownOverride : Math.max(0, C.truck - qcK);
     let s = 0; rows.forEach((r) => { if (r._fixed) { s += +r.yours; return; } const x = r._nr(Math.max(0, r.stock + r.onOrder - r.perDay * k)); s += x.need + x.room; });
     return s >= capK;
@@ -2910,8 +2914,9 @@ VIEWS.stock = () => {
     : tab === "slow" ? slowHtml()
     : tab === "purchases" ? purchasesHtml() : missedHtml();
   return `<div class="page">
-    <div class="page-head"><div><h1 class="title">Stock</h1><div class="subtitle">What is in Tropicana right now, what came in, and what you ran out of.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="stockExcel">${ic("doc", "sm")} Download Excel</button><button class="btn btn-secondary" data-act="stockNewProd">${ic("plus", "sm")} Add product</button><button class="btn btn-primary" data-act="receiveSheet">${ic("plus", "sm")} Receive stock</button></div></div>
+    <div class="page-head"><div><h1 class="title">Stock</h1><div class="subtitle">What is in Tropicana right now, what came in, and what you ran out of.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="reconSheet">${ic("check", "sm")} Check with Tropicana</button><button class="btn btn-secondary" data-act="stockExcel">${ic("doc", "sm")} Download Excel</button><button class="btn btn-secondary" data-act="stockNewProd">${ic("plus", "sm")} Add product</button><button class="btn btn-primary" data-act="receiveSheet">${ic("plus", "sm")} Receive stock</button></div></div>
     <div class="tiles"><div class="tile"><div class="tile-label">Current stock</div><div class="tile-value">${nf(crates, 0)}<small>crates</small></div><div class="tile-sub">At Tropicana now, SahiReach stock</div></div><div class="tile"><div class="tile-label">Reserved</div><div class="tile-value" ${T.res > 0.05 ? 'style="color:var(--warn)"' : ""}>${nf(T.res, 0)}<small>crates</small></div><div class="tile-sub">${nPend ? `${nPend} order${nPend > 1 ? "s" : ""} not yet dispatched` : "No orders waiting"}${T.held > 0.05 ? ` · ${nf(T.held, 0)} for Swiggy / Zepto` : ""}</div></div><div class="tile"><div class="tile-label">Available for sale</div><div class="tile-value" style="color:var(--good)">${nf(T.avail, 0)}<small>crates</small></div><div class="tile-sub">${inStock} of ${own.length} products can be sold</div></div>${SEE_MONEY ? `<div class="tile"><div class="tile-label">Current stock at cost</div><div class="tile-value">₹${lakh(cost)}<small>L</small></div><div class="tile-sub">₹${lakh(T.vAvail)} L available for sale</div></div>` : ""}<div class="tile"><div class="tile-label">Quick commerce stock</div><div class="tile-value">${nf(qcCr, 0)}<small>crates</small></div><div class="tile-sub">${QT.res > 0.05 ? `${nf(QT.res, 0)} reserved · ${nf(QT.avail, 0)} available` : "Shared by Swiggy and Zepto"}</div></div><button class="tile" data-act="stockLow"><div class="tile-label"><span>Below reorder point</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--bad)">${low}</div><div class="tile-sub">Hero and Core products to reorder</div></button>${(() => { const T = slowSum(slowRows()); return `<button class="tile tile-wide-sm" data-act="slowList"><div class="tile-label"><span>Slow moving</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--warn)">${T.n}</div><div class="tile-sub">${SEE_MONEY ? `₹${lakh(T.value)} L tied up · ` : ""}${nf(T.crates, 0)} crates to push</div></button>`; })()}</div>
+    ${(() => { const R = (D.recon || {}).last; if (!R) return ""; const open = R.own.open + R.qcs.open; return `<button class="row" style="border-radius:var(--r-lg);background:var(--surface)" data-act="reconSheet"><span class="attn-ic ${open ? "warn" : "tint"}">${ic(open ? "alert" : "check")}</span><span class="grow"><div class="row-title">Checked with Tropicana's statement for ${esc(fmtDate(R.date || R.asOf))}</div><div class="row-sub">SahiReach ${R.own.match} of ${R.own.n} match · quick commerce ${R.qcs.match} of ${R.qcs.n} match${open ? ` · <b style="color:var(--warn)">${open} to look at</b>` : " · nothing to look at"}${R.ask && R.ask.length ? ` · ${R.ask.length} code${R.ask.length > 1 ? "s" : ""} to link` : ""}</div></span>${ic("chevR", "sm chev")}</button>`; })()}
     ${seg("stockTab", tab, [["own", "Own stock"], ["slow", "Slow moving"], ["qc", "Quick commerce"], ["damaged", "Damaged"], ["purchases", "Purchases"], ["missed", "Missed sales"]])}
     ${body}</div>`;
 };
@@ -3026,7 +3031,7 @@ function replCount(f) { return D.repl.rows.filter((r) => (f === "On this truck" 
 function replGrid() {
   const rows = replRows();
   if (!rows.length) return `<div class="group"><div class="empty">No products in this group.</div></div>`;
-  return `<div class="dg" style="--cols:minmax(0,2fr) 84px 76px 70px minmax(100px,130px) 80px 96px 120px;--cols-sm:minmax(0,1fr) 84px"><div class="dg-row dg-head"><span>Product</span><span class="c-hide">Class</span><span class="r c-hide">Sells / day</span><span class="r c-hide">Stock</span><span class="c-hide">Days of stock</span><span class="r c-hide">Suggested</span><span class="r">Your crates</span><span class="r c-hide">Final</span></div>
+  return `<div class="dg" style="--cols:minmax(0,2fr) 84px 76px 70px minmax(100px,130px) 80px 96px 120px;--cols-sm:minmax(0,1fr) 84px"><div class="dg-row dg-head"><span>Product</span><span class="c-hide">Class</span><span class="r c-hide">Sells / day</span><span class="r c-hide" title="Available for sale: current stock less what is reserved">Available</span><span class="c-hide">Days of stock</span><span class="r c-hide">Suggested</span><span class="r">Your crates</span><span class="r c-hide">Final</span></div>
   ${rows.map((r) => { const open = S.replOpen === r.sap, low = r.belowRop; return `<div class="dg-row" style="cursor:pointer" data-act="replToggle" data-sap="${esc(r.sap)}"><span><div class="strong clip">${esc(shortName(r.name))}</div><div class="row-sub clip">${r.runsOut ? `<span style="color:var(--bad);font-weight:600">Runs out ${r.runsOut <= ymd(NOW()) ? "now" : "~" + fmtDate(r.runsOut)}</span>${low ? " · below reorder point" : ""} · ` : ""}${low && !r.runsOut ? `<span style="color:var(--bad);font-weight:600">Below reorder point</span>${r.note && !/^below reorder/i.test(r.note) ? " · " + esc(r.note) : ""}` : r.note ? esc(r.note) : esc(r.cat || "")}</div></span><span class="c-hide">${classPill(r.cls)}</span><span class="r c-hide">${nf(r.perDay, 2)}</span><span class="r c-hide">${nf(r.stock, 1)}</span><span class="bar-cell c-hide">${r.days != null ? `<div class="meter ${low ? "bad" : r.days < 8 ? "warn" : ""}"><i style="width:${Math.min(100, (r.days / 30) * 100)}%"></i></div><span class="num" style="font-size:13px;min-width:30px;text-align:right">${nf(r.days, 0)}d</span>` : `<span class="dim">–</span>`}</span><span class="r c-hide">${nf(r.suggested)}</span><span class="r">${r.same && replBySap[r.same] ? `<span class="pill plain info" title="Counts as ${esc(replBySap[r.same].name)}">Linked</span>` : `<input class="input sm num-in" style="width:76px" type="number" min="0" placeholder="${nf(r.suggested)}" value="${r.yours != null ? r.yours : ""}" id="rp-${esc(r.sap)}" data-in="replYours" data-sap="${esc(r.sap)}" aria-label="Your crates">`}</span><span class="r strong c-hide" id="rf-${esc(r.sap)}">${nf(r.final)}${deltaTag(r)}</span></div>
     ${open ? `<div class="dg-row" style="--cols:1fr;background:var(--surface-2);display:block"><div class="kv"><div><div class="k">Sold, last 14 days</div><div class="v num">${nf(r.s14, 1)} crates</div></div><div><div class="k">Days 15 to 28</div><div class="v num">${nf(r.s28, 1)}</div></div><div><div class="k">Days 29 to 56</div><div class="v num">${nf(r.s56, 1)}</div></div><div><div class="k">Missed, 28 days</div><div class="v num">${nf(r.missed, 1)}</div></div><div><div class="k">Reorder point</div><div class="v num">${nf(r.rop, 1)}</div></div><div><div class="k">Target stock</div><div class="v num">${nf(r.target, 1)}</div></div><div><div class="k">On order</div><div class="v num">${nf(r.onOrder, 1)}</div></div><div><div class="k">After this truck</div><div class="v num">${r.daysAfter != null ? nf(r.daysAfter, 0) + " days" : "–"}</div></div></div>
       <div class="form-grid" style="margin-top:14px;grid-template-columns:repeat(4,minmax(0,1fr))"><div class="field"><label class="label" for="rr-${esc(r.sap)}">Order rule</label><select class="select sm" id="rr-${esc(r.sap)}" data-in="replRule" data-sap="${esc(r.sap)}">${["Auto", "Hero", "Core", "Tail", "Push", "Don't order"].map((x) => `<option ${(r.rule || "Auto") === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div class="field"><label class="label">Min crates</label><input class="input sm num-in" type="number" min="0" value="${r.min != null ? r.min : ""}" placeholder="–" data-in="replNum" data-repl="1" data-f="min" data-sap="${esc(r.sap)}"></div><div class="field"><label class="label">Max crates</label><input class="input sm num-in" type="number" min="0" value="${r.max != null ? r.max : ""}" placeholder="–" data-in="replNum" data-repl="1" data-f="max" data-sap="${esc(r.sap)}"></div><div class="field"><label class="label">Adjust + / −</label><input class="input sm num-in" type="number" value="${r.adj != null ? r.adj : ""}" placeholder="0" data-in="replNum" data-repl="1" data-f="adj" data-sap="${esc(r.sap)}"></div></div><div class="field" style="margin-top:12px"><label class="label" for="rn-${esc(r.sap)}">Reason / note</label><input class="input sm" id="rn-${esc(r.sap)}" value="${esc(r.reason || "")}" placeholder="Why this rule (optional)" data-in="replNote" data-sap="${esc(r.sap)}"></div>${sameField(r)}${r.note ? `<div class="row-sub" style="margin-top:10px">${esc(r.note)}</div>` : ""}</div>` : ""}`; }).join("")}</div>`;
@@ -3303,7 +3308,7 @@ function replBookSheets() {
   const plan = [["REPLENISHMENT: TRUCK PLAN  (SahiReach LLP)"], [`Worked out ${dateTxt} ${timeTxt} from stock, orders, missed sales and open Hangyo POs`], [],
     ["The engine says", word], ["Why", R.why || ""], ["Order on", orderOn], ["Truck size (crates)", R.truck], ["Own stock on this truck", T.own], ["Quick commerce on this truck", qcCr], ["Total on this truck", T.own + qcCr],
     ["Value at SS rate", Math.round(T.value + qcVal)], ["Own sales (crates / day)", r2(R.perDay)], ["One truck lasts (days)", R.truckDays], ["Hero / Core below reorder point", R.belowRop], ["Hero / Core that run out before the truck", R.runOut || 0], [],
-    ["SAP code", "Tropicana code", "Product", "Category", "Class", "Order rule", "Sold, last 14 days", "Sold, days 15–28", "Sold, days 29–56", "Missed, 28 days", "Sells / day", "Stock (crates)", "On order", "Days of stock", "Safety stock", "Reorder point", "Target stock", "Below reorder point", "Suggested", "Your crates", "Final crates", "Boxes", "Change vs plan", "Value at SS rate", "Days of stock after truck", "Note"]];
+    ["SAP code", "Tropicana code", "Product", "Category", "Class", "Order rule", "Sold, last 14 days", "Sold, days 15–28", "Sold, days 29–56", "Missed, 28 days", "Sells / day", "Available for sale (crates)", "On order", "Days of stock", "Safety stock", "Reorder point", "Target stock", "Below reorder point", "Suggested", "Your crates", "Final crates", "Boxes", "Change vs plan", "Value at SS rate", "Days of stock after truck", "Note"]];
   const head = plan.length;
   rows.forEach((r) => plan.push([r.sap, tropCode(r.sap) || "", r.name, r.cat || "", r.cls || "", r.rule || "Auto", r2(r.s14), r2(r.s28), r2(r.s56), r2(r.missed), r2(r.perDay), r2(r.stock), r2(r.onOrder), r.perDay > 0 ? r2(r.days) : null, r2(r.safety), r2(r.rop), r2(r.target), r.belowRop ? "Yes" : "", r2(r.suggested), r.yours != null && r.yours !== "" ? +r.yours : null, r.final || 0, (r.final || 0) * (r.upc || 0), changeTxt(r), Math.round(r.value || 0), r.daysAfter != null ? r2(r.daysAfter) : null, r.note || ""]));
   plan.push(["", "", "TOTAL", "", "", "", r2(rows.reduce((a, r) => a + (r.s14 || 0), 0)), r2(rows.reduce((a, r) => a + (r.s28 || 0), 0)), r2(rows.reduce((a, r) => a + (r.s56 || 0), 0)), r2(rows.reduce((a, r) => a + (r.missed || 0), 0)), r2(rows.reduce((a, r) => a + (r.perDay || 0), 0)), r2(rows.reduce((a, r) => a + (r.stock || 0), 0)), r2(rows.reduce((a, r) => a + (r.onOrder || 0), 0)), "", "", "", "", "", rows.reduce((a, r) => a + (r.suggested || 0), 0), "", T.own, rows.reduce((a, r) => a + (r.final || 0) * (r.upc || 0), 0), "", Math.round(T.value), "", ""]);
@@ -3793,6 +3798,233 @@ function qcSplit(q) {
   return { cur, held, gt, res, avail: cur - res };
 }
 
+/* ===== CHECK THE STOCK AGAINST TROPICANA'S LEDGER STATEMENT =====
+   Upload Tropicana's daily ledger statement (SAHIREACH_LS_ddmmyy.xls: Code, Description, Base OP / IN / OUT / CL in
+   crates). Each line is matched to our products by the Tropicana code (SR / SH xxx); lines with "(Swiggy)" in the
+   name, or an SH code, are quick commerce stock. Our CURRENT stock (reserved included: it is still in the store) is
+   compared with Tropicana's closing crates. When the statement is for an earlier day, our stock is worked back to the
+   end of that day. Codes the tool does not have are matched by name: sure ones are saved, doubtful ones are asked.
+   Every difference gets the likely reasons the records show. */
+const RC_CODE = /^(S[RH])\s*-?\s*(\d{1,4})\b/i;
+const rcCode = (s) => { const m = String(s || "").trim().match(RC_CODE); return m ? `${m[1].toUpperCase()} ${m[2].padStart(3, "0")}` : null; };
+const rcCodesOf = (t) => String(t || "").split(/[+,/&]|\band\b/i).map(rcCode).filter(Boolean);
+const RC_MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const rcR2 = (x) => Math.round(x * 100) / 100;
+const rcNear = (a, b) => Math.abs(a - b) < 0.02;
+const rcCr = (n) => `${nf(n, 2)} crate${Math.abs(n - 1) < 1e-9 ? "" : "s"}`;
+
+/* ---------- reading the statement ---------- */
+function rcParse(rows, filename) {
+  rows = rows.map((r) => (r || []).map((v) => (v == null ? "" : String(v).trim())));
+  let date = null;
+  rows.slice(0, 6).forEach((r) => r.forEach((c) => { const m = c.match(/(\d{1,2})[-\s/]([A-Za-z]{3})[a-z]*[-\s/](\d{4})/); if (m && !date && RC_MON[m[2].toLowerCase()]) date = `${m[3]}-${pad2(RC_MON[m[2].toLowerCase()])}-${pad2(+m[1])}`; }));
+  if (!date && filename) { const m = String(filename).match(/(\d{2})(\d{2})(\d{2})(?!\d)/); if (m) date = `20${m[3]}-${m[2]}-${m[1]}`; }
+  const hi = rows.findIndex((r) => r.some((c) => /^code$/i.test(c)) && r.some((c) => /\bcl\b|closing/i.test(c)));
+  if (hi < 0) return { error: "This does not look like Tropicana's ledger statement: there is no Code / Base CL header." };
+  const H = rows[hi], col = (re) => H.findIndex((c) => re.test(c));
+  const C = { code: col(/^code$/i), desc: col(/desc/i), op: col(/\bop\b|opening/i), inn: col(/\bin\b/i), out: col(/\bout\b/i), cl: col(/\bcl\b|closing/i), uom: col(/uom|unit/i) };
+  const lines = []; let total = null;
+  rows.slice(hi + 1).forEach((r) => {
+    const code = rcCode(r[C.code]), n = (j) => (j >= 0 ? +String(r[j] || "0").replace(/,/g, "") || 0 : 0);
+    if (!code) { if (/^total$/i.test(r[C.desc] || "") && total == null) total = n(C.cl); return; }
+    const desc = String(r[C.desc] || "").replace(RC_CODE, "").trim();
+    lines.push({ code, desc, qc: /^SH/.test(code) || /\(\s*swiggy\s*\)|\bswiggy\b/i.test(desc), op: n(C.op), inn: n(C.inn), out: n(C.out), cl: n(C.cl), uom: C.uom >= 0 ? r[C.uom] : "crates" });
+  });
+  if (!lines.length) return { error: "No product lines (SR / SH codes) were found in that file." };
+  return { date, lines, total, file: filename || "" };
+}
+
+/* ---------- matching lines to products ---------- */
+const rcPoolList = (qc) => (qc ? D.qcStock : D.stock);
+const rcProd = (qc, sap) => (qc ? qcBySap[sap] : stockBySap[sap]);
+function rcSuggest(line, onLS) {
+  /* candidates: products on this side, leaving out ones that already carry another code that is on the statement */
+  const pool = rcPoolList(line.qc).filter((s) => !rcCodesOf(s.trop).some((c) => c !== line.code && onLS && onLS.has((line.qc ? "Q" : "O") + c))), have = new Set(pool.map((s) => s.sap));
+  const raw = line.desc.replace(/\(\s*swiggy\s*\)/gi, " ").replace(/\*/g, " x ");
+  const M = impMatch(raw).filter((x) => have.has(x.sap));
+  if (!M.length) return { sure: false, opts: [] };
+  const top = M[0], second = M[1], p = rcProd(line.qc, top.sap), taken = rcCodesOf(p && p.trop).filter((c) => c !== line.code);
+  /* sure: a clear winner that has no other code yet on this side */
+  const sure = top.score >= 0.75 && (!second || top.score - second.score >= 0.15) && (line.qc || !taken.length);
+  return { sure, sap: top.sap, opts: M.slice(0, 5).map((x) => x.sap) };
+}
+function rcSetCode(qc, sap, code) {
+  const p = rcProd(qc, sap); if (!p) return false;
+  const now = rcCodesOf(p.trop);
+  if (now.includes(code)) return true;
+  if (qc) p.trop = now.length ? `${p.trop} + ${code}` : code;
+  else p.trop = code; /* SahiReach stock: one Tropicana code per product */
+  if (qc && stockBySap[sap] && !rcCodesOf(stockBySap[sap].trop).length) { /* nothing */ }
+  return true;
+}
+
+/* ---------- the comparison ---------- */
+function rcRun(ls) {
+  const today = ymd(NOW()), d = ls.date && ls.date < today ? ls.date : today, T = d < today ? addDays(d, 1) + "T00:00" : STK_NOW;
+  const ownAt = stkValueAt(T, "own").v, qcAt = stkValueAt(T, "qc").v;
+  const pend = d < today ? stkBookedAt(T) : pendingEA();
+  /* sure codes are saved now; doubtful ones are asked */
+  const ask = [], added = [];
+  const byCode = (qc, code) => rcPoolList(qc).filter((s) => rcCodesOf(s.trop).includes(code)), onLS = new Set(ls.lines.map((l) => (l.qc ? "Q" : "O") + l.code));
+  ls.lines.forEach((l) => {
+    if (byCode(l.qc, l.code).length) return;
+    const g = rcSuggest(l, onLS);
+    if (g.sure && CAN_EDIT) { rcSetCode(l.qc, g.sap, l.code); added.push({ code: l.code, desc: l.desc, qc: l.qc, sap: g.sap }); }
+    else ask.push({ code: l.code, desc: l.desc, qc: l.qc, cl: l.cl, sap: g.sap || "", opts: g.opts });
+  });
+  if (added.length) logActivity("Tropicana codes added", `${added.length} product${added.length > 1 ? "s" : ""}`, added.map((a) => `${a.code} → ${shortName((rcProd(a.qc, a.sap) || {}).name || a.sap)}`).join(", "));
+  /* groups: Tropicana lines and our products joined through their codes */
+  const parent = {}, find = (x) => (parent[x] === undefined ? (parent[x] = x) : parent[x] === x ? x : (parent[x] = find(parent[x]))), uni = (a, b) => { parent[find(a)] = find(b); };
+  const lineBy = {}; ls.lines.forEach((l) => { lineBy[l.code] = l; find("L:" + l.code); });
+  D.stock.forEach((s) => { const k = "O:" + s.sap; find(k); rcCodesOf(s.trop).forEach((c) => { if (lineBy[c] && !lineBy[c].qc) uni(k, "L:" + c); }); });
+  D.qcStock.forEach((q) => { const k = "Q:" + q.sap; find(k); rcCodesOf(q.trop).forEach((c) => { if (lineBy[c] && lineBy[c].qc) uni(k, "L:" + c); }); });
+  const G = {}; Object.keys(parent).forEach((k) => { const r = find(k); (G[r] = G[r] || []).push(k); });
+  const rows = [];
+  Object.values(G).forEach((ks) => {
+    const L = ks.filter((k) => k[0] === "L").map((k) => lineBy[k.slice(2)]), O = ks.filter((k) => k[0] === "O").map((k) => k.slice(2)), Q = ks.filter((k) => k[0] === "Q").map((k) => k.slice(2));
+    const qc = Q.length > 0 || (L.length > 0 && L.every((l) => l.qc));
+    const saps = qc ? Q : O;
+    const ours = qc ? Q.reduce((a, s) => a + (qcAt[s] || 0), 0) : O.reduce((a, s) => { const st = stockBySap[s]; return a + (st && st.upc ? (ownAt[s] || 0) / st.upc : 0); }, 0);
+    const trop = L.reduce((a, l) => a + l.cl, 0);
+    if (!L.length && Math.abs(ours) < 0.005) return; /* nothing at Tropicana, nothing with us */
+    if (!saps.length && !L.length) return;
+    const diff = rcR2(ours - trop), names = saps.map((s) => (rcProd(qc, s) || {}).name || s);
+    const r = { qc, saps, codes: L.length ? L.map((l) => l.code) : [...new Set(saps.flatMap((s) => rcCodesOf((rcProd(qc, s) || {}).trop)))], names: names.length ? names : L.map((l) => l.desc), desc: L.map((l) => l.desc), ours: rcR2(ours), trop, diff, op: L.reduce((a, l) => a + l.op, 0), inn: L.reduce((a, l) => a + l.inn, 0), out: L.reduce((a, l) => a + l.out, 0), status: "match", why: [] };
+    if (!saps.length) { r.status = "unmapped"; r.why.push("No product in the tool has this Tropicana code yet. Choose the product above."); rows.push(r); return; }
+    if (Math.abs(diff) < 0.01) { rows.push(r); return; }
+    rcExplain(r, { d, T, today, pend });
+    rows.push(r);
+  });
+  /* the same product off in opposite directions in the two pools: booked under the wrong one */
+  rows.forEach((a) => { if (a.qc || a.status === "match") return; rows.forEach((b) => { if (!b.qc || b.status === "match" || !b.saps.some((s) => a.saps.includes(s))) return; if (rcNear(a.diff + b.diff, 0)) { const t = `SahiReach and quick commerce together match Tropicana: ${rcCr(Math.abs(a.diff))} are under the wrong one. Move them between the two stocks.`; a.why.unshift(t); b.why.unshift(t); a.status = b.status = "explained"; } }); });
+  /* two products of the same kind off by the same crates in opposite directions: one was likely picked in place of the other */
+  const grp = (r) => { const st = r.saps.length === 1 ? stockBySap[r.saps[0]] || qcBySap[r.saps[0]] || catBySap[r.saps[0]] : null; return st ? IMP_CAT_GROUP(st.cat) : null; };
+  rows.forEach((a) => { if (a.status !== "open" && a.status !== "explained") return; rows.forEach((b) => { if (b === a || b.qc !== a.qc || (b.status !== "open" && b.status !== "explained") || Math.abs(a.diff) < 1 || !rcNear(a.diff + b.diff, 0) || !grp(a) || grp(a) !== grp(b)) return; a.why.unshift(`${shortName(b.names[0])} is ${nf(Math.abs(b.diff), 2)} crate${Math.abs(b.diff) === 1 ? "" : "s"} ${b.diff > 0 ? "over" : "short"} by the same amount: one may have been picked or sent in place of the other.`); a.status = "explained"; }); });
+  const ord = { unmapped: 0, open: 1, explained: 2, loose: 3, match: 4 };
+  rows.sort((a, b) => ord[a.status] - ord[b.status] || Math.abs(b.diff) - Math.abs(a.diff) || String(a.names[0]).localeCompare(String(b.names[0])));
+  const sum = (qc) => { const R = rows.filter((r) => r.qc === qc); return { n: R.length, match: R.filter((r) => r.status === "match").length, loose: R.filter((r) => r.status === "loose").length, explained: R.filter((r) => r.status === "explained").length, open: R.filter((r) => r.status === "open" || r.status === "unmapped").length, ours: rcR2(R.reduce((a, r) => a + r.ours, 0)), trop: R.reduce((a, r) => a + r.trop, 0) }; };
+  return { at: iso(NOW()), by: HOST ? ME.name : undefined, file: ls.file, date: ls.date, asOf: d, tropTotal: ls.total, lines: ls.lines, rows, ask, added, own: sum(false), qcs: sum(true) };
+}
+/* what the records say about one difference */
+function rcExplain(r, X) {
+  const diff = r.diff, abs = Math.abs(diff), why = r.why, units = (sap) => { const st = stockBySap[sap] || qcBySap[sap] || {}; return st.upc || 1; };
+  const ours = r.ours, whole = Math.abs(ours - Math.round(ours)) < 0.01;
+  if (abs < 1 && !whole) { r.status = "loose"; why.push(`Loose boxes: we have ${rcCr(ours)}, and Tropicana counts whole crates only.`); return; }
+  let explained = false;
+  const crOf = (o, qc) => (linesByOrder[o.id] || []).filter((l) => r.saps.includes(l.sap)).reduce((a, l) => a + (qc ? l.qc || 0 : (l.ea || 0) / units(l.sap)), 0);
+  if (!r.qc) {
+    /* orders saved, not yet dispatched in the tool: if Tropicana has sent them, Tropicana is lower by exactly that */
+    const P = D.orders.filter((o) => o.status !== "Cancelled" && o.time < X.T && !(o.status === "Dispatched" && o.dispatched && o.dispatched < X.T)).map((o) => ({ o, cr: crOf(o, false) })).filter((x) => x.cr > 0);
+    const pendCr = P.reduce((a, x) => a + x.cr, 0);
+    if (diff > 0 && P.length) {
+      const one = P.find((x) => rcNear(x.cr, diff));
+      if (one) { why.push(`Tropicana may already have sent ${one.o.id} (${shortOf(one.o.dist)}, ${rcCr(one.cr)}): it is still not dispatched in the tool. If it has gone, mark it dispatched.`); explained = true; }
+      else if (rcNear(pendCr, diff)) { why.push(`Tropicana may already have sent all ${P.length} orders waiting here (${P.map((x) => shortOf(x.o.dist)).join(", ")}, ${rcCr(pendCr)}). Mark them dispatched if they have gone.`); explained = true; }
+      else why.push(`${rcCr(pendCr)} are reserved for orders not yet dispatched (${P.map((x) => `${shortOf(x.o.dist)} ${nf(x.cr, 1)}`).join(", ")}). If some of them have left the store, that explains part of it.`);
+    }
+    /* dispatched in the tool after the statement's day */
+    if (diff < 0) {
+      const after = D.orders.filter((o) => o.status === "Dispatched" && o.dispatched && o.dispatched.slice(0, 10) >= X.d).map((o) => ({ o, cr: crOf(o, false) })).filter((x) => x.cr > 0);
+      const one = after.find((x) => rcNear(x.cr, -diff));
+      if (one && X.d === X.today) { why.push(`${one.o.id} (${shortOf(one.o.dist)}, ${rcCr(one.cr)}) was marked dispatched today. Tropicana's statement may have been made before it left.`); explained = true; }
+    }
+  } else {
+    /* quick commerce: deliveries */
+    const dl = D.qcPOs.filter((p) => p.status === "Delivered" && p.deliveredOn && p.deliveredOn.slice(0, 10) >= X.d).map((p) => ({ p, cr: (qcLinesByPO[p.po] || []).filter((l) => r.saps.includes(l.sap)).reduce((a, l) => a + (l.delivered || 0) / (l.ppc || (qcBySap[l.sap] || {}).ppc || 1), 0) })).filter((x) => x.cr > 0);
+    const one = dl.find((x) => rcNear(x.cr, -diff));
+    if (diff < 0 && one) { why.push(`${one.p.platform} PO ${one.p.po} (${rcCr(one.cr)}) was marked delivered on ${fmtDate(one.p.deliveredOn)}. Tropicana's statement may have been made before it left.`); explained = true; }
+    if (diff > 0) {
+      const locks = (typeof qcLocks === "function" ? qcLocks() : []).map((L) => ({ L, cr: L.rows.filter((x) => r.saps.includes(x.sap)).reduce((a, x) => a + (x.fromQC || 0), 0) })).filter((x) => x.cr > 0);
+      const lk = locks.find((x) => rcNear(x.cr, diff));
+      if (lk) { why.push(`A ${lk.L.platform || "Swiggy / Zepto"} pick list for ${rcCr(lk.cr)} was sent but not marked delivered. If it has gone, mark it delivered.`); explained = true; }
+      const gt = r.saps.reduce((a, s) => a + (typeof gtFromQC === "function" ? gtFromQC(s) : 0), 0);
+      if (!explained && gt > 0 && rcNear(gt, diff)) { why.push(`${rcCr(gt)} were promised to distributor orders. If those orders have gone, mark them dispatched.`); explained = true; }
+    }
+  }
+  /* stock that came in */
+  const pool = r.qc ? /QC/i : /own/i;
+  const pur = D.purchases.filter((p) => r.saps.includes(p.sap) && pool.test(p.pool || "") && p.time && p.time.slice(0, 10) >= addDays(X.d, -3)).reduce((m, p) => { (m[p.id] = m[p.id] || { id: p.id, time: p.time, cr: 0 }).cr += p.crates || (p.ea || 0) / units(p.sap); return m; }, {});
+  Object.values(pur).forEach((p) => { if (rcNear(p.cr, Math.abs(diff))) { why.push(diff > 0 ? `${p.id} (${rcCr(p.cr)}) was received in the tool on ${fmtDate(p.time)}. Check that it reached Tropicana and is on their ledger.` : `${p.id} (${rcCr(p.cr)}) was received on ${fmtDate(p.time)}: check it was entered in full.`); explained = true; } });
+  if (!r.qc) (D.notes || []).filter((n) => n.status === "Active" && Array.isArray(n.lines) && n.time && n.time.slice(0, 10) >= addDays(X.d, -7)).forEach((n) => { const cr = n.lines.filter((l) => r.saps.includes(l.sap) && l.stocked).reduce((a, l) => a + l.stocked / units(l.sap), 0); if (cr && rcNear(Math.abs(cr), Math.abs(diff))) { why.push(`${n.no || "A note"} (${shortOf(n.party)}) ${cr > 0 ? "put" : "took"} ${rcCr(Math.abs(cr))} ${cr > 0 ? "back into" : "out of"} stock on ${fmtDate(n.time)}. Check ${cr > 0 ? "the goods physically came back to Tropicana" : "they left Tropicana"}.`); explained = true; } });
+  if (r.inn || r.out) why.push(`Tropicana's ledger shows ${r.inn ? nf(r.inn) + " in" : ""}${r.inn && r.out ? " and " : ""}${r.out ? nf(r.out) + " out" : ""} on ${fmtDate(X.d)}.`);
+  if (ours < -0.005) why.push("Our stock is below zero: an order or delivery took more than we had. A purchase or return may be missing in the tool.");
+  if (!explained) {
+    why.push(diff > 0 ? `We show ${rcCr(abs)} more than Tropicana. Something went out that the tool has not recorded (a delivery, a return to Hangyo), or stock was entered twice.` : `Tropicana has ${rcCr(abs)} more than we show. Stock came in that the tool has not recorded (a purchase or a return), or an order took too much.`);
+    const st = !r.qc && r.saps.length === 1 ? stockBySap[r.saps[0]] : r.qc && r.saps.length === 1 ? qcBySap[r.saps[0]] : null;
+    if (st && st.move) why.push(`Last movement in the tool: ${st.move}`);
+  }
+  r.status = explained ? "explained" : "open";
+}
+
+/* ---------- screen ---------- */
+const RC_ST = { match: ["good", "Matches"], loose: ["plain", "Loose boxes"], explained: ["warn", "Likely reason found"], open: ["bad", "Check"], unmapped: ["bad", "Code not linked"] };
+function rcRowHtml(r) {
+  const [cls, lbl] = RC_ST[r.status];
+  return `<div class="row" style="align-items:flex-start;flex-wrap:wrap;gap:8px"><span class="grow" style="min-width:220px"><div class="row-title" style="white-space:normal">${esc(r.names.map(shortName).join(" + "))}</div>
+    <div class="row-sub">${r.codes.length ? esc(r.codes.join(" + ")) : "No Tropicana code in the tool"} · we ${nf(r.ours, 2)} · Tropicana ${nf(r.trop)}</div>
+    ${r.why.length ? `<ul style="margin:6px 0 0 16px;padding:0;color:var(--text-2);font-size:13px;line-height:1.45">${r.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}</span>
+    <span class="row-end" style="flex-direction:column;align-items:flex-end;gap:6px"><span class="pill ${cls}" style="height:22px;font-size:12px">${lbl}</span>${r.status !== "match" ? `<span class="num" style="font-weight:600;color:${r.diff > 0 ? "var(--warn)" : "var(--bad)"}">${r.diff > 0 ? "+" : ""}${nf(r.diff, 2)} cr</span>` : ""}</span></div>`;
+}
+function rcAskHtml(R) {
+  if (!R.ask.length) return "";
+  return `<div class="card card-pad"><div class="card-title">Which product is this?</div><div class="row-sub" style="margin-top:4px">These Tropicana lines have no code in the tool and the name match is not certain. Choose the product once; the code is saved on it.</div>
+    <div class="group" style="margin-top:12px">${R.ask.map((a, i) => { const pool = rcPoolList(a.qc), opts = a.opts.length ? a.opts : []; return `<div class="row" style="flex-wrap:wrap;gap:10px"><span class="grow" style="min-width:200px"><div class="row-title" style="white-space:normal"><span class="mono">${esc(a.code)}</span> ${esc(a.desc)}</div><div class="row-sub">${a.qc ? "Quick commerce" : "SahiReach stock"} · ${nf(a.cl)} crates at Tropicana</div></span>
+      <span class="row-end hstack gap-8" style="flex-wrap:wrap"><select class="select sm" style="max-width:280px" id="rc-ask-${i}" ${CAN_EDIT ? "" : "disabled"}><option value="">Choose the product…</option>${opts.length ? `<optgroup label="Closest names">${opts.map((s) => `<option value="${esc(s)}" ${s === a.sap ? "selected" : ""}>${esc(shortName((rcProd(a.qc, s) || {}).name || s))}</option>`).join("")}</optgroup>` : ""}<optgroup label="All ${a.qc ? "quick commerce" : "SahiReach"} products">${pool.slice().sort((x, y) => x.name.localeCompare(y.name)).map((s) => `<option value="${esc(s.sap)}">${esc(shortName(s.name))}</option>`).join("")}</optgroup></select>${CAN_EDIT ? `<button class="btn btn-sm btn-primary" data-act="rcMapSave" data-i="${i}">Save</button>` : ""}</span></div>`; }).join("")}</div></div>`;
+}
+function rcBody() {
+  const R = (D.recon || {}).last;
+  const up = CAN_EDIT ? `<div class="card card-pad"><div class="hstack between wrap gap-12"><div><div class="card-title">${R ? "Check a newer statement" : "Upload Tropicana's ledger statement"}</div><div class="row-sub">The daily SAHIREACH_LS file (.xls). Swiggy lines are checked against quick commerce stock.</div></div><label class="btn btn-primary" style="cursor:pointer">${ic("doc", "sm")} Choose file<input type="file" id="rc-file" accept=".xls,.xlsx,.csv" data-in="rcFile" style="display:none"></label></div><div id="rc-msg"></div></div>` : "";
+  if (!R) return up + `<div class="group"><div class="empty"><div class="big">Not checked yet</div>Upload the statement to compare it with our current stock.</div></div>`;
+  const sec = (qc) => {
+    const rows = R.rows.filter((r) => r.qc === qc), S2 = qc ? R.qcs : R.own, off = rows.filter((r) => r.status === "open" || r.status === "unmapped" || r.status === "explained"), loose = rows.filter((r) => r.status === "loose"), ok = rows.filter((r) => r.status === "match");
+    const show = (S.rcAll || {})[qc ? "q" : "o"];
+    return `<div><div class="group-label"><span>${qc ? "Quick commerce (Swiggy lines)" : "SahiReach stock"}</span><span>${S2.match} of ${S2.n} match</span></div>
+      <div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px"><div class="tile"><div class="tile-label">Tropicana</div><div class="tile-value">${nf(S2.trop)}<small>crates</small></div></div><div class="tile"><div class="tile-label">Our current stock</div><div class="tile-value">${nf(S2.ours, 1)}<small>crates</small></div></div><div class="tile"><div class="tile-label">To look at</div><div class="tile-value" ${S2.open ? 'style="color:var(--bad)"' : 'style="color:var(--good)"'}>${S2.open}</div><div class="tile-sub">${S2.explained} with a likely reason · ${S2.loose} loose boxes</div></div></div>
+      ${off.length ? `<div class="group">${off.map(rcRowHtml).join("")}</div>` : `<div class="banner good">${ic("check", "sm")}<span>No differences to look at.</span></div>`}
+      ${loose.length || ok.length ? `<button class="btn btn-sm btn-secondary" style="margin-top:10px" data-act="rcShowAll" data-k="${qc ? "q" : "o"}">${show ? "Hide" : "Show"} ${ok.length} matching${loose.length ? ` and ${loose.length} loose-box` : ""} line${ok.length + loose.length > 1 ? "s" : ""}</button>${show ? `<div class="group" style="margin-top:10px">${loose.concat(ok).map(rcRowHtml).join("")}</div>` : ""}` : ""}</div>`;
+  };
+  const totalOK = R.tropTotal == null || rcNear(R.tropTotal, R.lines.reduce((a, l) => a + l.cl, 0));
+  return `${up}<div class="banner info">${ic("info", "sm")}<span><b>Tropicana statement for ${esc(fmtDate(R.date || R.asOf))}</b> (${esc(R.file || "")}), checked ${esc(fmtDT(R.at))}${R.by ? " by " + esc(R.by) : ""}. ${R.asOf < ymd(toDate(R.at)) ? `Our stock was worked back to the end of ${esc(fmtDate(R.asOf))} to compare like with like.` : "Compared with our current stock, reserved included (it is still at Tropicana until dispatched)."}${totalOK ? "" : ` The file's total (${nf(R.tropTotal)}) does not equal its lines; check the file.`}</span></div>
+    ${R.added && R.added.length ? `<div class="banner good">${ic("check", "sm")}<span><b>${R.added.length} Tropicana code${R.added.length > 1 ? "s" : ""} added to products:</b> ${R.added.map((a) => `${esc(a.code)} → ${esc(shortName((rcProd(a.qc, a.sap) || {}).name || a.sap))}`).join(" · ")}. Change one in Setup if it is wrong.</span></div>` : ""}
+    ${rcAskHtml(R)}${sec(false)}${sec(true)}`;
+}
+ACT.reconSheet = () => { openSheet("Check with Tropicana", `<div id="rc-body" class="stack gap-16">${rcBody()}</div>`, `${(D.recon || {}).last ? `<button class="btn btn-secondary" data-act="reconExcel">${ic("doc", "sm")} Download Excel</button>` : ""}<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true); };
+const rcRedraw = () => { const sc = $("#sheet .sheet-body") || $("#sheet"), y = sc ? sc.scrollTop : 0; part("rc-body", rcBody()); if (sc) sc.scrollTop = y; };
+ACT.rcShowAll = (el) => { S.rcAll = S.rcAll || {}; S.rcAll[el.dataset.k] = !S.rcAll[el.dataset.k]; rcRedraw(); };
+function rcStore(R) {
+  D.recon = D.recon || {}; D.recon.last = R;
+  D.recon.history = [{ at: R.at, by: R.by, date: R.date, file: R.file, own: R.own, qc: R.qcs }].concat(D.recon.history || []).slice(0, 24);
+}
+IN.rcFile = async (el) => {
+  const f = el.files && el.files[0]; if (!f || !CAN_EDIT) return;
+  const sig = [f.name, f.size, f.lastModified].join("|"); if (S.rcSig === sig) return; S.rcSig = sig;
+  part("rc-msg", `<div class="row-sub" style="margin-top:10px">Reading ${esc(f.name)}…</div>`);
+  try {
+    await loadScriptOnce(XLSX_SRC, () => !!window.XLSX);
+    const ls = rcParse(xlsxSheets(await f.arrayBuffer(), 1)[0] || [], f.name);
+    if (ls.error) { S.rcSig = null; part("rc-msg", `<div class="banner bad" style="margin-top:10px">${ic("alert", "sm")}<span>${esc(ls.error)}</span></div>`); return; }
+    const R = rcRun(ls); rcStore(R);
+    logActivity("Checked with Tropicana", fmtDate(R.date || R.asOf), `SahiReach ${R.own.match}/${R.own.n} match, ${R.own.open} to look at · quick commerce ${R.qcs.match}/${R.qcs.n} match, ${R.qcs.open} to look at`);
+    S.rcSig = null; ACT.reconSheet(); render();
+  } catch (e) { S.rcSig = null; part("rc-msg", `<div class="banner bad" style="margin-top:10px">${ic("alert", "sm")}<span>Could not read that file. ${esc(e.message || "")}</span></div>`); }
+};
+ACT.rcMapSave = (el) => {
+  const R = (D.recon || {}).last, a = R && R.ask[+el.dataset.i], sel = $("#rc-ask-" + el.dataset.i); if (!a || !sel) return;
+  if (!sel.value) { toast("Choose the product first", "alert"); return; }
+  rcSetCode(a.qc, sel.value, a.code);
+  logActivity("Tropicana code added", a.code, `${a.desc} → ${(rcProd(a.qc, sel.value) || {}).name || sel.value}`);
+  const prevAdded = R.added || [], N = rcRun({ date: R.date, lines: R.lines, total: R.tropTotal, file: R.file }); N.at = R.at; N.added = prevAdded.concat(N.added || []); rcStore(N); D.recon.history.splice(1, 1);
+  rcRedraw(); render(); toast(`${a.code} linked`, "check");
+};
+ACT.reconExcel = async (el) => {
+  const R = (D.recon || {}).last; if (!R) return;
+  const head = ["Pool", "Tropicana code", "Tropicana description", "Product in the tool", "SAP code", "Tropicana opening", "Tropicana in", "Tropicana out", "Tropicana closing (crates)", "Our current stock (crates)", "Difference (ours − Tropicana)", "Status", "Likely reason / what to check"];
+  const aoa = [[`STOCK CHECK WITH TROPICANA · statement for ${dmyOf(R.date || R.asOf)} (${R.file || ""}) · checked ${stampOf(toDate(R.at))}`], [`SahiReach stock: ${R.own.match} of ${R.own.n} match, ${R.own.open} to look at. Quick commerce: ${R.qcs.match} of ${R.qcs.n} match, ${R.qcs.open} to look at. Our stock is current stock (reserved included).`], [], head];
+  R.rows.forEach((r) => aoa.push([r.qc ? "Quick commerce" : "SahiReach", r.codes.join(" + "), r.desc.join(" + "), r.saps.length ? r.names.join(" + ") : "", r.saps.join(" + "), r.op, r.inn, r.out, r.trop, r.ours, r.diff, RC_ST[r.status][1], r.why.join(" ")]));
+  aoa.push(["", "", "TOTAL", "", "", "", "", "", rcR2(R.rows.reduce((a, r) => a + r.trop, 0)), rcR2(R.rows.reduce((a, r) => a + r.ours, 0)), rcR2(R.rows.reduce((a, r) => a + r.diff, 0)), "", ""]);
+  if (await downloadBook(el, [{ name: "Stock check", aoa, cols: [14, 12, 44, 44, 18, 9, 8, 8, 12, 12, 12, 18, 90] }], `SahiReach stock check with Tropicana ${dmyOf(R.date || R.asOf)}.xlsx`)) toast("Stock check downloaded", "doc");
+};
+
 /* ===== TOD & NOTES ===== */
 function todState() {
   const by = {}; let total = 0;
@@ -4028,7 +4260,7 @@ function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
 /* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
-const VIEW_ACTS = new Set("stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_ACTS = new Set("reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("stkDate stkMonth ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {
