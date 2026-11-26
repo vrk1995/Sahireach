@@ -2933,7 +2933,7 @@ ACT.productSheet = (el) => {
     ${r.sap ? `<div><div class="group-label"><span>Replenishment</span></div><div class="card card-pad"><div class="kv"><div><div class="k">Sells per day</div><div class="v num">${nf(r.perDay, 2)} crates</div></div><div><div class="k">Days of stock</div><div class="v num">${r.perDay > 0 ? (Math.max(0, cr) / r.perDay).toFixed(1) : "–"}</div></div><div><div class="k">Reorder point</div><div class="v num">${nf(r.rop, 1)} crates</div></div><div><div class="k">Target stock</div><div class="v num">${nf(r.target, 1)} crates</div></div><div><div class="k">On order</div><div class="v num">${nf(r.onOrder, 1)} crates</div></div><div><div class="k">Missed, 28 days</div><div class="v num">${nf(r.missed, 1)} crates</div></div></div></div></div>` : ""}
     ${(() => { const w = slowRows().find((x) => x.sap === sap); return w ? `<button class="banner warn" style="text-align:left;width:100%" data-act="slowSheet" data-sap="${esc(sap)}">${ic("info", "sm")}<span><b>Slow moving.</b> ${w.still ? "No sales in the last 4 weeks." : "Stock lasts " + coverTxt(w) + " at the current pace."} Push about ${nf(w.push, 1)} crates. Tap to see who bought it before.</span></button>` : ""; })()}
     ${s.move ? `<div class="banner info">${ic("clock", "sm")}<span><b>Last movement.</b> ${esc(s.move)}</span></div>` : ""}
-    ${recent.length ? `<div><div class="group-label"><span>Latest orders with it</span></div><div class="group">${recent.map((l) => { const o = orderById(l.id) || {}; return `<div class="row"><span class="grow"><div class="row-title clip">${esc(o.dist || "")}</div><div class="row-sub">${fmtDate(o.time)}</div></span><span class="row-end"><span class="row-value">${nf(l.crates, 2)} crates</span></span></div>`; }).join("")}</div></div>` : ""}`, `<button class="btn btn-secondary" data-act="productEdit" data-sap="${esc(sap)}">${ic("pencil", "sm")} Edit product and prices</button>`);
+    ${recent.length ? `<div><div class="group-label"><span>Latest orders with it</span></div><div class="group">${recent.map((l) => { const o = orderById(l.id) || {}; return `<div class="row"><span class="grow"><div class="row-title clip">${esc(o.dist || "")}</div><div class="row-sub">${fmtDate(o.time)}</div></span><span class="row-end"><span class="row-value">${nf(l.crates, 2)} crates</span></span></div>`; }).join("")}</div></div>` : ""}`, `<button class="btn btn-secondary" data-act="itemExcel" data-sap="${esc(sap)}">${ic("doc", "sm")} Item ledger (Excel)</button><button class="btn btn-secondary" data-act="productEdit" data-sap="${esc(sap)}">${ic("pencil", "sm")} Edit product and prices</button>`);
 };
 ACT.purchaseSheet = (el) => {
   const lines = D.purchases.filter((p) => p.id === el.dataset.id), g = lines[0];
@@ -4025,6 +4025,124 @@ ACT.reconExcel = async (el) => {
   if (await downloadBook(el, [{ name: "Stock check", aoa, cols: [14, 12, 44, 44, 18, 9, 8, 8, 12, 12, 12, 18, 90] }], `SahiReach stock check with Tropicana ${dmyOf(R.date || R.asOf)}.xlsx`)) toast("Stock check downloaded", "doc");
 };
 
+/* ===== ITEM LEDGER: every movement of one product, as a styled Excel =====
+   Like Vyapar's item-wise transaction report, but in date order with a running balance, in boxes and crates:
+   purchases, distributor orders as they were dispatched, sales returns, returns to Hangyo, stock moved between
+   SahiReach and quick commerce, and the orders still waiting (reserved). A second sheet does the same for the
+   product's quick commerce stock. Uses the styled build of the Excel library (loaded only for this). */
+const XLSXS_SRC = (HOST && HOST.xlsxStyleSrc) || "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js";
+const ilDay = (s) => String(s || "").slice(0, 10);
+function itemMoves(sap) {
+  const st = stockBySap[sap], u = (st && st.upc) || (catBySap[sap] || {}).upc || 1, own = [], qc = [], pend = [];
+  D.purchases.forEach((p) => { if (p.sap !== sap) return; const d = ilDay(p.invDate || p.time); if (/QC/i.test(p.pool || "")) qc.push({ d, type: "Purchase", ref: p.inv || p.id, party: p.supplier || "Hangyo", inn: +p.crates || 0, out: 0, rate: p.rate, note: p.batch ? "Batch " + p.batch : "" }); else own.push({ d, type: "Purchase", ref: p.inv || p.id, party: p.supplier || "Hangyo", inn: +p.ea || 0, out: 0, rate: p.rate, note: p.batch ? "Batch " + p.batch : "" }); });
+  D.orders.forEach((o) => {
+    if (o.status === "Cancelled") return;
+    (linesByOrder[o.id] || []).forEach((l) => {
+      if (l.sap !== sap || !(l.ea > 0)) return;
+      const x = { d: ilDay(o.status === "Dispatched" ? o.dispatched : o.time), type: o.status === "Dispatched" ? "Sale (dispatched)" : "Order waiting to go", ref: o.id, party: o.dist, inn: 0, out: l.ea, rate: l.billed, note: l.qc ? `${nf(l.qc, 2)} crate${l.qc === 1 ? "" : "s"} from quick commerce stock` : l.part ? "Broken crate" : "" };
+      if (o.status === "Dispatched") own.push(x); else pend.push(x);
+    });
+  });
+  (D.notes || []).forEach((n) => { if (n.status !== "Active" || !Array.isArray(n.lines)) return; n.lines.forEach((l) => { if (l.sap !== sap) return; const k = ntKind(n.type), back = l.stocked > 0, outH = l.stocked < 0; own.push({ d: ilDay(n.date || n.time), type: k === "preturn" ? "Return to Hangyo (debit note)" : "Sales return (credit note)", ref: n.no || n.id, party: n.party, inn: back ? l.stocked : 0, out: outH ? -l.stocked : 0, rate: l.rate, note: k === "return" ? `${l.cond || "Good"}${back ? ", back in stock" : ", not back in stock"}` : "" }); }); });
+  (D.transfers || []).forEach((t) => (t.lines || []).forEach((l) => {
+    if (l.sap !== sap) return; const d = ilDay(t.time);
+    if (t.kind === "purchase") { own.push({ d, type: "From quick commerce stock", ref: t.id, party: t.ref || "", inn: l.crates * u, out: 0, note: t.docNo ? "Purchase invoice " + t.docNo : "Purchase invoice pending" }); qc.push({ d, type: "Used for distributor orders", ref: t.id, party: t.ref || "", inn: 0, out: l.crates }); }
+    else if (t.kind === "credit") own.push({ d, type: "Sent with Swiggy / Zepto delivery", ref: t.id, party: t.ref || "", inn: 0, out: l.crates * u, note: t.docNo ? "Credit note " + t.docNo : "Credit note pending" });
+  }));
+  D.qcPOs.forEach((p) => { const L = (qcLinesByPO[p.po] || []).filter((l) => l.sap === sap); L.forEach((l) => (l.backs || []).forEach((b) => qc.push({ d: ilDay(b.time), type: "Came back good (GRN)", ref: p.po, party: p.platform, inn: b.crates || 0, out: 0 }))); if (p.status !== "Delivered") return; const cr = L.reduce((a, l) => a + (l.delivered || 0) / (l.ppc || (qcBySap[sap] || {}).ppc || 1), 0); if (cr > 0) qc.push({ d: ilDay(p.deliveredOn), type: "Delivered", ref: p.po, party: p.platform, inn: 0, out: cr, rate: null, note: "" }); });
+  const byDate = (a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : (b.inn > 0) - (a.inn > 0));
+  own.sort(byDate); qc.sort(byDate); pend.sort(byDate);
+  return { own, qc, pend, u };
+}
+
+/* ---------- a small styled-sheet builder ---------- */
+const IL = { tint: "0B7A70", tintSoft: "E6F2F1", ink: "1D1D1F", grey: "6E6E73", line: "E5E5EA", zebra: "F7F7F9", good: "1F7A36", bad: "C9001A", warn: "A04A00", warnSoft: "FFF4E5" };
+const ilSerial = (d) => { const p = String(d).split("-"); return (Date.UTC(+p[0], +p[1] - 1, +p[2]) - Date.UTC(1899, 11, 30)) / 864e5; };
+function ilSheet(X, rows, cols, merges) {
+  const ws = {}; let maxC = 0;
+  rows.forEach((r, ri) => (r.cells || []).forEach((c, ci) => {
+    if (c == null) return; maxC = Math.max(maxC, ci);
+    const cell = typeof c === "object" && !(c instanceof Date) ? c : { v: c };
+    const o = { v: cell.v == null ? "" : cell.v, t: cell.t || (typeof cell.v === "number" ? "n" : "s"), s: Object.assign({ font: { name: "Calibri", sz: 11, color: { rgb: IL.ink } }, alignment: { vertical: "center" } }, r.s || {}, cell.s || {}) };
+    if (cell.z) o.z = cell.z;
+    if (cell.v === "" || cell.v == null) { o.t = "s"; o.v = ""; }
+    ws[X.utils.encode_cell({ r: ri, c: ci })] = o;
+  }));
+  ws["!ref"] = X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length - 1, c: Math.max(maxC, cols.length - 1) } });
+  ws["!cols"] = cols.map((w) => ({ wch: w })); ws["!rows"] = rows.map((r) => (r.h ? { hpt: r.h } : null));
+  if (merges) ws["!merges"] = merges;
+  return ws;
+}
+function ilLedgerRows(title, sub, summary, head, body, foot, extra) {
+  const n = head.length, rows = [], merges = [];
+  const B = (rgb) => ({ bottom: { style: "thin", color: { rgb: rgb || IL.line } } });
+  rows.push({ h: 30, cells: [{ v: title, s: { font: { name: "Calibri", sz: 18, bold: true, color: { rgb: IL.tint } } } }] }); merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: n - 1 } });
+  rows.push({ h: 18, cells: [{ v: sub, s: { font: { name: "Calibri", sz: 10, color: { rgb: IL.grey } } } }] }); merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: n - 1 } });
+  rows.push({ h: 8, cells: [] });
+  /* summary: label over value, up to 4 per row, each two columns wide */
+  for (let i = 0; i < summary.length; i += 4) {
+    const L = { h: 16, cells: [] }, V = { h: 24, cells: [] }, r0 = rows.length;
+    summary.slice(i, i + 4).forEach(([k, v, z, color], j) => {
+      const c = j * Math.max(2, Math.floor(n / 4));
+      L.cells[c] = { v: String(k).toUpperCase(), s: { font: { name: "Calibri", sz: 9, bold: true, color: { rgb: IL.grey } }, fill: { fgColor: { rgb: IL.tintSoft } } } };
+      V.cells[c] = { v, z, s: { font: { name: "Calibri", sz: 14, bold: true, color: { rgb: color || IL.ink } }, fill: { fgColor: { rgb: IL.tintSoft } }, alignment: { horizontal: "left", vertical: "center" } } };
+      const w = Math.max(2, Math.floor(n / 4)); merges.push({ s: { r: r0, c }, e: { r: r0, c: c + w - 1 } }, { s: { r: r0 + 1, c }, e: { r: r0 + 1, c: c + w - 1 } });
+      for (let k2 = 1; k2 < w; k2++) { L.cells[c + k2] = { v: "", s: { fill: { fgColor: { rgb: IL.tintSoft } } } }; V.cells[c + k2] = { v: "", s: { fill: { fgColor: { rgb: IL.tintSoft } } } }; }
+    });
+    rows.push(L, V);
+  }
+  rows.push({ h: 10, cells: [] });
+  const hr = rows.length;
+  rows.push({ h: 30, cells: head.map((h) => ({ v: h.t, s: { font: { name: "Calibri", sz: 10, bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: IL.tint } }, alignment: { horizontal: h.r ? "right" : "left", vertical: "center", wrapText: true }, border: B(IL.tint) } })) });
+  body.forEach((r, i) => rows.push({ h: 20, cells: r.map((c, j) => { const h = head[j], v = c && typeof c === "object" ? c : { v: c }; return Object.assign({}, v, { z: v.z || h.z, s: Object.assign({ font: { name: "Calibri", sz: 11, color: { rgb: (v.color || h.color) || IL.ink }, bold: !!(v.bold || h.bold) }, fill: { fgColor: { rgb: v.fill || (i % 2 ? IL.zebra : "FFFFFF") } }, alignment: { horizontal: h.r ? "right" : "left", vertical: "center" }, border: B() }, v.s || {}) }); }) }));
+  if (foot) rows.push({ h: 24, cells: foot.map((c, j) => ({ v: c == null ? "" : c, z: head[j].z, s: { font: { name: "Calibri", sz: 11, bold: true, color: { rgb: IL.ink } }, alignment: { horizontal: head[j].r ? "right" : "left", vertical: "center" }, border: { top: { style: "medium", color: { rgb: IL.ink } } } } })) });
+  (extra || []).forEach((e) => { rows.push({ h: 10, cells: [] }); rows.push({ h: 22, cells: [{ v: e.title, s: { font: { name: "Calibri", sz: 12, bold: true, color: { rgb: e.color || IL.warn } } } }] }); const er = rows.length; rows.push({ h: 26, cells: e.head.map((h) => ({ v: h.t, s: { font: { name: "Calibri", sz: 10, bold: true, color: { rgb: IL.ink } }, fill: { fgColor: { rgb: e.fill || IL.warnSoft } }, alignment: { horizontal: h.r ? "right" : "left", vertical: "center", wrapText: true }, border: B() } })) }); e.body.forEach((r) => rows.push({ h: 20, cells: r.map((c, j) => { const v = c && typeof c === "object" ? c : { v: c == null ? "" : c }; return Object.assign({}, v, { z: v.z || e.head[j].z, s: { alignment: { horizontal: e.head[j].r ? "right" : "left" }, border: B() } }); }) })); if (e.note) rows.push({ h: 18, cells: [{ v: e.note, s: { font: { name: "Calibri", sz: 10, italic: true, color: { rgb: IL.grey } } } }] }); void er; });
+  return { rows, merges, hr };
+}
+function itemLedgerBook(X, sap) {
+  const st = stockBySap[sap], q = qcBySap[sap], c = catBySap[sap] || {}, name = (st && st.name) || (q && q.name) || c.name || sap, M = itemMoves(sap), u = M.u, money = SEE_MONEY;
+  const ss = ssRate(sap), dr = price(sap), mrp = (st && st.mrp) || c.mrp, x = st ? stockSplit(st) : null;
+  const NUM = "#,##0", DEC = "#,##0.00", RS = '"₹"#,##0.00', DATE = "dd-mmm-yyyy";
+  const sheets = [];
+  if (st) {
+    const net = M.own.reduce((a, m) => a + m.inn - m.out, 0), open = x.cur - net;
+    let bal = open; const body = [];
+    body.push([{ v: "" }, { v: "Opening balance", bold: true }, "", "", "", "", { v: open, bold: true }, { v: open / u, bold: true }].concat(money ? ["", ""] : [], ["Worked back from today's stock"]));
+    M.own.forEach((m) => { bal += m.inn - m.out; body.push([m.d ? { v: ilSerial(m.d), t: "n", z: DATE } : "", m.type, m.ref, m.party || "", m.inn ? { v: m.inn, color: IL.good } : "", m.out ? { v: m.out, color: IL.bad } : "", { v: bal, bold: true }, { v: bal / u }].concat(money ? [m.rate != null ? m.rate : "", m.rate != null ? { v: (m.inn || m.out) * m.rate } : ""] : [], [m.note || ""])); });
+    const head = [{ t: "Date", z: DATE }, { t: "Type" }, { t: "Reference" }, { t: "Party" }, { t: "In (boxes)", r: 1, z: NUM }, { t: "Out (boxes)", r: 1, z: NUM }, { t: "Balance (boxes)", r: 1, z: NUM, bold: 1 }, { t: "Balance (crates)", r: 1, z: DEC }].concat(money ? [{ t: "Rate / box", r: 1, z: RS }, { t: "Value", r: 1, z: RS }] : [], [{ t: "Note" }]);
+    const tIn = M.own.reduce((a, m) => a + m.inn, 0), tOut = M.own.reduce((a, m) => a + m.out, 0);
+    const foot = ["", "Closing: current stock", "", "", tIn, tOut, bal, bal / u].concat(money ? ["", ""] : [], [""]);
+    const summary = [["Current stock (crates)", x.cr.cur, DEC], ["Reserved (crates)", x.cr.res, DEC, x.res > 0 ? IL.warn : null], ["Available for sale (crates)", x.cr.avail, DEC, IL.good], ["Boxes per crate", u, NUM]]
+      .concat(money ? [["SS rate / box", ss, RS], ["Distributor rate / box", dr, RS], ["MRP / box", mrp, RS], ["Stock value at SS rate", ss != null ? x.cur * ss : null, RS]] : [["Distributor rate / box", dr, '"₹"#,##0.00'], ["MRP / box", mrp, '"₹"#,##0.00']]);
+    const ehead = [{ t: "Saved on", z: DATE }, { t: "Order" }, { t: "Distributor" }, { t: "Boxes", r: 1, z: NUM }, { t: "Crates", r: 1, z: DEC }, { t: "Note" }];
+    const extra = M.pend.length ? [{ title: `Reserved: ${M.pend.length} order${M.pend.length > 1 ? "s" : ""} not yet dispatched (still at Tropicana)`, head: ehead, body: M.pend.map((m) => [{ v: ilSerial(m.d), t: "n" }, m.ref, m.party, m.out, m.out / u, m.note || ""]), note: "These boxes are in the current stock above and leave it when the order is dispatched. Available for sale = current − reserved." }] : [];
+    const L = ilLedgerRows(`${name}`, `Item ledger · SahiReach stock at Tropicana · SAP ${sap}${st.trop ? " · " + st.trop : ""} · ${c.cat || st.cat || ""} · as of ${stampOf(NOW())}`, summary, head, body, foot, extra);
+    const ws = ilSheet(X, L.rows, [12, 30, 22, 30, 11, 11, 13, 12].concat(money ? [12, 14] : [], [38]), L.merges);
+    ws["!autofilter"] = { ref: X.utils.encode_range({ s: { r: L.hr, c: 0 }, e: { r: L.hr + body.length, c: head.length - 1 } }) };
+    sheets.push({ name: "SahiReach stock", ws });
+  }
+  if (q) {
+    const net = M.qc.reduce((a, m) => a + m.inn - m.out, 0), cur = q.crates || 0, open = cur - net, qx = qcSplit(q);
+    let bal = open; const body = [[{ v: "" }, { v: "Opening balance", bold: true }, "", "", "", "", { v: open, bold: true }, "Worked back from today's stock"]];
+    M.qc.forEach((m) => { bal += m.inn - m.out; body.push([m.d ? { v: ilSerial(m.d), t: "n" } : "", m.type, m.ref, m.party || "", m.inn ? { v: m.inn, color: IL.good } : "", m.out ? { v: m.out, color: IL.bad } : "", { v: bal, bold: true }, m.note || ""]); });
+    const head = [{ t: "Date", z: DATE }, { t: "Type" }, { t: "Reference" }, { t: "Platform / party" }, { t: "In (crates)", r: 1, z: DEC }, { t: "Out (crates)", r: 1, z: DEC }, { t: "Balance (crates)", r: 1, z: DEC, bold: 1 }, { t: "Note" }];
+    const summary = [["Current stock (crates)", qx.cur, DEC], ["Reserved (crates)", qx.res, DEC, qx.res > 0 ? IL.warn : null], ["Available for sale (crates)", qx.avail, DEC, IL.good], ["Pieces per crate", q.ppc || null, NUM]];
+    const L = ilLedgerRows(`${name}`, `Item ledger · quick commerce stock (Swiggy and Zepto) · SAP ${sap}${q.trop ? " · " + q.trop : ""} · as of ${stampOf(NOW())}`, summary, head, body, ["", "Closing: current stock", "", "", M.qc.reduce((a, m) => a + m.inn, 0), M.qc.reduce((a, m) => a + m.out, 0), bal, ""]);
+    sheets.push({ name: "Quick commerce stock", ws: ilSheet(X, L.rows, [12, 28, 22, 26, 12, 12, 14, 36], L.merges) });
+  }
+  return { sheets, file: `${shortName(name).replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim()} item ledger ${dmyOf(ymd(NOW()))}.xlsx` };
+}
+ACT.itemExcel = async (el) => {
+  const sap = el.dataset.sap; if (el) el.disabled = true;
+  try { await loadScriptOnce(XLSXS_SRC, () => !!(window.XLSX && window.XLSX.style_version)); }
+  catch (e) { if (el) el.disabled = false; toast("Could not prepare the Excel file. Check your internet and try again.", "alert"); return; }
+  const X = window.XLSX, B = itemLedgerBook(X, sap), wb = X.utils.book_new();
+  B.sheets.forEach((s) => X.utils.book_append_sheet(wb, s.ws, s.name));
+  X.writeFile(wb, B.file, { compression: true, cellStyles: true });
+  if (el) el.disabled = false;
+  logActivity("Item ledger downloaded", (stockBySap[sap] || qcBySap[sap] || {}).name || sap, "Excel"); toast("Item ledger downloaded", "doc");
+};
+
 /* ===== TOD & NOTES ===== */
 function todState() {
   const by = {}; let total = 0;
@@ -4260,7 +4378,7 @@ function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
 /* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
-const VIEW_ACTS = new Set("reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_ACTS = new Set("itemExcel reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("stkDate stkMonth ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {
