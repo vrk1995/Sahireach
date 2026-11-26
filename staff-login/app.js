@@ -2871,19 +2871,20 @@ ACT.qcLockEditYes = () => {
 /* ===== STOCK ===== */
 const cratesOf = (s) => (s.upc ? s.ea / s.upc : s.crates || 0);
 function stockRows() {
-  const q = key(S.stockQ), cat = S.stockCat;
-  return D.stock.filter((s) => (cat === "All" || (cat === "In stock" ? cratesOf(s) > 0 : cat === "Out of stock" ? cratesOf(s) <= 0 : cat === "Below reorder" ? (replBySap[s.sap] || {}).belowRop : s.cat === cat)) && (!q || q.split(" ").every((w) => key(s.name + " " + s.trop + " " + s.sap).includes(w))));
+  const q = key(S.stockQ), cat = S.stockCat, P = pendingEA(), av = (s) => stockSplit(s, P).avail;
+  return D.stock.filter((s) => (cat === "All" || (cat === "In stock" ? av(s) > 1e-9 : cat === "Out of stock" ? av(s) <= 1e-9 : cat === "Below reorder" ? (replBySap[s.sap] || {}).belowRop : s.cat === cat)) && (!q || q.split(" ").every((w) => key(s.name + " " + s.trop + " " + s.sap).includes(w))));
 }
 function ownStockGrid() {
-  const rows = stockRows().sort((a, b) => cratesOf(b) - cratesOf(a) || a.name.localeCompare(b.name));
+  const P = pendingEA(), X = {}; D.stock.forEach((s) => (X[s.sap] = stockSplit(s, P)));
+  const rows = stockRows().sort((a, b) => X[b.sap].cur - X[a.sap].cur || a.name.localeCompare(b.name));
   if (!rows.length) return `<div class="group"><div class="empty"><div class="big">Nothing matches</div>Try another name, code or filter.</div></div>`;
-  return `<div class="dg" style="--cols:minmax(0,2fr) 90px 80px 80px minmax(110px,150px) 100px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="c-hide">Class</span><span class="r">Crates</span><span class="r c-hide">Boxes</span><span class="c-hide">Days of stock</span><span class="r c-hide">Price / box</span></div>
-  ${rows.map((s) => { const r = replBySap[s.sap] || {}, c = cratesOf(s), days = r.perDay > 0 ? c / r.perDay : null, low = r.belowRop || (days != null && days < 4); return `<button class="dg-row" data-act="productSheet" data-sap="${esc(s.sap)}"><span><div class="strong clip">${esc(shortName(s.name))}</div><div class="row-sub clip">${c < -1e-9 ? `<span style="color:var(--tint);font-weight:600">${nf(-c, 1)} crates promised from quick commerce stock</span>` : `${esc(s.trop || "No Tropicana code")} · ${esc(s.cat || "")}`}</div></span><span class="c-hide">${classPill(r.cls)}</span><span class="r strong" ${c <= 0 ? 'style="color:var(--bad)"' : ""}>${nf(Math.max(0, c), 1)}</span><span class="r c-hide">${nf(Math.max(0, s.ea))}</span><span class="bar-cell c-hide">${days != null ? `<div class="meter ${low ? "bad" : days < 8 ? "warn" : ""}"><i style="width:${Math.min(100, (days / 30) * 100)}%"></i></div><span class="num" style="font-size:13px;min-width:30px;text-align:right">${days.toFixed(0)}d</span>` : `<span class="dim" style="font-size:13px">no recent sales</span>`}</span><span class="r c-hide">${s.price != null ? rs2(s.price) : "–"}</span></button>`; }).join("")}</div>`;
+  return `<div class="dg" style="--cols:minmax(0,2fr) 84px 84px 84px 96px minmax(110px,150px) 96px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="c-hide">Class</span><span class="r c-hide">Current</span><span class="r c-hide">Reserved</span><span class="r">Available</span><span class="c-hide">Days of stock</span><span class="r c-hide">Price / box</span></div>
+  ${rows.map((s) => { const r = replBySap[s.sap] || {}, x = X[s.sap], c = x.cr.avail, days = r.perDay > 0 ? Math.max(0, c) / r.perDay : null, low = r.belowRop || (days != null && days < 4); return `<button class="dg-row" data-act="productSheet" data-sap="${esc(s.sap)}"><span><div class="strong clip">${esc(shortName(s.name))}</div><div class="row-sub clip">${s.ea < -1e-9 ? `<span style="color:var(--tint);font-weight:600">${nf(-s.ea / (s.upc || 1), 1)} crates promised from quick commerce stock</span>` : `${esc(s.trop || "No Tropicana code")} · ${esc(s.cat || "")}`}<span class="mob-only"> · at Tropicana ${nf(x.cr.cur, 1)}${x.res > 1e-9 ? ` · <b style="color:var(--warn)">${nf(x.cr.res, 1)} reserved</b>` : ""}</span></div></span><span class="c-hide">${classPill(r.cls)}</span><span class="r c-hide">${nf(x.cr.cur, 1)}</span><span class="r c-hide" ${x.res > 1e-9 ? 'style="color:var(--warn);font-weight:600"' : ""}>${x.res > 1e-9 ? nf(x.cr.res, 1) : `<span class="dim">–</span>`}</span><span class="r strong" ${c <= 1e-9 ? 'style="color:var(--bad)"' : ""}>${nf(Math.max(0, c), 1)}</span><span class="bar-cell c-hide">${days != null ? `<div class="meter ${low ? "bad" : days < 8 ? "warn" : ""}"><i style="width:${Math.min(100, (days / 30) * 100)}%"></i></div><span class="num" style="font-size:13px;min-width:30px;text-align:right">${days.toFixed(0)}d</span>` : `<span class="dim" style="font-size:13px">no recent sales</span>`}</span><span class="r c-hide">${s.price != null ? rs2(s.price) : "–"}</span></button>`; }).join("")}</div>`;
 }
 function qcStockGrid() {
   const rows = D.qcStock.slice().sort((a, b) => (b.crates || 0) - (a.crates || 0));
-  return `<div class="dg" style="--cols:minmax(0,2fr) 80px 100px 100px 110px 110px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r">Crates</span><span class="r c-hide">On open POs</span><span class="r c-hide">Free after POs</span><span class="r c-hide">Swiggy / piece</span><span class="r c-hide">Zepto / piece</span></div>
-  ${rows.map((s) => `<div class="dg-row"><span><div class="strong clip">${esc(shortName(s.name))}</div><div class="row-sub clip">${esc(s.trop || "Not on the Tropicana ledger")} · ${s.ppc || "–"} pieces per crate${qcHeld(s.sap).q ? ` · <span style="color:var(--tint);font-weight:600">${nf(qcHeld(s.sap).q)} held for a sent pick list</span>` : ""}</div></span><span class="r strong" ${!(s.crates > 0) ? 'style="color:var(--bad)"' : ""}>${nf(s.crates, 1)}</span><span class="r c-hide">${s.openCrates ? nf(s.openCrates, 1) : `<span class="dim">–</span>`}</span><span class="r c-hide" ${s.free < 0 ? 'style="color:var(--bad);font-weight:600"' : ""}>${s.free != null ? nf(s.free, 1) : "–"}</span><span class="r c-hide">${s.swPrice ? rs2(s.swPrice) : `<span class="dim">–</span>`}</span><span class="r c-hide">${s.zpPrice ? rs2(s.zpPrice) : `<span class="dim">–</span>`}</span></div>`).join("")}</div>`;
+  return `<div class="dg" style="--cols:minmax(0,2fr) 76px 80px 84px 96px 100px 100px 100px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">Current</span><span class="r c-hide">Reserved</span><span class="r">Available</span><span class="r c-hide">On open POs</span><span class="r c-hide">Free after POs</span><span class="r c-hide">Swiggy / piece</span><span class="r c-hide">Zepto / piece</span></div>
+  ${rows.map((s) => `<div class="dg-row"><span><div class="strong clip">${esc(shortName(s.name))}</div><div class="row-sub clip">${esc(s.trop || "Not on the Tropicana ledger")} · ${s.ppc || "–"} pieces per crate${(() => { const x = qcSplit(s); return [x.held ? `${nf(x.held)} held for a sent pick list` : "", x.gt > 1e-9 ? `${nf(x.gt, 1)} promised to distributor orders` : ""].filter(Boolean).map((t) => ` · <span style="color:var(--tint);font-weight:600">${t}</span>`).join(""); })()}</div></span>${(() => { const x = qcSplit(s); return `<span class="r c-hide">${nf(x.cur, 1)}</span><span class="r c-hide" ${x.res > 1e-9 ? 'style="color:var(--warn);font-weight:600"' : ""}>${x.res > 1e-9 ? nf(x.res, 1) : `<span class="dim">–</span>`}</span><span class="r strong" ${!(x.avail > 1e-9) ? 'style="color:var(--bad)"' : ""}>${nf(x.avail, 1)}</span>`; })()}<span class="r c-hide">${s.openCrates ? nf(s.openCrates, 1) : `<span class="dim">–</span>`}</span><span class="r c-hide" ${s.free < 0 ? 'style="color:var(--bad);font-weight:600"' : ""}>${s.free != null ? nf(s.free, 1) : "–"}</span><span class="r c-hide">${s.swPrice ? rs2(s.swPrice) : `<span class="dim">–</span>`}</span><span class="r c-hide">${s.zpPrice ? rs2(s.zpPrice) : `<span class="dim">–</span>`}</span></div>`).join("")}</div>`;
 }
 function purchasesHtml() {
   const byId = {}; D.purchases.forEach((p) => { const g = (byId[p.id] = byId[p.id] || { id: p.id, inv: p.inv, time: p.time, invDate: p.invDate, supplier: p.supplier, pool: p.pool, lines: [], crates: 0, value: 0 }); g.lines.push(p); g.crates += p.crates || 0; g.value += p.value || 0; });
@@ -2899,7 +2900,7 @@ function missedHtml() {
   <div><div class="group-label"><span>Most requested, not stocked</span></div><div class="group">${D.demandTop.map((d) => `<div class="row"><span class="avatar soft">${d.rank}</span><span class="grow"><div class="row-title clip">${esc(shortName(d.product))}</div><div class="row-sub">Worth reviewing with Hangyo</div></span><span class="row-end"><span class="pill plain info">${d.times} request${d.times > 1 ? "s" : ""}</span></span></div>`).join("")}</div></div></div>`;
 }
 VIEWS.stock = () => {
-  const own = D.stock, crates = own.reduce((a, s) => a + cratesOf(s), 0), cost = own.reduce((a, s) => a + (s.ea || 0) * (s.cost || 0), 0), inStock = own.filter((s) => cratesOf(s) > 0).length, low = D.repl.rows.filter((r) => r.belowRop).length;
+  const own = D.stock, T = stockTotals(own), crates = T.cur, cost = T.vCur, inStock = T.inStock, nPend = pendingOrderCount(), QT = D.qcStock.reduce((a, q) => { const x = qcSplit(q); a.res += x.res; a.avail += x.avail; return a; }, { res: 0, avail: 0 }), low = D.repl.rows.filter((r) => r.belowRop).length;
   const qcCr = D.qcStock.reduce((a, s) => a + (s.crates || 0), 0);
   const cats = ["All", "In stock", "Below reorder", "Out of stock", ...Array.from(new Set(own.map((s) => s.cat).filter(Boolean))).sort()];
   const tab = S.stockTab;
@@ -2910,7 +2911,7 @@ VIEWS.stock = () => {
     : tab === "purchases" ? purchasesHtml() : missedHtml();
   return `<div class="page">
     <div class="page-head"><div><h1 class="title">Stock</h1><div class="subtitle">What is in Tropicana right now, what came in, and what you ran out of.</div></div><div class="head-actions"><button class="btn btn-secondary" data-act="stockExcel">${ic("doc", "sm")} Download Excel</button><button class="btn btn-secondary" data-act="stockNewProd">${ic("plus", "sm")} Add product</button><button class="btn btn-primary" data-act="receiveSheet">${ic("plus", "sm")} Receive stock</button></div></div>
-    <div class="tiles"><div class="tile"><div class="tile-label">Own stock</div><div class="tile-value">${nf(crates, 0)}<small>crates</small></div><div class="tile-sub">${inStock} of ${own.length} products in stock</div></div>${SEE_MONEY ? `<div class="tile"><div class="tile-label">Own stock at cost</div><div class="tile-value">₹${lakh(cost)}<small>L</small></div><div class="tile-sub">At the super stockist rate</div></div>` : ""}<div class="tile"><div class="tile-label">Quick commerce stock</div><div class="tile-value">${nf(qcCr, 0)}<small>crates</small></div><div class="tile-sub">Shared by Swiggy and Zepto</div></div><button class="tile" data-act="stockLow"><div class="tile-label"><span>Below reorder point</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--bad)">${low}</div><div class="tile-sub">Hero and Core products to reorder</div></button>${(() => { const T = slowSum(slowRows()); return `<button class="tile tile-wide-sm" data-act="slowList"><div class="tile-label"><span>Slow moving</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--warn)">${T.n}</div><div class="tile-sub">${SEE_MONEY ? `₹${lakh(T.value)} L tied up · ` : ""}${nf(T.crates, 0)} crates to push</div></button>`; })()}</div>
+    <div class="tiles"><div class="tile"><div class="tile-label">Current stock</div><div class="tile-value">${nf(crates, 0)}<small>crates</small></div><div class="tile-sub">At Tropicana now, SahiReach stock</div></div><div class="tile"><div class="tile-label">Reserved</div><div class="tile-value" ${T.res > 0.05 ? 'style="color:var(--warn)"' : ""}>${nf(T.res, 0)}<small>crates</small></div><div class="tile-sub">${nPend ? `${nPend} order${nPend > 1 ? "s" : ""} not yet dispatched` : "No orders waiting"}${T.held > 0.05 ? ` · ${nf(T.held, 0)} for Swiggy / Zepto` : ""}</div></div><div class="tile"><div class="tile-label">Available for sale</div><div class="tile-value" style="color:var(--good)">${nf(T.avail, 0)}<small>crates</small></div><div class="tile-sub">${inStock} of ${own.length} products can be sold</div></div>${SEE_MONEY ? `<div class="tile"><div class="tile-label">Current stock at cost</div><div class="tile-value">₹${lakh(cost)}<small>L</small></div><div class="tile-sub">₹${lakh(T.vAvail)} L available for sale</div></div>` : ""}<div class="tile"><div class="tile-label">Quick commerce stock</div><div class="tile-value">${nf(qcCr, 0)}<small>crates</small></div><div class="tile-sub">${QT.res > 0.05 ? `${nf(QT.res, 0)} reserved · ${nf(QT.avail, 0)} available` : "Shared by Swiggy and Zepto"}</div></div><button class="tile" data-act="stockLow"><div class="tile-label"><span>Below reorder point</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--bad)">${low}</div><div class="tile-sub">Hero and Core products to reorder</div></button>${(() => { const T = slowSum(slowRows()); return `<button class="tile tile-wide-sm" data-act="slowList"><div class="tile-label"><span>Slow moving</span>${ic("chevR", "sm dim")}</div><div class="tile-value" style="color:var(--warn)">${T.n}</div><div class="tile-sub">${SEE_MONEY ? `₹${lakh(T.value)} L tied up · ` : ""}${nf(T.crates, 0)} crates to push</div></button>`; })()}</div>
     ${seg("stockTab", tab, [["own", "Own stock"], ["slow", "Slow moving"], ["qc", "Quick commerce"], ["damaged", "Damaged"], ["purchases", "Purchases"], ["missed", "Missed sales"]])}
     ${body}</div>`;
 };
@@ -2920,11 +2921,11 @@ ACT.stockLow = () => { S.stockTab = "own"; S.stockCat = "Below reorder"; render(
 ACT.productSheet = (el) => {
   const sap = el.dataset.sap, s = stockBySap[sap], c = catBySap[sap] || {}, r = replBySap[sap] || {}, name = (s && s.name) || c.name || sap;
   if (!s) { openSheet(esc(shortName(name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(name)}</div><div class="row-sub">${esc(c.cat || "")} · SAP ${esc(sap)}</div><div class="banner warn" style="margin-top:14px">${ic("info", "sm")}<span>You do not stock this product. Requests for it are logged as demand.</span></div></div>${price(sap) != null ? `<div class="card card-pad"><div class="kv"><div><div class="k">Distributor rate</div><div class="v num">${rs2(price(sap))}</div></div>${D.special.prices[sap] != null ? `<div><div class="k">Special price</div><div class="v num">${rs2(D.special.prices[sap])}</div></div>` : ""}${SEE_MONEY ? `<div><div class="k">SS rate</div><div class="v num">${rs2(ssRate(sap))}</div></div>` : ""}<div><div class="k">Pack</div><div class="v">${c.upc || "–"} boxes / crate</div></div></div></div>` : ""}`, `<button class="btn btn-secondary" data-act="productEdit" data-sap="${esc(sap)}">${ic("pencil", "sm")} Edit product</button>`); return; }
-  const cr = cratesOf(s), recent = D.orders.filter((o) => o.status !== "Cancelled").sort((a, b) => (a.time < b.time ? 1 : -1)).flatMap((o) => (linesByOrder[o.id] || []).filter((l) => l.sap === sap)).slice(0, 6);
+  const X = stockSplit(s), cr = X.cr.avail, recent = D.orders.filter((o) => o.status !== "Cancelled").sort((a, b) => (a.time < b.time ? 1 : -1)).flatMap((o) => (linesByOrder[o.id] || []).filter((l) => l.sap === sap)).slice(0, 6);
   openSheet(esc(shortName(name)), `<div class="card card-pad"><div class="section-title" style="font-size:19px">${esc(s.name)}</div><div class="row-sub">${esc(s.cat || "")}</div><div class="hstack gap-8 wrap" style="margin-top:10px">${classPill(r.cls)}${s.tier ? `<span class="pill plain">${esc(s.tier)}</span>` : ""}<span class="pill plain mono">SAP ${esc(s.sap)}</span>${s.trop ? `<span class="pill plain mono">${esc(s.trop)}</span>` : ""}</div>
-      <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">In stock</div><div class="v num" ${cr <= 0 ? 'style="color:var(--bad)"' : ""}>${nf(cr, 2)} crates</div></div><div><div class="k">Boxes</div><div class="v num">${nf(s.ea)}</div></div><div><div class="k">Pieces</div><div class="v num">${nf(s.ea * (s.ppe || 1))}</div></div><div><div class="k">Pack</div><div class="v">${s.upc} boxes / crate · ${s.ppe} pcs / box</div></div></div></div>
+      <div class="divider" style="margin:16px 0"></div><div class="kv"><div><div class="k">Current stock</div><div class="v num">${nf(X.cr.cur, 2)} crates</div><div class="row-sub">${nf(X.cur)} boxes at Tropicana</div></div><div><div class="k">Reserved</div><div class="v num" ${X.res > 1e-9 ? 'style="color:var(--warn)"' : ""}>${nf(X.cr.res, 2)} crates</div><div class="row-sub">${X.res > 1e-9 ? [X.resOrd > 1e-9 ? `${nf(X.resOrd)} boxes for orders not dispatched` : "", X.held > 1e-9 ? `${nf(X.held)} for a Swiggy / Zepto pick list` : ""].filter(Boolean).join(" · ") : "Nothing blocked"}</div></div><div><div class="k">Available for sale</div><div class="v num" ${cr <= 1e-9 ? 'style="color:var(--bad)"' : 'style="color:var(--good)"'}>${nf(cr, 2)} crates</div><div class="row-sub">${nf(X.avail)} boxes · ${nf(X.avail * (s.ppe || 1))} pieces</div></div><div><div class="k">Pack</div><div class="v">${s.upc} boxes / crate · ${s.ppe} pcs / box</div></div></div></div>
     <div><div class="group-label"><span>Price per box</span></div><div class="card card-pad"><div class="kv"><div><div class="k">MRP</div><div class="v num">${rs2(s.mrp)}</div></div>${SEE_MONEY ? `<div><div class="k">Your cost (SS rate)</div><div class="v num">${rs2(s.cost)}</div></div>` : ""}<div><div class="k">Selling price</div><div class="v num">${rs2(s.price)}</div></div>${D.special.prices[s.sap] != null ? `<div><div class="k">Special price</div><div class="v num" style="color:var(--tint)">${rs2(D.special.prices[s.sap])}</div></div>` : ""}${SEE_MONEY ? `<div><div class="k">Margin</div><div class="v num">${rs2(s.margin)}${s.price ? ` <span class="muted" style="font-weight:500">(${pct(s.margin / s.price, 1)})</span>` : ""}</div></div>` : ""}</div></div></div>
-    ${r.sap ? `<div><div class="group-label"><span>Replenishment</span></div><div class="card card-pad"><div class="kv"><div><div class="k">Sells per day</div><div class="v num">${nf(r.perDay, 2)} crates</div></div><div><div class="k">Days of stock</div><div class="v num">${r.perDay > 0 ? (cr / r.perDay).toFixed(1) : "–"}</div></div><div><div class="k">Reorder point</div><div class="v num">${nf(r.rop, 1)} crates</div></div><div><div class="k">Target stock</div><div class="v num">${nf(r.target, 1)} crates</div></div><div><div class="k">On order</div><div class="v num">${nf(r.onOrder, 1)} crates</div></div><div><div class="k">Missed, 28 days</div><div class="v num">${nf(r.missed, 1)} crates</div></div></div></div></div>` : ""}
+    ${r.sap ? `<div><div class="group-label"><span>Replenishment</span></div><div class="card card-pad"><div class="kv"><div><div class="k">Sells per day</div><div class="v num">${nf(r.perDay, 2)} crates</div></div><div><div class="k">Days of stock</div><div class="v num">${r.perDay > 0 ? (Math.max(0, cr) / r.perDay).toFixed(1) : "–"}</div></div><div><div class="k">Reorder point</div><div class="v num">${nf(r.rop, 1)} crates</div></div><div><div class="k">Target stock</div><div class="v num">${nf(r.target, 1)} crates</div></div><div><div class="k">On order</div><div class="v num">${nf(r.onOrder, 1)} crates</div></div><div><div class="k">Missed, 28 days</div><div class="v num">${nf(r.missed, 1)} crates</div></div></div></div></div>` : ""}
     ${(() => { const w = slowRows().find((x) => x.sap === sap); return w ? `<button class="banner warn" style="text-align:left;width:100%" data-act="slowSheet" data-sap="${esc(sap)}">${ic("info", "sm")}<span><b>Slow moving.</b> ${w.still ? "No sales in the last 4 weeks." : "Stock lasts " + coverTxt(w) + " at the current pace."} Push about ${nf(w.push, 1)} crates. Tap to see who bought it before.</span></button>` : ""; })()}
     ${s.move ? `<div class="banner info">${ic("clock", "sm")}<span><b>Last movement.</b> ${esc(s.move)}</span></div>` : ""}
     ${recent.length ? `<div><div class="group-label"><span>Latest orders with it</span></div><div class="group">${recent.map((l) => { const o = orderById(l.id) || {}; return `<div class="row"><span class="grow"><div class="row-title clip">${esc(o.dist || "")}</div><div class="row-sub">${fmtDate(o.time)}</div></span><span class="row-end"><span class="row-value">${nf(l.crates, 2)} crates</span></span></div>`; }).join("")}</div></div>` : ""}`, `<button class="btn btn-secondary" data-act="productEdit" data-sap="${esc(sap)}">${ic("pencil", "sm")} Edit product and prices</button>`);
@@ -3498,16 +3499,21 @@ ACT.stockNewProd = () => npOpen({ from: "stock" });
 const dmyOf = (s) => { s = String(s || ""); return s.length >= 10 ? `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(0, 4)}` : ""; };
 function stockBookSheets() {
   const now = NOW(), asOf = stampOf(now), r2 = (x) => (x == null || isNaN(x) ? null : Math.round(x * 100) / 100);
-  const own = D.stock.slice().sort((a, b) => cratesOf(b) - cratesOf(a) || a.name.localeCompare(b.name));
-  const ownA = [[`OWN STOCK AT TROPICANA  (SahiReach LLP) · as of ${asOf}`], [],
-    ["Tropicana Code", "Product", "SAP code", "Category", "Class", "Boxes per crate", "Crates", "Boxes", "Pieces", "Sells / day (crates)", "Days of stock", "Below reorder point", "SS rate / box", "Value at SS rate", "Distributor rate / box", "MRP / box", "Last movement", "Updated"]];
-  own.forEach((s) => { const r = replBySap[s.sap] || {}, c = cratesOf(s), cost = ssRate(s.sap) != null ? ssRate(s.sap) : s.cost; ownA.push([s.trop || "", s.name, s.sap, s.cat || "", r.cls || "", s.upc || null, r2(c), s.ea || 0, (s.ea || 0) * (s.ppe || 1), r.perDay ? r2(r.perDay) : null, r.perDay > 0 ? Math.round(c / r.perDay) : null, r.belowRop ? "Yes" : "", cost != null ? r2(cost) : null, cost != null ? r2((s.ea || 0) * cost) : null, price(s.sap) != null ? r2(price(s.sap)) : null, s.mrp != null ? s.mrp : null, s.move || "", dmyOf(s.updated)]); });
-  ownA.push(["", "TOTAL", "", "", "", "", r2(own.reduce((a, s) => a + cratesOf(s), 0)), own.reduce((a, s) => a + (s.ea || 0), 0), own.reduce((a, s) => a + (s.ea || 0) * (s.ppe || 1), 0), "", "", "", "", r2(own.reduce((a, s) => a + (s.ea || 0) * ((ssRate(s.sap) != null ? ssRate(s.sap) : s.cost) || 0), 0)), "", "", "", ""]);
+  /* current stock = at Tropicana; reserved = blocked by orders not yet dispatched (and Swiggy / Zepto pick lists); available for sale = current − reserved */
+  const P = pendingEA(), X = {}; D.stock.forEach((s) => (X[s.sap] = stockSplit(s, P)));
+  const own = D.stock.slice().sort((a, b) => X[b.sap].cur - X[a.sap].cur || a.name.localeCompare(b.name));
+  const ownA = [[`OWN STOCK AT TROPICANA  (SahiReach LLP) · as of ${asOf}`], ["Current stock is what is at Tropicana now. Reserved is blocked by orders not yet dispatched and by sent Swiggy / Zepto pick lists. Available for sale = current − reserved."],
+    ["Tropicana Code", "Product", "SAP code", "Category", "Class", "Boxes per crate", "Current stock (crates)", "Reserved (crates)", "Available for sale (crates)", "Current stock (boxes)", "Reserved (boxes)", "Available for sale (boxes)", "Available for sale (pieces)", "Sells / day (crates)", "Days of stock", "Below reorder point", "SS rate / box", "Value at SS rate", "Distributor rate / box", "MRP / box", "Last movement", "Updated"]];
+  const sum = { c: 0, r: 0, a: 0, ce: 0, re: 0, ae: 0, ap: 0, v: 0 };
+  own.forEach((s) => { const r = replBySap[s.sap] || {}, x = X[s.sap], cost = ssRate(s.sap) != null ? ssRate(s.sap) : s.cost; sum.c += x.cr.cur; sum.r += x.cr.res; sum.a += x.cr.avail; sum.ce += x.cur; sum.re += x.res; sum.ae += x.avail; sum.ap += x.avail * (s.ppe || 1); sum.v += x.cur * (cost || 0);
+    ownA.push([s.trop || "", s.name, s.sap, s.cat || "", r.cls || "", s.upc || null, r2(x.cr.cur), r2(x.cr.res), r2(x.cr.avail), r2(x.cur), r2(x.res), r2(x.avail), r2(x.avail * (s.ppe || 1)), r.perDay ? r2(r.perDay) : null, r.perDay > 0 ? Math.round(Math.max(0, x.cr.avail) / r.perDay) : null, r.belowRop ? "Yes" : "", cost != null ? r2(cost) : null, cost != null ? r2(x.cur * cost) : null, price(s.sap) != null ? r2(price(s.sap)) : null, s.mrp != null ? s.mrp : null, s.move || "", dmyOf(s.updated)]); });
+  ownA.push(["", "TOTAL", "", "", "", "", r2(sum.c), r2(sum.r), r2(sum.a), r2(sum.ce), r2(sum.re), r2(sum.ae), r2(sum.ap), "", "", "", "", r2(sum.v), "", "", "", ""]);
   const qc = D.qcStock.slice().sort((a, b) => (b.crates || 0) - (a.crates || 0));
   const qcA = [[`QUICK COMMERCE STOCK (Swiggy and Zepto)  · as of ${asOf}`], [],
-    ["Tropicana Code", "Product", "SAP code", "Pieces per crate", "Crates", "On open POs (crates)", "Free after POs (crates)", "Swiggy price / piece", "Zepto price / piece", "Last movement"]];
-  qc.forEach((s) => qcA.push([s.trop || "", s.name, s.sap, s.ppc || null, r2(s.crates || 0), s.openCrates ? r2(s.openCrates) : 0, s.free != null ? r2(s.free) : null, r2(s.swPrice || s.swiggy), r2(s.zpPrice || s.zepto), s.move || ""]));
-  qcA.push(["", "TOTAL", "", "", r2(qc.reduce((a, s) => a + (s.crates || 0), 0)), r2(qc.reduce((a, s) => a + (s.openCrates || 0), 0)), "", "", "", ""]);
+    ["Tropicana Code", "Product", "SAP code", "Pieces per crate", "Current stock (crates)", "Reserved (crates)", "Available for sale (crates)", "On open POs (crates)", "Free after POs (crates)", "Swiggy price / piece", "Zepto price / piece", "Last movement"]];
+  const qs = { c: 0, r: 0, a: 0, o: 0 };
+  qc.forEach((s) => { const x = qcSplit(s); qs.c += x.cur; qs.r += x.res; qs.a += x.avail; qs.o += s.openCrates || 0; qcA.push([s.trop || "", s.name, s.sap, s.ppc || null, r2(x.cur), r2(x.res), r2(x.avail), s.openCrates ? r2(s.openCrates) : 0, s.free != null ? r2(s.free) : null, r2(s.swPrice || s.swiggy), r2(s.zpPrice || s.zepto), s.move || ""]); });
+  qcA.push(["", "TOTAL", "", "", r2(qs.c), r2(qs.r), r2(qs.a), r2(qs.o), "", "", "", ""]);
   const pur = D.purchases.slice().sort((a, b) => (a.time < b.time ? 1 : -1));
   const purA = [["PURCHASES (stock received)"], [],
     ["Saved on", "Purchase", "Invoice", "Invoice date", "Supplier", "Into", "Product", "SAP code", "Batch", "Crates", "Boxes", "Cost per box", "Value at cost"]];
@@ -3519,8 +3525,8 @@ function stockBookSheets() {
   return {
     file: `SahiReach stock report ${dmyOf(ymd(now))}.xlsx`,
     sheets: [
-      { name: "Own stock", aoa: ownA, cols: [14, 46, 11, 16, 10, 9, 9, 9, 9, 10, 10, 10, 11, 14, 12, 10, 50, 11] },
-      { name: "Quick commerce stock", aoa: qcA, cols: [16, 46, 11, 10, 9, 12, 12, 11, 11, 50] },
+      { name: "Own stock", aoa: ownA, cols: [14, 46, 11, 16, 10, 9, 11, 10, 12, 11, 10, 12, 12, 10, 10, 10, 11, 14, 12, 10, 50, 11] },
+      { name: "Quick commerce stock", aoa: qcA, cols: [16, 46, 11, 10, 11, 10, 12, 12, 12, 11, 11, 50] },
       { name: "Purchases", aoa: purA, cols: [11, 22, 14, 11, 10, 12, 46, 11, 12, 9, 9, 11, 13] },
       { name: "Missed sales", aoa: missA, cols: [11, 22, 30, 46, 11, 10, 10, 10, 12, 44] },
     ],
@@ -3537,7 +3543,9 @@ ACT.stockFull = async (el) => {
    The stock at the start of each month is recorded the first time the tool is used that month (D.stockOpen).
    Stock on any earlier day is worked out from the nearest recorded point after it (a month opening, or today)
    by taking back the movements in between. Between two recorded points, anything the records do not explain
-   (a stock correction in Setup, a stock sheet uploaded, a GRN return) shows as "Stock corrections". */
+   (a stock correction in Setup, a stock sheet uploaded, a GRN return) shows as "Stock corrections".
+   Statements are of the stock at Tropicana (current stock): an order's boxes leave when it is DISPATCHED. Until then
+   they are reserved, and available for sale = current − reserved. */
 const STK_NOW = "9999-12-31T23:59";
 const stkMS = (m) => m + "-01T00:00";
 const stkNext = (m) => { const y = +m.slice(0, 4), mo = +m.slice(5, 7); return mo === 12 ? `${y + 1}-01` : `${y}-${pad2(mo + 1)}`; };
@@ -3551,7 +3559,7 @@ function stkMoves(from, to) {
   const O = (sap) => (own[sap] = own[sap] || { recv: 0, ret: 0, fromQC: 0, sold: 0, toPlat: 0, pret: 0 });
   const Q = (sap) => (qc[sap] = qc[sap] || { recv: 0, back: 0, sw: 0, zp: 0, dist: 0 });
   D.purchases.forEach((p) => { if (!p.sap || !inR(p.time)) return; if (/QC/i.test(p.pool || "")) { if (qcBySap[p.sap]) Q(p.sap).recv += +p.crates || 0; } else if (p.ea) O(p.sap).recv += +p.ea || 0; });
-  D.orders.forEach((o) => { if (o.status === "Cancelled" || !inR(o.time)) return; (linesByOrder[o.id] || []).forEach((l) => { if (l.sap && l.ea) O(l.sap).sold -= l.ea; }); });
+  D.orders.forEach((o) => { if (o.status !== "Dispatched" || !inR(o.dispatched)) return; (linesByOrder[o.id] || []).forEach((l) => { if (l.sap && l.ea) O(l.sap).sold -= l.ea; }); });
   (D.notes || []).forEach((n) => { if (n.status === "Cancelled" || !Array.isArray(n.lines) || !inR(n.time)) return; n.lines.forEach((l) => { if (!l.stocked || !l.sap) return; if (l.stocked > 0) O(l.sap).ret += l.stocked; else O(l.sap).pret += l.stocked; }); });
   (D.transfers || []).forEach((t) => {
     if (!inR(t.time)) return;
@@ -3572,10 +3580,19 @@ function stkMoves(from, to) {
 }
 const stkNet = (m) => (m ? Object.keys(m).reduce((a, k) => a + m[k], 0) : 0);
 /* recorded points: each month's opening, and the stock right now */
+/* boxes on orders saved before T and not dispatched before T: still at Tropicana at T */
+function stkBookedAt(T) {
+  const m = {}; D.orders.forEach((o) => { if (o.status === "Cancelled" || !(o.time < T)) return; if (o.status === "Dispatched" && o.dispatched && o.dispatched < T) return; (linesByOrder[o.id] || []).forEach((l) => { if (l.sap && l.ea > 0) m[l.sap] = (m[l.sap] || 0) + l.ea; }); });
+  return m;
+}
 function stkPoints() {
-  const own = {}, qc = {};
-  D.stock.forEach((s) => { own[s.sap] = s.ea || 0; }); D.qcStock.forEach((s) => { qc[s.sap] = s.crates || 0; });
-  const P = Object.keys(D.stockOpen || {}).map((m) => Object.assign({ m }, D.stockOpen[m])).filter((p) => p.at && p.own && p.qc).sort((a, b) => (a.at < b.at ? -1 : 1));
+  const own = {}, qc = {}, pend = pendingEA();
+  D.stock.forEach((s) => { own[s.sap] = (s.ea || 0) + (pend[s.sap] || 0); }); D.qcStock.forEach((s) => { qc[s.sap] = s.crates || 0; });
+  const P = Object.keys(D.stockOpen || {}).map((m) => {
+    const p = Object.assign({ m }, D.stockOpen[m]); if (!p.own || p.phys) return p;
+    /* recorded before reserved stock was shown: it held the stock left after saved orders; add back what was still at Tropicana */
+    const b = stkBookedAt(stkAt(p.at)), o = Object.assign({}, p.own); Object.keys(b).forEach((k) => { o[k] = (o[k] || 0) + b[k]; }); p.own = o; return p;
+  }).filter((p) => p.at && p.own && p.qc).sort((a, b) => (a.at < b.at ? -1 : 1));
   P.push({ at: STK_NOW, own, qc, now: true });
   return P;
 }
@@ -3592,8 +3609,11 @@ const stkFromTxt = (p) => (p.now ? "today's stock" : `the opening stock recorded
 function stockOpenTake(src, at) {
   const m = ymd(NOW()).slice(0, 7); D.stockOpen = D.stockOpen || {};
   if (D.stockOpen[m] || !src) return false;
-  const own = {}, qc = {}; (src.stock || []).forEach((s) => { if (s.sap) own[s.sap] = Math.round((s.ea || 0) * 1000) / 1000; }); (src.qcStock || []).forEach((s) => { if (s.sap) qc[s.sap] = Math.round((s.crates || 0) * 1000) / 1000; });
-  D.stockOpen[m] = { at, by: HOST ? ME.name : undefined, own, qc };
+  /* current stock (at Tropicana): what is left after saved orders + the orders not yet dispatched */
+  const pend = {}; if (src === D || src.stock === D.stock) Object.assign(pend, pendingEA());
+  else { const st = {}; (src.orders || []).forEach((o) => { if (o.status === "Pending") st[o.id] = 1; }); (src.orderLines || []).forEach((l) => { if (st[l.id] && l.sap && l.ea > 0) pend[l.sap] = (pend[l.sap] || 0) + l.ea; }); }
+  const own = {}, qc = {}; (src.stock || []).forEach((s) => { if (s.sap) own[s.sap] = Math.round(((s.ea || 0) + (pend[s.sap] || 0)) * 1000) / 1000; }); (src.qcStock || []).forEach((s) => { if (s.sap) qc[s.sap] = Math.round((s.crates || 0) * 1000) / 1000; });
+  D.stockOpen[m] = { at, by: HOST ? ME.name : undefined, own, qc, phys: true };
   logActivity("Opening stock recorded", stkMonthName(m), "For the monthly stock statement");
   return true;
 }
@@ -3618,38 +3638,38 @@ function stkAsOnSheets(d, pool) {
   const live = d === today, T = live ? STK_NOW : ymd(new Date(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10) + 1)) + "T00:00", pts = stkPoints();
   const when = live ? `as of ${stampOf(NOW())}` : `as on ${dmyOf(d)} (end of the day)`, sheets = [];
   if (pool !== "qc") {
-    const A = stkValueAt(T, "own", pts), V = A.v;
-    /* saved orders not yet dispatched at that moment: their boxes are still physically at Tropicana */
-    const booked = {}; D.orders.forEach((o) => { if (o.status === "Cancelled" || !(o.time < T)) return; const out = o.status === "Dispatched" && o.dispatched && o.dispatched < T; if (out) return; (linesByOrder[o.id] || []).forEach((l) => { if (l.sap && l.ea) booked[l.sap] = (booked[l.sap] || 0) + l.ea; }); });
+    const A = stkValueAt(T, "own", pts), V = A.v; /* current stock: at Tropicana */
+    /* reserved at that moment: orders saved and not yet dispatched (their SahiReach part), and today also Swiggy / Zepto pick lists */
+    const booked = live ? pendingEA() : stkBookedAt(T);
     const saps = new Set([...D.stock.map((s) => s.sap), ...Object.keys(V), ...Object.keys(booked)]);
     const rows = [...saps].map((sap) => ({ sap, i: stkInfo(sap), ea: V[sap] || 0, bk: booked[sap] || 0 })).filter((r) => r.i.upc && (stockBySap[r.sap] || Math.abs(r.ea) > 1e-6 || r.bk)).sort(stkSort);
-    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Boxes per crate", "Stock (crates)", "Stock (boxes)", "Pieces", "Saved orders not yet dispatched (crates)", "Physically at Tropicana (crates)"].concat(live ? ["Held for sent Swiggy / Zepto pick lists (crates)", "Free to sell (crates)"] : [], ["SS rate / box", "Value at SS rate"]);
+    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Boxes per crate", "Current stock (crates)", "Reserved for orders not dispatched (crates)"].concat(live ? ["Reserved for Swiggy / Zepto pick lists (crates)"] : [], ["Available for sale (crates)", "Current stock (boxes)", "Available for sale (boxes)", "SS rate / box", "Value at SS rate"]);
     const aoa = [[`GT STOCK STATEMENT · SahiReach LLP own stock at Tropicana · ${when}`],
-      [live ? "Stock is after saved orders: an order takes its stock off when it is saved. Orders saved but not yet dispatched are still physically at Tropicana." : `Worked out from ${stkFromTxt(A.from)} by taking back the recorded movements after ${dmyOf(d)}.`], head];
-    const tot = { cr: 0, ea: 0, pcs: 0, bk: 0, ph: 0, held: 0, free: 0, val: 0 };
+      [(live ? "Current stock is what is at Tropicana now." : `Worked out from ${stkFromTxt(A.from)} by taking back the recorded movements after ${dmyOf(d)}.`) + " Reserved is blocked by orders saved but not yet dispatched" + (live ? " and by sent Swiggy / Zepto pick lists" : "") + ". Available for sale = current − reserved."], head];
+    const tot = { cr: 0, ea: 0, ro: 0, h: 0, av: 0, avea: 0, val: 0 };
     rows.forEach((r) => {
-      const u = r.i.upc, cr = r.ea / u, bk = r.bk / u, held = live ? ownHeldEA(r.sap) / u : 0, ss = stkSS(r.sap), val = ss != null ? r.ea * ss : null;
-      tot.cr += cr; tot.ea += r.ea; tot.pcs += r.ea * r.i.ppe; tot.bk += bk; tot.ph += cr + bk; tot.held += held; tot.free += cr - held; tot.val += val || 0;
-      aoa.push([r.i.trop, r.i.name, r.sap, r.i.cat, u, stkR2(cr), stkR2(r.ea), stkR2(r.ea * r.i.ppe), stkR2(bk), stkR2(cr + bk)].concat(live ? [stkR2(held), stkR2(cr - held)] : [], [ss != null ? stkR2(ss) : null, stkR2(val)]));
+      const u = r.i.upc, book = r.ea - r.bk, fromQC = book < 0 ? -book : 0, ro = Math.max(0, r.bk - fromQC), held = live ? ownHeldEA(r.sap) : 0, av = r.ea - ro - held, ss = stkSS(r.sap), val = ss != null ? r.ea * ss : null;
+      tot.cr += r.ea / u; tot.ea += r.ea; tot.ro += ro / u; tot.h += held / u; tot.av += av / u; tot.avea += av; tot.val += val || 0;
+      aoa.push([r.i.trop, r.i.name, r.sap, r.i.cat, u, stkR2(r.ea / u), stkR2(ro / u)].concat(live ? [stkR2(held / u)] : [], [stkR2(av / u), stkR2(r.ea), stkR2(av), ss != null ? stkR2(ss) : null, stkR2(val)]));
     });
-    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.cr), stkR2(tot.ea), stkR2(tot.pcs), stkR2(tot.bk), stkR2(tot.ph)].concat(live ? [stkR2(tot.held), stkR2(tot.free)] : [], ["", stkR2(tot.val)]));
-    sheets.push({ name: "GT stock", aoa, cols: [14, 46, 11, 16, 9, 10, 10, 10, 14, 14].concat(live ? [16, 11] : [], [11, 14]) });
+    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.cr), stkR2(tot.ro)].concat(live ? [stkR2(tot.h)] : [], [stkR2(tot.av), stkR2(tot.ea), stkR2(tot.avea), "", stkR2(tot.val)]));
+    sheets.push({ name: "GT stock", aoa, cols: [14, 46, 11, 16, 9, 11, 14].concat(live ? [14] : [], [12, 11, 12, 11, 14]) });
   }
   if (pool !== "gt") {
     const A = stkValueAt(T, "qc", pts), V = A.v;
     const saps = new Set([...D.qcStock.map((s) => s.sap), ...Object.keys(V)]);
     const rows = [...saps].map((sap) => ({ sap, i: stkInfo(sap), q: qcBySap[sap] || {}, cr: V[sap] || 0 })).filter((r) => qcBySap[r.sap] || Math.abs(r.cr) > 1e-6).sort(stkSort);
-    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Pieces per crate", "Crates"].concat(live ? ["Held for sent pick lists (crates)", "On open POs (crates)", "Free after open POs (crates)", "Swiggy price / piece", "Zepto price / piece"] : [], ["SS rate / box", "Value at SS rate"]);
+    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Pieces per crate", "Current stock (crates)"].concat(live ? ["Reserved (crates)", "Available for sale (crates)", "On open POs (crates)", "Free after open POs (crates)", "Swiggy price / piece", "Zepto price / piece"] : [], ["SS rate / box", "Value at SS rate"]);
     const aoa = [[`QUICK COMMERCE STOCK STATEMENT · Swiggy and Zepto stock at Tropicana · ${when}`],
-      [live ? "One stock shared by Swiggy and Zepto, in crates. Crates held for a sent pick list are still in stock until it is marked delivered." : `Worked out from ${stkFromTxt(A.from)} by taking back the recorded movements after ${dmyOf(d)}.`], head];
-    const tot = { cr: 0, held: 0, open: 0, val: 0 };
+      [live ? "One stock shared by Swiggy and Zepto, in crates, at Tropicana until delivered. Reserved = held for sent pick lists + promised to distributor orders. Available for sale = current − reserved." : `Worked out from ${stkFromTxt(A.from)} by taking back the recorded movements after ${dmyOf(d)}.`], head];
+    const tot = { cr: 0, res: 0, av: 0, open: 0, val: 0 };
     rows.forEach((r) => {
-      const u = r.q.upc || r.i.upc, ss = stkSS(r.sap), val = ss != null && u ? r.cr * u * ss : null, held = live ? qcHeld(r.sap).q : 0;
-      tot.cr += r.cr; tot.held += held; tot.open += live ? r.q.openCrates || 0 : 0; tot.val += val || 0;
-      aoa.push([r.q.trop || r.i.trop, r.i.name, r.sap, r.q.cat || r.i.cat, r.q.ppc || r.i.ppc || null, stkR2(r.cr)].concat(live ? [stkR2(held), stkR2(r.q.openCrates || 0), r.q.free != null ? stkR2(r.q.free) : null, stkR2(r.q.swPrice || null), stkR2(r.q.zpPrice || null)] : [], [ss != null ? stkR2(ss) : null, stkR2(val)]));
+      const u = r.q.upc || r.i.upc, ss = stkSS(r.sap), val = ss != null && u ? r.cr * u * ss : null, x = live && qcBySap[r.sap] ? qcSplit(r.q) : { res: 0, avail: r.cr };
+      tot.cr += r.cr; tot.res += x.res; tot.av += x.avail; tot.open += live ? r.q.openCrates || 0 : 0; tot.val += val || 0;
+      aoa.push([r.q.trop || r.i.trop, r.i.name, r.sap, r.q.cat || r.i.cat, r.q.ppc || r.i.ppc || null, stkR2(r.cr)].concat(live ? [stkR2(x.res), stkR2(x.avail), stkR2(r.q.openCrates || 0), r.q.free != null ? stkR2(r.q.free) : null, stkR2(r.q.swPrice || null), stkR2(r.q.zpPrice || null)] : [], [ss != null ? stkR2(ss) : null, stkR2(val)]));
     });
-    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.cr)].concat(live ? [stkR2(tot.held), stkR2(tot.open), "", "", ""] : [], ["", stkR2(tot.val)]));
-    sheets.push({ name: "Quick commerce stock", aoa, cols: [16, 46, 11, 16, 9, 9].concat(live ? [14, 12, 12, 11, 11] : [], [11, 14]) });
+    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.cr)].concat(live ? [stkR2(tot.res), stkR2(tot.av), stkR2(tot.open), "", "", ""] : [], ["", stkR2(tot.val)]));
+    sheets.push({ name: "Quick commerce stock", aoa, cols: [16, 46, 11, 16, 9, 11].concat(live ? [10, 12, 12, 12, 11, 11] : [], [11, 14]) });
   }
   const label = pool === "gt" ? "GT stock statement" : pool === "qc" ? "quick commerce stock statement" : "stock statement (GT and quick commerce)";
   return { file: `SahiReach ${label} as on ${dmyOf(d)}.xlsx`, sheets, d };
@@ -3660,12 +3680,15 @@ function stkMonthData(m) {
   const ms = stkMS(m), me = stkMS(stkNext(m)), cur = me > iso(NOW()), pts = stkPoints(), end = cur ? STK_NOW : me;
   const pO = pts.find((x) => x.at >= ms), pC = cur ? pts[pts.length - 1] : pts.find((x) => x.at >= me);
   const toO = stkMoves(ms, pO.at), toC = stkMoves(end, pC.at), mv = stkMoves(ms, end);
-  const exact = !pO.now && pO.m === m, out = {};
+  const exact = !pO.now && pO.m === m, out = {}, bookC = cur ? pendingEA() : stkBookedAt(me);
   ["own", "qc"].forEach((pool) => {
     const saps = new Set([...Object.keys(pO[pool]), ...Object.keys(pC[pool]), ...Object.keys(mv[pool]), ...(pool === "own" ? D.stock : D.qcStock).map((s) => s.sap)]);
     out[pool] = [...saps].map((sap) => {
       const open = (pO[pool][sap] || 0) - stkNet(toO[pool][sap]), close = (pC[pool][sap] || 0) - stkNet(toC[pool][sap]), M = mv[pool][sap] || {}, corr = close - open - stkNet(M);
-      return { sap, i: stkInfo(sap), open, close, M, corr: Math.abs(corr) < 1e-6 ? 0 : corr };
+      const r = { sap, i: stkInfo(sap), open, close, M, corr: Math.abs(corr) < 1e-6 ? 0 : corr };
+      /* SahiReach stock at the close: reserved for orders not yet dispatched (and, today, Swiggy / Zepto pick lists) */
+      if (pool === "own") { const bk = bookC[sap] || 0, book = close - bk, ro = Math.max(0, bk - (book < 0 ? -book : 0)), held = cur && typeof ownHeldEA === "function" ? ownHeldEA(sap) : 0; r.res = ro + held; r.avail = close - r.res; }
+      return r;
     }).filter((r) => Math.abs(r.open) > 1e-6 || Math.abs(r.close) > 1e-6 || r.corr || Object.keys(r.M).some((k) => Math.abs(r.M[k]) > 1e-6)).sort(stkSort);
   });
   return { m, ms, me, cur, exact, pO, pC, own: out.own, qc: out.qc, toTxt: cur ? `${dmyOf(ymd(NOW()))} (today)` : dmyOf(ymd(new Date(+m.slice(0, 4), +m.slice(5, 7), 0))) };
@@ -3675,16 +3698,16 @@ function stkMonthSheets(m, pool) {
   const openTxt = R.exact ? `Opening stock: recorded on ${fmtDT(stkAt(R.pO.at))}${R.pO.by ? " (" + R.pO.by + " was the first to use the tool that month)" : ""}.` : `Opening stock: worked out from ${stkFromTxt(R.pO)} by taking back the recorded movements. Stock corrections in that time cannot be separated, so they are inside the opening figure.`;
   const closeTxt = R.cur ? "Closing stock: today's stock." : R.pC.now ? "Closing stock: worked out from today's stock by taking back the recorded movements since." : `Closing stock: the opening stock recorded for ${stkMonthName(R.pC.m)}.`;
   if (pool !== "qc") {
-    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Boxes per crate", "Opening (crates)", "Received from Hangyo", "Sales returns (good)", "Taken from quick commerce stock", "Sold to distributors", "Sent with Swiggy / Zepto deliveries", "Returned to Hangyo", "Stock corrections", "Closing (crates)", "Closing (boxes)", "SS rate / box", "Opening value at SS rate", "Closing value at SS rate"];
-    const aoa = [[`GT STOCK STATEMENT · SahiReach LLP own stock · ${name}${R.cur ? " so far" : ""} (01-${m.slice(5, 7)}-${m.slice(0, 4)} to ${R.toTxt})`], [openTxt + " " + closeTxt], ["All quantities in crates. Opening + received + returns + from quick commerce − sold − sent − returned to Hangyo ± corrections = closing. Orders count when they are saved."], [], head];
-    const K = ["recv", "ret", "fromQC", "sold", "toPlat", "pret"], tot = { open: 0, close: 0, corr: 0, ea: 0, ov: 0, cv: 0 }; K.forEach((k) => (tot[k] = 0));
+    const head = ["Tropicana Code", "Product", "SAP code", "Category", "Boxes per crate", "Opening (crates)", "Received from Hangyo", "Sales returns (good)", "Taken from quick commerce stock", "Dispatched to distributors", "Sent with Swiggy / Zepto deliveries", "Returned to Hangyo", "Stock corrections", "Closing (crates)", "Closing (boxes)", "Reserved at close (crates)", "Available for sale at close (crates)", "SS rate / box", "Opening value at SS rate", "Closing value at SS rate"];
+    const aoa = [[`GT STOCK STATEMENT · SahiReach LLP own stock · ${name}${R.cur ? " so far" : ""} (01-${m.slice(5, 7)}-${m.slice(0, 4)} to ${R.toTxt})`], [openTxt + " " + closeTxt], ["All quantities in crates. Opening + received + returns + from quick commerce − dispatched − sent − returned to Hangyo ± corrections = closing. Stock is at Tropicana until an order is dispatched; until then it is reserved, and available for sale = closing − reserved."], [], head];
+    const K = ["recv", "ret", "fromQC", "sold", "toPlat", "pret"], tot = { open: 0, close: 0, corr: 0, ea: 0, res: 0, av: 0, ov: 0, cv: 0 }; K.forEach((k) => (tot[k] = 0));
     R.own.forEach((r) => {
       const u = r.i.upc || 1, ss = stkSS(r.sap), c = (x) => stkR2(x / u);
-      tot.open += r.open / u; tot.close += r.close / u; tot.corr += r.corr / u; tot.ea += r.close; K.forEach((k) => (tot[k] += (r.M[k] || 0) / u)); if (ss != null) { tot.ov += r.open * ss; tot.cv += r.close * ss; }
-      aoa.push([r.i.trop, r.i.name, r.sap, r.i.cat, r.i.upc || null, c(r.open)].concat(K.map((k) => c(r.M[k] || 0)), [c(r.corr), c(r.close), stkR2(r.close), ss != null ? stkR2(ss) : null, ss != null ? stkR2(r.open * ss) : null, ss != null ? stkR2(r.close * ss) : null]));
+      tot.open += r.open / u; tot.close += r.close / u; tot.corr += r.corr / u; tot.ea += r.close; tot.res += r.res / u; tot.av += r.avail / u; K.forEach((k) => (tot[k] += (r.M[k] || 0) / u)); if (ss != null) { tot.ov += r.open * ss; tot.cv += r.close * ss; }
+      aoa.push([r.i.trop, r.i.name, r.sap, r.i.cat, r.i.upc || null, c(r.open)].concat(K.map((k) => c(r.M[k] || 0)), [c(r.corr), c(r.close), stkR2(r.close), c(r.res), c(r.avail), ss != null ? stkR2(ss) : null, ss != null ? stkR2(r.open * ss) : null, ss != null ? stkR2(r.close * ss) : null]));
     });
-    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.open)].concat(K.map((k) => stkR2(tot[k])), [stkR2(tot.corr), stkR2(tot.close), stkR2(tot.ea), "", stkR2(tot.ov), stkR2(tot.cv)]));
-    sheets.push({ name: "GT movement " + short, aoa, cols: [14, 46, 11, 16, 8, 10, 10, 10, 12, 11, 12, 10, 11, 10, 10, 11, 14, 14] });
+    aoa.push(["", "TOTAL", "", "", "", stkR2(tot.open)].concat(K.map((k) => stkR2(tot[k])), [stkR2(tot.corr), stkR2(tot.close), stkR2(tot.ea), stkR2(tot.res), stkR2(tot.av), "", stkR2(tot.ov), stkR2(tot.cv)]));
+    sheets.push({ name: "GT movement " + short, aoa, cols: [14, 46, 11, 16, 8, 10, 10, 10, 12, 11, 12, 10, 11, 10, 10, 11, 12, 11, 14, 14] });
   }
   if (pool !== "gt") {
     const head = ["Tropicana Code", "Product", "SAP code", "Category", "Pieces per crate", "Opening (crates)", "Received from Hangyo", "Came back good (GRN)", "Delivered to Swiggy", "Delivered to Zepto", "Used for distributor orders", "Stock corrections", "Closing (crates)", "SS rate / box", "Opening value at SS rate", "Closing value at SS rate"];
@@ -3715,7 +3738,7 @@ function stkBody() {
   const poolBtn = (v, l) => `<button data-act="stkPool" data-v="${v}" aria-pressed="${K.pool === v}">${l}</button>`;
   const rec = D.stockOpen || {}, mo = K.m || months[0];
   return `<div class="field"><div class="label">Which stock</div><div class="seg" role="group">${poolBtn("gt", "GT (SahiReach)")}${poolBtn("qc", "Quick commerce")}${poolBtn("both", "Both")}</div></div>
-    <div class="card card-pad"><div class="card-title">Stock statement as on a date</div><div class="row-sub" style="margin-top:4px">Every product with crates, boxes and value.${K.pool !== "qc" ? " GT also shows saved orders not yet dispatched and what is physically at Tropicana." : ""} For today it also shows what is held for sent pick lists and what is free.</div>
+    <div class="card card-pad"><div class="card-title">Stock statement as on a date</div><div class="row-sub" style="margin-top:4px">Every product with crates, boxes and value.${K.pool !== "qc" ? " Shows current stock at Tropicana, what is reserved for orders not yet dispatched, and what is available for sale." : ""} For today it also shows what is held for sent pick lists and what is free.</div>
       <div class="hstack gap-12 wrap" style="margin-top:12px;align-items:flex-end"><div class="field" style="min-width:170px"><label class="label" for="stk-date">As on</label><input class="input" type="date" id="stk-date" max="${today}" value="${esc(K.d || today)}" data-in="stkDate"></div><button class="btn btn-primary" data-act="stkAsOn">${ic("doc", "sm")} Download</button></div></div>
     <div class="card card-pad"><div class="card-title">Month movement statement</div><div class="row-sub" style="margin-top:4px">For each product: opening stock, what came in, what went out, corrections and closing stock for the month.</div>
       <div class="hstack gap-12 wrap" style="margin-top:12px;align-items:flex-end"><div class="field" style="min-width:200px"><label class="label" for="stk-month">Month</label><select class="select" id="stk-month" data-in="stkMonth">${months.map((m, i) => `<option value="${m}" ${m === mo ? "selected" : ""}>${stkMonthName(m)}${i === 0 ? " (so far)" : ""}</option>`).join("")}</select></div><button class="btn btn-primary" data-act="stkMonthDl">${ic("doc", "sm")} Download</button></div>
@@ -3739,6 +3762,36 @@ ACT.stkMonthDl = async (el) => {
   const m = ($("#stk-month") || {}).value || stkMonths()[0], B = stkMonthSheets(m, S.stk.pool);
   if (await downloadBook(el, B.sheets, B.file)) { logActivity("Stock statement downloaded", stkPoolTxt(S.stk.pool), "Movement for " + stkMonthName(m)); toast(`${stkPoolTxt(S.stk.pool)} movement for ${stkMonthName(m)} downloaded`, "doc"); }
 };
+
+/* ===== STOCK: CURRENT, RESERVED AND AVAILABLE FOR SALE =====
+   An order's boxes come off the stock figure (st.ea) when the order is saved, so st.ea is what is left to sell.
+   Until the order is dispatched those boxes are still at Tropicana, blocked for that order.
+     Current stock (at Tropicana) = st.ea + boxes on orders not yet dispatched
+     Reserved                     = boxes on orders not yet dispatched that come from SahiReach stock
+                                    + SahiReach boxes held for a sent Swiggy / Zepto pick list
+     Available for sale           = current − reserved
+   A negative st.ea is stock promised from quick commerce stock (it is not SahiReach's, so it is not reserved here). */
+function pendingEA() {
+  const m = {}; D.orders.forEach((o) => { if (o.status !== "Pending") return; (linesByOrder[o.id] || []).forEach((l) => { if (l.sap && l.ea > 0) m[l.sap] = (m[l.sap] || 0) + l.ea; }); });
+  return m;
+}
+function stockSplit(s, P) {
+  P = P || pendingEA();
+  const u = s.upc || 1, pend = P[s.sap] || 0, ea = s.ea || 0, fromQC = ea < 0 ? -ea : 0;
+  const cur = ea + pend, resOrd = Math.max(0, pend - fromQC), held = typeof ownHeldEA === "function" ? ownHeldEA(s.sap) : 0, res = resOrd + held, avail = cur - res;
+  return { cur, resOrd, held, res, avail, u, cr: { cur: cur / u, resOrd: resOrd / u, held: held / u, res: res / u, avail: avail / u } };
+}
+function stockTotals(list, P) {
+  P = P || pendingEA(); const t = { cur: 0, res: 0, avail: 0, resOrd: 0, held: 0, n: 0, inStock: 0, vCur: 0, vAvail: 0 };
+  (list || D.stock).forEach((s) => { const x = stockSplit(s, P), uc = s.cost || 0; t.cur += x.cr.cur; t.res += x.cr.res; t.avail += x.cr.avail; t.resOrd += x.cr.resOrd; t.held += x.cr.held; t.n++; if (x.avail > 1e-9) t.inStock++; t.vCur += x.cur * uc; t.vAvail += x.avail * uc; });
+  return t;
+}
+const pendingOrderCount = () => D.orders.filter((o) => o.status === "Pending").length;
+/* quick commerce: crates are taken off when delivered, so they are all at Tropicana until then */
+function qcSplit(q) {
+  const cur = q.crates || 0, held = typeof qcHeld === "function" ? qcHeld(q.sap).q : 0, gt = typeof gtFromQC === "function" ? gtFromQC(q.sap) : 0, res = held + gt;
+  return { cur, held, gt, res, avail: cur - res };
+}
 
 /* ===== TOD & NOTES ===== */
 function todState() {
