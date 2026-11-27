@@ -560,6 +560,84 @@ function recomputeRepl() {
   return D.repl;
 }
 
+/* ===== ADD A FILE: choose it, drag it in, or paste it =====
+   One drop zone used wherever a file comes in (distributor orders, Swiggy / Zepto POs, Hangyo invoices,
+   Tropicana's statement). Click it to choose a file; drag a file onto it (or anywhere on the open sheet or page);
+   or paste a copied file with ⌘V / Ctrl+V. The file is handed to the zone's own <input type="file">, so the screen
+   behind it reads it exactly as if it had been chosen. */
+ICONS.upload = '<path d="M12 15.5V4.5"/><path d="m7.5 9 4.5-4.5L16.5 9"/><path d="M4.5 14.5v3a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3"/>';
+const DROP_TOUCH = typeof matchMedia === "function" && matchMedia("(hover: none)").matches;
+const DROP_KEY = /Mac|iPhone|iPad/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent) ? "⌘V" : "Ctrl+V";
+const dropSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+/* o: { input, dataIn, accept, title, sub, file, compact } */
+function dropZone(o) {
+  const name = o.file ? `<span class="drop-file">${ic("doc", "sm")}${esc(o.file.name || o.file)}</span>` : "";
+  return `<div class="drop${o.compact ? " compact" : ""}${o.file ? " has" : ""}" data-drop="${esc(o.input)}" data-act="dropPick" data-for="${esc(o.input)}" role="button" tabindex="0" aria-label="${esc(o.title)}. Choose a file, drop one here, or paste it.">
+    <input id="${esc(o.input)}" type="file" accept="${esc(o.accept)}" hidden data-in="${esc(o.dataIn)}">
+    <span class="drop-ic">${ic("upload")}</span>
+    <span class="drop-text"><span class="drop-title">${esc(o.title)}</span><span class="drop-sub" id="${esc(o.input)}-name">${name || esc(o.sub || "")}</span></span>
+    <span class="drop-end"><span class="btn btn-secondary btn-sm drop-btn">Choose file</span>${DROP_TOUCH ? "" : `<span class="drop-or">or drop · <kbd>${DROP_KEY}</kbd></span>`}</span>
+  </div>`;
+}
+ACT.dropPick = (el, e) => { const inp = $("#" + el.dataset.for); if (!inp || (e && e.target && e.target.tagName === "INPUT")) return; inp.value = ""; inp.click(); };
+document.addEventListener("keydown", (e) => { const z = e.target && e.target.closest && e.target.closest("[data-drop]"); if (z && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); ACT.dropPick(z); } });
+/* show the chosen file's name in its zone, whichever way it came in */
+document.addEventListener("change", (e) => { const z = e.target.closest && e.target.closest("[data-drop]"); if (z) dropShow(z, e.target.files && e.target.files[0]); }, true);
+function dropShow(z, f) {
+  const n = $("#" + z.dataset.drop + "-name"); if (!n || !f) return;
+  n.innerHTML = `<span class="drop-file">${ic("doc", "sm")}${esc(f.name)} <span class="dim">· ${dropSize(f.size || 0)}</span></span>`; z.classList.add("has");
+}
+/* which zone a file goes to: the one under the pointer, else the only one in the open sheet, else the only one on the page */
+function dropTarget(el) {
+  const near = el && el.closest && el.closest("[data-drop]"); if (near) return near;
+  const sheet = $("#sheet"); if (sheet && !sheet.hidden && sheetOpen) { const Z = sheet.querySelectorAll("[data-drop]"); return Z.length ? Z[0] : null; }
+  const Z = document.querySelectorAll("#main [data-drop]"); return Z.length ? Z[0] : null;
+}
+function dropAccepts(inp, f) {
+  const acc = String(inp.accept || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean); if (!acc.length) return true;
+  const nm = String(f.name || "").toLowerCase(), ty = String(f.type || "").toLowerCase();
+  return acc.some((a) => (a[0] === "." ? nm.endsWith(a) : a.endsWith("/*") ? ty.startsWith(a.slice(0, -1)) : ty === a));
+}
+const dropKinds = (inp) => { const a = String(inp.accept || "").toLowerCase(), k = []; if (/pdf/.test(a)) k.push("PDF"); if (/xls/.test(a)) k.push("Excel"); if (/csv/.test(a)) k.push("CSV"); if (/\.txt/.test(a)) k.push("text"); if (/image/.test(a)) k.push("a photo"); return k.length > 1 ? k.slice(0, -1).join(", ") + " or " + k[k.length - 1] : k[0] || "a file"; };
+function dropDeliver(z, f, how) {
+  const inp = z && $("#" + z.dataset.drop); if (!inp || !f) return false;
+  if (!dropAccepts(inp, f)) {
+    z.classList.remove("bad"); void z.offsetWidth; z.classList.add("bad");
+    toast(how === "paste" && /^image\//.test(f.type) && !/image/.test(inp.accept) ? "That pasted a picture, not the file. Drag the file in, or choose it." : `This needs ${dropKinds(inp)}. “${f.name || "That file"}” is not one.`, "alert");
+    return false;
+  }
+  try { const dt = new DataTransfer(); dt.items.add(f); inp.files = dt.files; }
+  catch (e) { toast("This browser cannot take a dropped file here. Choose it instead.", "alert"); return false; }
+  dropShow(z, f); z.classList.remove("got"); void z.offsetWidth; z.classList.add("got");
+  inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+/* drag and drop: the zone (and, softly, every zone) lights up while a file is held over the window */
+let DROP_DEPTH = 0;
+const dropHasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
+const dropClear = () => { DROP_DEPTH = 0; document.body.classList.remove("dragging"); document.querySelectorAll(".drop.over").forEach((x) => x.classList.remove("over")); };
+document.addEventListener("dragenter", (e) => { if (!dropHasFiles(e) || !CAN_EDIT) return; DROP_DEPTH++; if (dropTarget(null) || dropTarget(e.target)) document.body.classList.add("dragging"); });
+document.addEventListener("dragleave", (e) => { if (!dropHasFiles(e)) return; DROP_DEPTH = Math.max(0, DROP_DEPTH - 1); if (!DROP_DEPTH) dropClear(); });
+document.addEventListener("dragover", (e) => {
+  if (!dropHasFiles(e) || !CAN_EDIT) return; const z = dropTarget(e.target); if (!z) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = "copy";
+  document.querySelectorAll(".drop.over").forEach((x) => { if (x !== z) x.classList.remove("over"); }); z.classList.add("over");
+});
+document.addEventListener("drop", (e) => {
+  if (!dropHasFiles(e)) return; const z = CAN_EDIT ? dropTarget(e.target) : null; e.preventDefault(); dropClear();
+  if (!z) { toast("Open the screen for that file first (Orders → Paste or upload, Add PO, Receive stock or Check with Tropicana).", "info"); return; }
+  const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (e.dataTransfer.files.length > 1) toast("One file at a time: the first one was taken.", "info");
+  dropDeliver(z, f, "drop");
+});
+/* paste: a copied file (or screenshot) goes to the zone; pasted text keeps working as normal */
+document.addEventListener("paste", (e) => {
+  const cd = e.clipboardData; if (!cd || !CAN_EDIT) return;
+  const files = [...(cd.files || [])]; if (!files.length) return;
+  const z = dropTarget(document.activeElement); if (!z) return;
+  /* a copied file in Finder also puts its name on the clipboard as text: in a text box, the file still wins */
+  e.preventDefault(); dropDeliver(z, files[0], "paste");
+});
+
 /* ===== charts (inline SVG, one y-axis each, hover layer, table twin) ===== */
 const cssVar = (n) => `var(${n})`;
 const isNarrow = () => window.innerWidth < 720;
@@ -1811,13 +1889,14 @@ ACT.importOrder = () => {
   S.impIn = S.impIn || { text: "", file: null };
   const smartOn = IMP_SMART && !!(HOST && HOST.readOrder) && !S.smartMissing && !(D.company && D.company.smartOff);
   openSheet("Read an order", `<div class="card card-pad"><div class="field"><label class="label" for="imp-text">Paste the message</label><textarea class="input" id="imp-text" rows="10" style="height:auto;min-height:200px;padding:12px;line-height:1.45" placeholder="Aqua blue Exim - Primary order&#10;&#10;Vanilla cup 2&#10;Mini Choco bar 2&#10;Big cone Vanilla 2&#10;Sipup&#10;Vanilla 1">${esc(S.impIn.text)}</textarea></div>
-      <div class="hstack gap-12 wrap" style="margin-top:14px;align-items:center"><span class="row-sub">or</span><label class="btn btn-secondary" for="imp-file" style="cursor:pointer">${ic("doc", "sm")} Choose a file</label><input id="imp-file" type="file" accept=".xlsx,.xls,.csv,.txt,.pdf,application/pdf${smartOn ? ",image/*" : ""}" hidden data-in="impFile"><span class="row-sub" id="imp-fname">${S.impIn.file ? esc(S.impIn.file.name) : smartOn ? "PDF, Excel, CSV, text or a photo of the order" : "PDF purchase order, Excel, CSV or text"}</span></div>
+      <div class="drop-divider"><span>or add the order file</span></div>
+      ${dropZone({ input: "imp-file", dataIn: "impFile", accept: ".xlsx,.xls,.csv,.txt,.pdf,application/pdf" + (smartOn ? ",image/*" : ""), title: "Purchase order file", sub: smartOn ? "PDF, Excel, CSV, text or a photo of the order" : "PDF purchase order, Excel, CSV or text", file: S.impIn.file, compact: true })}
       <div class="row-sub" style="margin-top:12px">${smartOn ? `${ic("bolt", "sm")} Claude reads the order and finds the closest products. You check everything before anything is saved.` : `The tool finds the closest products from the names, sizes and what each distributor bought before. You check everything before anything is saved.`}</div></div>
       <div id="imp-wait"></div>`,
     `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="impRead">Read order</button>`);
   setTimeout(() => { const t = $("#imp-text"); if (t && !S.impIn.text) t.focus(); }, 60);
 };
-IN.impFile = (el) => { const f = el.files && el.files[0]; S.impIn.file = f || null; const n = $("#imp-fname"); if (n) n.textContent = f ? f.name : ""; };
+IN.impFile = (el) => { const f = el.files && el.files[0]; S.impIn.file = f || null; };
 async function impFileInput(f) {
   const name = f.name || "";
   if (/^image\//.test(f.type)) {
@@ -2600,7 +2679,8 @@ function qcNewHtml() {
   return `<div class="split"><div class="stack gap-20">
     ${n.editPo ? `<div class="editing-bar">${ic("pencil", "sm")}<span>Editing <span class="mono">${esc(n.editPo)}</span>. Saving replaces its lines. Pick lists and the truck plan use the new numbers.</span></div>` : ""}
     ${qcReadBanner()}
-    <div><div class="group-label"><span>1 · The PO</span>${n.editPo ? "" : `<button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="qcReadPdf">${ic("doc", "sm")} Read a PO PDF</button>`}</div><input id="qn-pdf" type="file" accept=".pdf,application/pdf" hidden data-in="qnPdf"><div class="card card-pad"><div class="form-grid qn-head">
+    ${n.editPo ? "" : dropZone({ input: "qn-pdf", dataIn: "qnPdf", accept: ".pdf,application/pdf", title: "Read the PO from its PDF", sub: "Swiggy or Zepto purchase order: the PO number, dates and every line fill in for you" })}
+    <div><div class="group-label"><span>1 · The PO</span></div><div class="card card-pad"><div class="form-grid qn-head">
       <div class="field"><span class="label">Platform</span>${seg("qnPlatform", n.platform, [["Swiggy", "Swiggy"], ["Zepto", "Zepto"]])}</div>
       <div class="field"><label class="label" for="qn-po">PO number</label><input class="input" id="qn-po" placeholder="KCOPO10712" value="${esc(n.po)}" data-in="qnField" data-f="po" autocomplete="off" enterkeyhint="next"></div>
       <div class="field"><label class="label" for="qn-date">PO date</label><input class="input" id="qn-date" type="date" value="${esc(n.date)}" data-in="qnField" data-f="date"></div>
@@ -2965,7 +3045,7 @@ function recvLineSub(l) {
 function receiveBody() {
   const R = S.recv;
   return `<div class="card card-pad"><div class="form-grid"><div class="field"><label class="label" for="rc-inv">Hangyo invoice number</label><input class="input" id="rc-inv" placeholder="SI0018712" value="${esc(R.inv)}" data-in="recvField" data-f="inv"></div><div class="field"><label class="label" for="rc-date">Invoice date</label><input class="input" id="rc-date" type="date" value="${esc(R.date || iso(NOW()).slice(0, 10))}" data-in="recvField" data-f="date"></div><div class="field full"><label class="label">Add stock to</label>${`<div class="seg"><button data-act="recvPool" data-v="Own Stock" aria-pressed="${R.pool === "Own Stock"}">Own stock</button><button data-act="recvPool" data-v="QC Stock" aria-pressed="${R.pool === "QC Stock"}">Quick commerce stock</button></div>`}</div></div></div>
-    <div class="recv-up"><span class="attn-ic tint">${ic("doc")}</span><span class="grow"><div class="row-title">Have the invoice as Excel?</div><div class="row-sub">Upload it and every line is added for you to check. Products are matched by SAP code first, then by name.</div></span><label class="btn btn-secondary" for="rc-file" style="cursor:pointer">${ic("doc", "sm")} Upload Excel</label><input id="rc-file" type="file" accept=".xlsx,.xls,.csv" hidden data-in="recvFile"></div>
+    ${dropZone({ input: "rc-file", dataIn: "recvFile", accept: ".xlsx,.xls,.csv", title: "Have Hangyo's invoice as Excel?", sub: "Every line is added for you to check. Products are matched by SAP code first, then by name." })}
     <div id="rc-up-msg">${recvUpMsg()}</div>
     <div class="stack gap-10"><div class="search">${ic("search", "sm")}<input class="input" id="rc-q" type="search" placeholder="Add a product from the invoice" value="${esc(R.q)}" data-in="recvQ" autocomplete="off"></div><div id="rc-results">${recvResHtml(R.q)}</div>
     <div class="group">${R.lines.length ? R.lines.map((l, i) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.name))}</div><div class="row-sub">${l.raw ? `<span class="${l.conf === "check" ? "pill warn" : "dim"}" style="${l.conf === "check" ? "height:20px;font-size:11.5px" : ""}">${l.conf === "check" ? "Check: " : "From the file: "}${esc(l.raw)}</span> · ` : ""}<span id="rc-l-${i}">${recvLineSub(l)}</span></div></span><span class="row-end"><input class="input sm num-in" style="width:80px" type="number" min="0" step="any" value="${l.crates}" id="rc-c-${i}" data-in="recvCrates" data-i="${i}" aria-label="Crates"><span class="muted" style="font-size:13px">crates</span><button class="icon-btn" data-act="recvRm" data-i="${i}" aria-label="Remove">${ic("trash", "sm")}</button></span></div>`).join("") : `<div class="empty">Add the products on the invoice. Stock goes up when you save.</div>`}</div><div id="rc-sum">${recvSumHtml()}</div></div>`;
@@ -3973,7 +4053,7 @@ function rcAskHtml(R) {
 }
 function rcBody() {
   const R = (D.recon || {}).last;
-  const up = CAN_EDIT ? `<div class="card card-pad"><div class="hstack between wrap gap-12"><div><div class="card-title">${R ? "Check a newer statement" : "Upload Tropicana's ledger statement"}</div><div class="row-sub">The daily SAHIREACH_LS file (.xls). Swiggy lines are checked against quick commerce stock.</div></div><label class="btn btn-primary" style="cursor:pointer">${ic("doc", "sm")} Choose file<input type="file" id="rc-file" accept=".xls,.xlsx,.csv" data-in="rcFile" style="display:none"></label></div><div id="rc-msg"></div></div>` : "";
+  const up = CAN_EDIT ? `<div>${dropZone({ input: "tc-file", dataIn: "rcFile", accept: ".xls,.xlsx,.csv", title: R ? "Check a newer statement" : "Tropicana's ledger statement", sub: "The daily SAHIREACH_LS file. Swiggy lines are checked against quick commerce stock." })}<div id="rc-msg"></div></div>` : "";
   if (!R) return up + `<div class="group"><div class="empty"><div class="big">Not checked yet</div>Upload the statement to compare it with our current stock.</div></div>`;
   const sec = (qc) => {
     const rows = R.rows.filter((r) => r.qc === qc), S2 = qc ? R.qcs : R.own, off = rows.filter((r) => r.status === "open" || r.status === "unmapped" || r.status === "explained"), loose = rows.filter((r) => r.status === "loose"), ok = rows.filter((r) => r.status === "match");

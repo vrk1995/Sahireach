@@ -568,3 +568,36 @@ table.t th.sticky-col { background: var(--surface-2); z-index: 2; }
 .hbar-btn:hover { background: var(--fill); }
 .tr-tap { cursor: pointer; }
 .tr-tap:hover td { background: var(--fill); }
+
+/* ---- add a file: choose, drop or paste ---- */
+.drop { position: relative; display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: var(--r-lg); background: var(--surface); border: 1.5px dashed var(--hairline); cursor: pointer; transition: border-color 0.2s var(--ease), background 0.2s var(--ease), transform 0.25s var(--ease), box-shadow 0.25s var(--ease); -webkit-tap-highlight-color: transparent; outline: none; }
+.drop:hover { border-color: color-mix(in srgb, var(--tint) 45%, transparent); }
+.drop:focus-visible { box-shadow: 0 0 0 4px var(--tint-soft); border-color: var(--tint); }
+.drop.compact { padding: 12px 14px; }
+.drop-ic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; flex: none; background: var(--tint-soft); color: var(--tint); transition: transform 0.3s var(--ease); }
+.drop.compact .drop-ic { width: 36px; height: 36px; border-radius: 10px; }
+.drop-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.drop-title { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; color: var(--ink); }
+.drop-sub { font-size: 13px; color: var(--ink-2); line-height: 1.35; }
+.drop-file { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drop-file .ic { color: var(--tint); flex: none; }
+.drop-end { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
+.drop-or { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+.drop-or kbd { font: 600 11px/1 var(--font); padding: 3px 6px; border-radius: 6px; background: var(--fill); color: var(--ink-2); border: none; }
+/* a file is being held over the window: every zone wakes up, the one it will land in fills with the tint */
+body.dragging .drop { border-color: color-mix(in srgb, var(--tint) 55%, transparent); }
+.drop.over { border-style: solid; border-color: var(--tint); background: var(--tint-soft); transform: scale(1.012); box-shadow: 0 8px 28px rgba(11, 122, 112, 0.14); }
+.drop.over .drop-ic { transform: translateY(-2px) scale(1.06); background: var(--tint); color: var(--on-tint); }
+.drop.has { border-style: solid; border-color: color-mix(in srgb, var(--tint) 35%, transparent); }
+.drop.got .drop-ic { animation: drop-got 0.5s var(--ease); }
+.drop.bad { animation: drop-shake 0.38s var(--ease); border-color: var(--bad); }
+@keyframes drop-got { 40% { transform: scale(1.14); } }
+@keyframes drop-shake { 20%, 60% { transform: translateX(-5px); } 40%, 80% { transform: translateX(5px); } }
+.drop-divider { display: flex; align-items: center; gap: 12px; margin: 16px 0 12px; color: var(--ink-3); font-size: 12px; }
+.drop-divider::before, .drop-divider::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+@media (max-width: 600px) {
+  .drop { flex-wrap: wrap; }
+  .drop-end { flex-direction: row; width: 100%; justify-content: flex-start; padding-left: 56px; }
+  .drop.compact .drop-end { padding-left: 50px; }
+}
+@media (prefers-reduced-motion: reduce) { .drop, .drop-ic { transition: none; } .drop.over { transform: none; } .drop.got .drop-ic, .drop.bad { animation: none; } }
