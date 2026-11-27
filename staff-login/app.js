@@ -576,7 +576,8 @@ function dropZone(o) {
     <input id="${esc(o.input)}" type="file" accept="${esc(o.accept)}" hidden data-in="${esc(o.dataIn)}">
     <span class="drop-ic">${ic("upload")}</span>
     <span class="drop-text"><span class="drop-title">${esc(o.title)}</span><span class="drop-sub" id="${esc(o.input)}-name">${name || esc(o.sub || "")}</span></span>
-    <span class="drop-end"><span class="btn btn-secondary btn-sm drop-btn">Choose file</span>${DROP_TOUCH ? "" : `<span class="drop-or">or drop · <kbd>${DROP_KEY}</kbd></span>`}</span>
+    <span class="drop-end">${DROP_TOUCH ? `<span class="drop-btns"><span class="btn btn-secondary btn-sm drop-btn">Choose file</span><button type="button" class="btn btn-secondary btn-sm drop-btn" data-act="dropPaste" data-for="${esc(o.input)}">${ic("copy", "sm")} Paste</button></span>` : `<span class="btn btn-secondary btn-sm drop-btn">Choose file</span><span class="drop-or">or drop · <kbd>${DROP_KEY}</kbd></span>`}</span>
+    <span class="drop-paste" id="${esc(o.input)}-paste" hidden></span>
   </div>`;
 }
 ACT.dropPick = (el, e) => { const inp = $("#" + el.dataset.for); if (!inp || (e && e.target && e.target.tagName === "INPUT")) return; inp.value = ""; inp.click(); };
@@ -612,6 +613,34 @@ function dropDeliver(z, f, how) {
   inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true }));
   return true;
 }
+/* phones: "Paste" reads the clipboard (the phone asks first); where a phone does not hand files to the web that
+   way, a paste field opens so a long press → Paste delivers it, like a chat box */
+const DROP_EXT = { "application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg", "image/heic": "heic", "text/csv": "csv", "application/vnd.ms-excel": "xls", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx", "text/plain": "txt" };
+ACT.dropPaste = async (el) => {
+  const z = el.closest("[data-drop]"), inp = z && $("#" + z.dataset.drop); if (!inp) return;
+  if (navigator.clipboard && navigator.clipboard.read) {
+    try {
+      const items = await navigator.clipboard.read(); let other = null, textOnly = false;
+      for (const it of items) for (const t of it.types) {
+        if (/^text\/(plain|html|uri-list)$/.test(t) && !/\.txt/.test(inp.accept)) { textOnly = true; continue; }
+        const blob = await it.getType(t), f = new File([blob], "Pasted file." + (DROP_EXT[t] || (t.split("/")[1] || "bin")), { type: t });
+        if (dropAccepts(inp, f)) { dropPasteClose(z); dropDeliver(z, f, "paste"); return; }
+        other = other || f;
+      }
+      if (other) { dropDeliver(z, other, "paste"); return; }
+      if (textOnly) { dropPasteOpen(z, "The clipboard has text, not a file. Copy the file itself (in Files or WhatsApp: Share → Copy), then tap Paste again, or paste it here."); return; }
+    } catch (e) { /* refused, or this phone does not share files this way */ }
+  }
+  dropPasteOpen(z);
+};
+function dropPasteOpen(z, msg) {
+  const box = $("#" + z.dataset.drop + "-paste"); if (!box) return;
+  box.hidden = false; box.innerHTML = `<input class="input drop-paste-in" inputmode="none" autocomplete="off" aria-label="Paste the file here" placeholder="Touch and hold here, then tap Paste"><span class="drop-sub">${esc(msg || "Your phone keeps copied files to itself until you paste them into a box like this one.")}</span>`;
+  const f = box.querySelector("input"); setTimeout(() => f && f.focus(), 30);
+  f.addEventListener("input", () => { if (f.value) { f.value = ""; toast("That pasted text. Copy the file itself, then paste here.", "info"); } });
+}
+function dropPasteClose(z) { const box = $("#" + z.dataset.drop + "-paste"); if (box) { box.hidden = true; box.innerHTML = ""; } }
+
 /* drag and drop: the zone (and, softly, every zone) lights up while a file is held over the window */
 let DROP_DEPTH = 0;
 const dropHasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
@@ -635,7 +664,7 @@ document.addEventListener("paste", (e) => {
   const files = [...(cd.files || [])]; if (!files.length) return;
   const z = dropTarget(document.activeElement); if (!z) return;
   /* a copied file in Finder also puts its name on the clipboard as text: in a text box, the file still wins */
-  e.preventDefault(); dropDeliver(z, files[0], "paste");
+  e.preventDefault(); if (dropDeliver(z, files[0], "paste")) dropPasteClose(z);
 });
 
 /* ===== charts (inline SVG, one y-axis each, hover layer, table twin) ===== */
@@ -3254,7 +3283,7 @@ ACT.makePO = () => {
     <div class="group-label" style="padding-bottom:0"><span>Own stock · ${lines.length} lines</span></div>${lines.length ? tbl(lines, (r) => r.final) : `<div class="group"><div class="empty">Nothing for own stock.</div></div>`}
     <div class="group-label" style="padding-bottom:0"><span>Quick commerce stock · ${qls.length} lines</span></div>${typedNote}${qls.length ? tbl(qls, (q) => q.final) : `<div class="group"><div class="empty">Nothing for Swiggy / Zepto.</div></div>`}
     <div class="row-sub">The Hangyo portal takes boxes. Place the order there, then mark it as placed so the next plan does not order it twice.</div>`,
-    `<button class="btn btn-secondary" data-act="replExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="copyPO">${ic("copy", "sm")} Copy lines</button><button class="btn btn-primary" data-act="placePO">Mark PO as placed</button>`, true);
+    `<button class="btn btn-secondary" data-act="hpoPdf">${ic("doc", "sm")} PDF</button><button class="btn btn-secondary" data-act="replExcel">${ic("doc", "sm")} Excel</button><button class="btn btn-secondary" data-act="copyPO">${ic("copy", "sm")} Copy lines</button><button class="btn btn-primary" data-act="placePO">Mark PO as placed</button>`, true);
 };
 ACT.copyPO = () => copyText(["OWN STOCK"].concat(D.repl.rows.filter((r) => r.final > 0).map((r) => `${r.name}\t${r.final} crates\t${r.final * (r.upc || 0)} boxes`), ["", "QUICK COMMERCE STOCK"], qcPOLines().map((q) => `${q.name}\t${q.final} crates\t${q.final * (q.upc || 0)} boxes`)).join("\n"), "PO lines copied");
 ACT.placePO = () => {
@@ -3265,7 +3294,7 @@ ACT.placePO = () => {
   own.forEach((r) => push(r, "Own stock")); qc.forEach((q) => push(q, "QC stock"));
   logActivity("Hangyo PO placed", po, `Own ${nf(own.reduce((a, r) => a + r.final, 0))} crates, QC ${nf(qc.reduce((a, q) => a + q.final, 0))} crates`);
   clearOverrides({ yours: true, qcYours: true, qcTotal: true, adj: true });
-  closeSheet(); S.replTab = "orders"; render(); toast("PO marked as placed");
+  S.replTab = "orders"; render(); ACT.poSheet({ dataset: { po } }); toast("PO marked as placed. Download its PDF here.");
 };
 function qcReplHtml() {
   const rows = D.qcStock.slice().sort((a, b) => (b.final || 0) - (a.final || 0) || (b.perDay || 0) - (a.perDay || 0)), tot = rows.reduce((a, q) => a + (q.final || 0), 0);
@@ -3284,7 +3313,7 @@ IN.qcYours = (el) => { const q = qcBySap[el.dataset.sap]; q.yours = el.value ===
 ACT.poSheet = (el) => {
   const lines = D.hpoLog.filter((l) => l.po === el.dataset.po), g = lines[0];
   openSheet(esc(g.po), `<div class="card card-pad"><div class="kv"><div><div class="k">Placed</div><div class="v">${fmtDT(g.placed)}</div></div><div><div class="k">Stock pool</div><div class="v">${esc(g.pool)}</div></div><div><div class="k">Crates</div><div class="v num">${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))}</div></div>${SEE_MONEY ? `<div><div class="k">Value at SS rate</div><div class="v num">${rs(lines.reduce((a, l) => a + (l.value || 0), 0))}</div></div>` : ""}</div></div>
-    <div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates)} crates · ${nf(l.boxes)} boxes${l.received ? " · " + nf(l.received) + " boxes received" : ""}${l.notes ? " · " + esc(l.notes) : ""}</div></span><span class="row-end">${statusPill(l.status)}</span></div>`).join("")}</div>`);
+    <div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates)} crates · ${nf(l.boxes)} boxes${l.received ? " · " + nf(l.received) + " boxes received" : ""}${l.notes ? " · " + esc(l.notes) : ""}</div></span><span class="row-end">${statusPill(l.status)}</span></div>`).join("")}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Close</button><button class="btn btn-primary" data-act="hpoPdf" data-po="${esc(g.po)}">${ic("doc", "sm")} Download PDF</button>`);
 };
 
 /* ===== SLOW-MOVING STOCK (own stock to push) ===== */
@@ -4223,6 +4252,117 @@ ACT.itemExcel = async (el) => {
   logActivity("Item ledger downloaded", (stockBySap[sap] || qcBySap[sap] || {}).name || sap, "Excel"); toast("Item ledger downloaded", "doc");
 };
 
+/* ===== HANGYO PURCHASE ORDER AS A PDF =====
+   A clean A4 purchase order for a PO placed with Hangyo (or a draft from today's plan): SahiReach's details and logo,
+   Hangyo, where it is delivered (Tropicana Logistics), the lines grouped as SahiReach stock and quick commerce stock,
+   with crates, boxes, rate and amount, GST and the total in words. Made in the browser with jsPDF (loaded only for
+   this) and downloaded straight away. Staff get the same PO without rates or amounts. */
+const JSPDF_SRC = (HOST && HOST.jspdfSrc) || "https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js";
+const JSPDF_AT_SRC = (HOST && HOST.jspdfAtSrc) || "https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.9/dist/jspdf.plugin.autotable.min.js";
+async function loadJsPdf() {
+  await loadScriptOnce(JSPDF_SRC, () => !!(window.jspdf && window.jspdf.jsPDF));
+  await loadScriptOnce(JSPDF_AT_SRC, () => !!(window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API && window.jspdf.jsPDF.API.autoTable));
+}
+/* the lines of a placed PO, or of today's plan (a draft) */
+function hpoDoc(po) {
+  const cat = (sap) => ((stockBySap[sap] || qcBySap[sap] || catBySap[sap] || {}).cat || "Other");
+  const line = (x, pool) => { const boxes = x.boxes != null ? x.boxes : (x.crates || 0) * (x.upc || 0), rate = x.value && boxes ? x.value / boxes : ssRate(x.sap); return { sap: x.sap, name: x.product || x.name, trop: String(((pool === "qc" ? qcBySap[x.sap] : stockBySap[x.sap]) || {}).trop || "").replace(/^TBD$/i, ""), cat: cat(x.sap), upc: x.upc || (stockBySap[x.sap] || catBySap[x.sap] || {}).upc || null, crates: x.crates || 0, boxes, rate: rate != null ? rate : null, amount: rate != null ? boxes * rate : null }; };
+  if (po) {
+    const L = D.hpoLog.filter((l) => l.po === po); if (!L.length) return null;
+    return { po, date: L[0].placed, draft: false, own: L.filter((l) => !/QC/i.test(l.pool)).map((l) => line(l, "own")), qc: L.filter((l) => /QC/i.test(l.pool)).map((l) => line(l, "qc")) };
+  }
+  recomputeRepl();
+  return { po: "Draft", date: iso(NOW()), draft: true, own: D.repl.rows.filter((r) => r.final > 0).map((r) => line({ sap: r.sap, name: r.name, upc: r.upc, crates: r.final }, "own")), qc: qcPOLines().map((q) => line({ sap: q.sap, name: q.name, upc: q.upc, crates: q.final }, "qc")) };
+}
+const pdfMoney = (n) => (n == null ? "" : Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const pdfNum = (n, d = 0) => Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: d });
+function hpoPdf(P) {
+  const { jsPDF } = window.jspdf, doc = new jsPDF({ unit: "mm", format: "a4", compress: true }), W = 210, M = 16, money = SEE_MONEY;
+  const TINT = [11, 122, 112], INK = [29, 29, 31], GREY = [110, 110, 115], LINE = [229, 229, 234], SOFT = [230, 242, 241], ZEBRA = [248, 248, 250];
+  const C = Object.assign({}, D.company || {}), when = toDate(P.date), dateTxt = `${pad2(when.getDate())} ${MONTHS[when.getMonth()]} ${when.getFullYear()}`;
+  doc.setProperties({ title: `Purchase order ${P.po}`, subject: "Purchase order to Hangyo Ice Creams", author: C.name || "SahiReach LLP", creator: "SahiReach Order Tool" });
+  /* header: logo and name on the left, the document title on the right */
+  try { if (LOGO && /^data:image\/(png|jpe?g)/.test(LOGO)) doc.addImage(LOGO, LOGO.includes("png") ? "PNG" : "JPEG", M, 14, 13, 13); } catch (e) { /* no logo */ }
+  doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...INK); doc.text(C.name || "SahiReach LLP", M + 17, 19.5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...GREY); doc.text("Super stockist · Hangyo Ice Creams", M + 17, 24.5);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(...TINT); doc.text(P.draft ? "Purchase order (draft)" : "Purchase order", W - M, 20, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(...INK); doc.text(`${P.po}  ·  ${dateTxt}`, W - M, 26, { align: "right" });
+  doc.setDrawColor(...LINE); doc.setLineWidth(0.3); doc.line(M, 32, W - M, 32);
+  /* three blocks: from, to, deliver to */
+  const blocks = [
+    ["FROM", [C.name || "SahiReach LLP", C.address || "", C.gstin ? "GSTIN " + C.gstin : "", C.fssai ? "FSSAI " + C.fssai : "", [CO.phone, CO.email].filter(Boolean).join("  ·  ")]],
+    ["TO", ["Hangyo Ice Creams Private Limited", (D.company && D.company.supplierAddress) || "", (D.company && D.company.supplierGstin) ? "GSTIN " + D.company.supplierGstin : ""]],
+    ["DELIVER TO", ["Tropicana Logistics (cold store)", "Willingdon Island, Kochi, Kerala", `For ${[P.own.length ? "SahiReach stock" : "", P.qc.length ? "quick commerce stock" : ""].filter(Boolean).join(" and ")}`]],
+  ];
+  const bw = (W - 2 * M - 12) / 3;
+  blocks.forEach(([h, rows], i) => {
+    const x = M + i * (bw + 6); let y = 39;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.text(h, x, y); y += 5;
+    rows.filter(Boolean).forEach((r, k) => { doc.setFont("helvetica", k === 0 ? "bold" : "normal"); doc.setFontSize(k === 0 ? 10 : 8.5); doc.setTextColor(...(k === 0 ? INK : GREY)); const parts = doc.splitTextToSize(String(r), bw); doc.text(parts, x, y); y += parts.length * (k === 0 ? 4.6 : 3.9); });
+  });
+  /* summary strip */
+  const all = P.own.concat(P.qc), totCr = all.reduce((a, l) => a + l.crates, 0), totBx = all.reduce((a, l) => a + l.boxes, 0), val = all.reduce((a, l) => a + (l.amount || 0), 0), gst = Math.round(val * 5) / 100, grand = Math.round((val + gst) * 100) / 100;
+  const chips = [["PO DATE", dateTxt], ["LINES", pdfNum(all.length)], ["CRATES", pdfNum(totCr)], ["BOXES", pdfNum(totBx)]].concat(money ? [["TOTAL INCL. GST", "Rs " + pdfMoney(grand)]] : []);
+  const sy = 66, cw = (W - 2 * M) / chips.length;
+  doc.setFillColor(...SOFT); doc.roundedRect(M, sy, W - 2 * M, 15, 3, 3, "F");
+  chips.forEach(([k, v], i) => { const x = M + 5 + i * cw; doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...GREY); doc.text(k, x, sy + 5.5); doc.setFontSize(11); doc.setTextColor(...INK); doc.text(String(v), x, sy + 11.5); });
+  /* the lines, grouped by stock and then by category */
+  const head = [["#", "Product", "Code", "SAP code", "Boxes / crate", "Crates", "Boxes"].concat(money ? ["Rate / box (Rs)", "Amount (Rs)"] : [])];
+  const body = []; let n = 0;
+  const section = (title, L) => {
+    if (!L.length) return;
+    body.push([{ content: title, colSpan: head[0].length, styles: { fillColor: TINT, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 9 } }]);
+    const cats = [...new Set(L.map((l) => l.cat))].sort();
+    cats.forEach((c) => {
+      body.push([{ content: c, colSpan: head[0].length, styles: { fillColor: SOFT, textColor: TINT, fontStyle: "bold", fontSize: 8 } }]);
+      L.filter((l) => l.cat === c).sort((a, b) => a.name.localeCompare(b.name)).forEach((l) => { n++; body.push([n, shortName(l.name).replace(/\s+/g, " ").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").trim(), l.trop || "", l.sap, l.upc || "", pdfNum(l.crates, 2), pdfNum(l.boxes, 2)].concat(money ? [pdfMoney(l.rate), pdfMoney(l.amount)] : [])); });
+    });
+    const cr = L.reduce((a, l) => a + l.crates, 0), bx = L.reduce((a, l) => a + l.boxes, 0), am = L.reduce((a, l) => a + (l.amount || 0), 0);
+    body.push([{ content: `${title} total`, colSpan: 5, styles: { fontStyle: "bold" } }, { content: pdfNum(cr, 2), styles: { fontStyle: "bold", halign: "right" } }, { content: pdfNum(bx, 2), styles: { fontStyle: "bold", halign: "right" } }].concat(money ? [{ content: "" }, { content: pdfMoney(am), styles: { fontStyle: "bold", halign: "right" } }] : []));
+  };
+  section("SahiReach stock", P.own); section("Quick commerce stock (Swiggy and Zepto)", P.qc);
+  const colW = money ? { 0: { cellWidth: 7, textColor: GREY }, 1: { cellWidth: "auto" }, 2: { cellWidth: 14, textColor: GREY }, 3: { cellWidth: 16, textColor: GREY }, 4: { cellWidth: 13, halign: "right" }, 5: { cellWidth: 12, halign: "right" }, 6: { cellWidth: 12, halign: "right" }, 7: { cellWidth: 18, halign: "right" }, 8: { cellWidth: 22, halign: "right" } } : { 0: { cellWidth: 7, textColor: GREY }, 1: { cellWidth: "auto" }, 2: { cellWidth: 16, textColor: GREY }, 3: { cellWidth: 18, textColor: GREY }, 4: { cellWidth: 18, halign: "right" }, 5: { cellWidth: 16, halign: "right" }, 6: { cellWidth: 16, halign: "right" } };
+  doc.autoTable({
+    startY: sy + 21, head, body, theme: "plain", margin: { left: M, right: M, bottom: 20 },
+    styles: { font: "helvetica", fontSize: 8, textColor: INK, cellPadding: { top: 1.5, bottom: 1.5, left: 1.8, right: 1.8 }, lineColor: LINE, lineWidth: { bottom: 0.2 }, valign: "middle" },
+    headStyles: { fontStyle: "bold", fontSize: 7.5, textColor: GREY, lineWidth: { bottom: 0.5 }, lineColor: INK },
+    columnStyles: colW, alternateRowStyles: { fillColor: ZEBRA },
+    didParseCell: (d) => { if (d.section === "head" && d.column.index >= 4) d.cell.styles.halign = "right"; },
+  });
+  /* totals and words */
+  let y = doc.lastAutoTable.finalY + 6;
+  if (y > 250) { doc.addPage(); y = 24; }
+  if (money) {
+    const tx = W - M - 70, row = (k, v, bold) => { doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(bold ? 11 : 9.5); doc.setTextColor(...(bold ? INK : GREY)); doc.text(k, tx, y); doc.setTextColor(...INK); doc.text(v, W - M, y, { align: "right" }); y += bold ? 7 : 5.5; };
+    row("Value excl. GST", "Rs " + pdfMoney(val)); row("GST 5%", "Rs " + pdfMoney(gst));
+    doc.setDrawColor(...INK); doc.setLineWidth(0.4); doc.line(tx, y - 3.2, W - M, y - 3.2); y += 1.5;
+    row("Total incl. GST", "Rs " + pdfMoney(grand), true);
+    doc.setFont("helvetica", "italic"); doc.setFontSize(8.5); doc.setTextColor(...GREY); doc.text(doc.splitTextToSize(inWords(grand), W - 2 * M), M, y); y += 8;
+  }
+  /* notes and signature */
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...GREY);
+  const notes = [`Quantities are in crates and boxes; the Hangyo portal takes boxes.`, money ? "Rates are SahiReach's purchase rate (SS rate) per box, excluding GST." : ""].filter(Boolean);
+  notes.forEach((t) => { doc.text("•  " + t, M, y); y += 4.5; });
+  y += 18; if (y > 272) { doc.addPage(); y = 40; }
+  doc.setDrawColor(...LINE); doc.line(W - M - 60, y, W - M, y);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...INK); doc.text(`For ${C.name || "SahiReach LLP"}`, W - M, y + 5, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...GREY); doc.text("Authorised signatory", W - M, y + 9.5, { align: "right" });
+  /* page footer on every page */
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setDrawColor(...LINE); doc.setLineWidth(0.3); doc.line(M, 285, W - M, 285); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.text(`${C.name || "SahiReach LLP"} · Purchase order ${P.po}`, M, 289.5); doc.text(`Page ${i} of ${pages}`, W - M, 289.5, { align: "right" }); }
+  return doc;
+}
+ACT.hpoPdf = async (el) => {
+  const po = el.dataset.po || null, P = hpoDoc(po);
+  if (!P || (!P.own.length && !P.qc.length)) { toast("Nothing on this PO yet", "info"); return; }
+  if (el) el.disabled = true;
+  try { await loadJsPdf(); }
+  catch (e) { if (el) el.disabled = false; toast("Could not prepare the PDF. Check your internet and try again.", "alert"); return; }
+  const doc = hpoPdf(P); doc.save(`SahiReach purchase order ${P.po} ${dmyOf(ymd(toDate(P.date)))}.pdf`);
+  if (el) el.disabled = false;
+  logActivity("Hangyo PO downloaded", P.po, "PDF"); toast("Purchase order PDF downloaded", "doc");
+};
+
 /* ===== TOD & NOTES ===== */
 function todState() {
   const by = {}; let total = 0;
@@ -4458,7 +4598,7 @@ function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
 /* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
-const VIEW_ACTS = new Set("itemExcel reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_ACTS = new Set("hpoPdf itemExcel reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("stkDate stkMonth ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {

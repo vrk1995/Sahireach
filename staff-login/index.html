@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/staff-login/app.css?v=14e092f196">
+<link rel="stylesheet" href="/staff-login/app.css?v=1772ef9806">
 <style>
 /* Sign-in screen. Everything behind it (the tool and its data) only arrives after sign-in. */
 .app[hidden], .tabbar[hidden] { display: none !important; }
@@ -221,7 +221,7 @@
       backupList: function () { return authed("/rest/v1/rpc/staff_backup_list", {}); },
       backupGet: function (id) { return authed("/rest/v1/rpc/staff_backup_get", { p_id: id }); },
       backupNow: function (note) { return authed("/rest/v1/rpc/staff_backup_now", { p_note: note || null }); },
-      backupRestore: function (id) { return authed("/rest/v1/rpc/staff_backup_restore", { p_id: id }); }, xlsxSrc: "/staff-login/vendor/xlsx-0.18.5.full.min.js", xlsxStyleSrc: "/staff-login/vendor/xlsx-js-style-1.2.0.min.js", pdfSrc: "/staff-login/vendor/pdf-3.11.174.min.js", pdfWorker: "/staff-login/vendor/pdf-3.11.174.worker.min.js",
+      backupRestore: function (id) { return authed("/rest/v1/rpc/staff_backup_restore", { p_id: id }); }, xlsxSrc: "/staff-login/vendor/xlsx-0.18.5.full.min.js", xlsxStyleSrc: "/staff-login/vendor/xlsx-js-style-1.2.0.min.js", jspdfSrc: "/staff-login/vendor/jspdf-4.2.1.umd.min.js", jspdfAtSrc: "/staff-login/vendor/jspdf-autotable-5.0.9.min.js", pdfSrc: "/staff-login/vendor/pdf-3.11.174.min.js", pdfWorker: "/staff-login/vendor/pdf-3.11.174.worker.min.js",
       signOut: function () { signOut(false); },
       invite: function (role) { return authed("/rest/v1/rpc/staff_invite_create", { p_role: role || "staff" }); },
       teamFull: function () { return authed("/rest/v1/rpc/staff_team", {}); },
@@ -241,7 +241,7 @@
     };
     /* the screens' code comes from this site (it holds no business data); the data came from the database above */
     await new Promise(function (ok, bad) {
-      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=14e092f196";
+      var s = document.createElement("script"); s.src = "/staff-login/app.js?v=1772ef9806";
       s.onload = function () { $("gate").remove(); $("app").hidden = false; $("tabbar").hidden = false; ok(); };
       s.onerror = function () { bad(new Error("Could not load the tool. Check your internet connection and try again.")); };
       document.body.appendChild(s);
