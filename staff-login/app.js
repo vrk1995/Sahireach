@@ -6198,10 +6198,15 @@ ACT.tripJoinTo = (el) => {
    bank statement. Reports (profit and loss, balance sheet, trial balance, ledgers, party statements, GST) are
    worked out from those entries every time they are opened, so they always match the rest of the tool.
    Invoice numbers come from Vyapar for now: the tool records them against each dispatch.
+   Quick commerce: Hangyo bills Swiggy and Zepto itself and owns that stock; SahiReach earns a 6% fee on what is
+   delivered. So deliveries are not SahiReach's sales: each one gives a fee from Hangyo. Quick commerce stock used for
+   distributors is a purchase from Hangyo; SahiReach stock sent with a Swiggy / Zepto delivery is a return to Hangyo.
+   Hangyo bills from outside Kerala: its purchases carry IGST.
    Amounts: an entry line is { a: account id, v: amount }, v > 0 is a debit and v < 0 a credit. */
 ICONS.book = '<path d="M5 5.5A2 2 0 0 1 7 3.5h11.5v14H7a2 2 0 0 0-2 2z"/><path d="M5 19.5a2 2 0 0 0 2 2h11.5v-4"/><path d="M9 8h6"/>';
 ICONS.bank = '<path d="m3.5 9 8.5-5 8.5 5"/><path d="M5 9.5v8M9.5 9.5v8M14.5 9.5v8M19 9.5v8"/><path d="M3.5 20h17"/>';
 const AC_STATE = "32"; /* Kerala */
+const AC_QC_FEE = typeof QC_GP_RATE === "number" ? QC_GP_RATE : 0.06; /* SahiReach's fee on quick commerce deliveries */
 const AC_GST = 0.05;
 const AC_BOOKS_FROM = "2026-04-01";
 const AC_CAN = ROLE === "owner" || ROLE === "accountant"; /* can enter vouchers and set the books up */
@@ -6221,11 +6226,11 @@ const AC_GROUP = {}; AC_GROUPS.forEach(([id, label, formal, side]) => (AC_GROUP[
 const AC_PL = (g) => ["I", "E"].includes((AC_GROUP[g] || {}).side);
 /* accounts the tool posts to itself */
 const AC_SYS = [
-  ["sales-gt", "Sales to distributors", "sales"], ["sales-qc", "Sales to Swiggy and Zepto", "sales"], ["sales-ret", "Sales returns and rate differences", "sales"],
+  ["sales-gt", "Sales to distributors", "sales"], ["sales-ret", "Sales returns and rate differences", "sales"],
   ["purchases", "Purchases from Hangyo", "purchases"], ["pur-ret", "Purchase returns to Hangyo", "purchases"],
   ["out-cgst", "Output CGST", "taxout"], ["out-sgst", "Output SGST", "taxout"], ["out-igst", "Output IGST", "taxout"],
   ["in-cgst", "Input CGST", "taxin"], ["in-sgst", "Input SGST", "taxin"], ["in-igst", "Input IGST", "taxin"],
-  ["tod-claim", "TOD to get from Hangyo", "curasset"], ["tod-income", "TOD support from Hangyo", "income"], ["hangyo-cn", "Other credit notes from Hangyo", "income"],
+  ["tod-claim", "TOD to get from Hangyo", "curasset"], ["tod-income", "TOD support from Hangyo", "income"], ["qc-fee", "Quick commerce fee from Hangyo", "income"], ["hangyo-cn", "Other credit notes from Hangyo", "income"],
   ["freight", "Transport (logistics trips)", "expenses"], ["round", "Rounding off", "expenses"],
   ["cash", "Cash in hand", "cash"], ["stock", "Opening stock", "stock"], ["suspense", "Not yet sorted (suspense)", "curliab"],
 ];
@@ -6267,7 +6272,8 @@ const acPartyId = (name) => "p:" + canonDist(name);
 function acPartyInfo(name) {
   const n = canonDist(name), P = AC().parties[n] || {}, d = distByKey[key(n)] || {};
   const gstin = String(P.gstin || d.gstin || "").toUpperCase().replace(/\s+/g, "");
-  return { name: n, gstin, state: gstin.slice(0, 2) || P.state || (n === "Hangyo" ? P.state || "" : AC_STATE), addr: P.addr || "", dist: !!distByKey[key(n)] };
+  /* Hangyo bills from outside Kerala (IGST) until a Kerala GSTIN says otherwise */
+  return { name: n, gstin, state: gstin.slice(0, 2) || P.state || (n === "Hangyo" ? "IGST" : AC_STATE), addr: P.addr || "", dist: !!distByKey[key(n)] };
 }
 const acGstinOK = (g) => /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(String(g || ""));
 /* inter-state when the party's GSTIN is from another state */
@@ -6283,7 +6289,6 @@ function acAccounts() {
   AC_STARTER.forEach(([id, name, g]) => add(id, name, g, { starter: true }));
   A.ledgers.forEach((l) => { if (l.deleted) return; out[l.id] = Object.assign({}, out[l.id] || {}, l); });
   D.distributors.forEach((d) => add(acPartyId(d.name), d.name, "debtors", { party: d.name }));
-  ["Swiggy", "Zepto"].forEach((p) => add(acPartyId(p), p, "debtors", { party: p, platform: true }));
   add(acPartyId("Hangyo"), "Hangyo Ice Creams", "creditors", { party: "Hangyo" });
   ((D.logistics && D.logistics.transporters) || []).forEach((t) => add(acPartyId(t.name), t.name, "creditors", { party: t.name }));
   /* anyone else the records name: a transporter only on a trip, a party only in the Vyapar sales or a note */
@@ -6329,11 +6334,17 @@ function acEntries() {
     push({ id: "ord:" + o.id, date: d, kind: "sale", no: o.inv || "", party: canonDist(o.dist), text: `Invoice for order ${o.id.replace("ORD-", "")} · ${L.length} line${L.length === 1 ? "" : "s"} · ${nf(o.crates || 0, 1)} crates`, lines: I.lines, taxable: I.taxable, tax: I.tax.map((t) => ({ k: t.tax, v: t.v })), total: I.total, src: { t: "order", ref: o.id }, ewb: o.ewb || "" });
     if (tod > 0.004) push({ id: "tod:" + o.id, date: d, kind: "tod", no: "", party: "Hangyo", text: `TOD Hangyo pays for special prices on order ${o.id.replace("ORD-", "")} (${o.dist})`, lines: [{ a: "tod-claim", v: acR2(tod) }, { a: "tod-income", v: -acR2(tod) }], src: { t: "order", ref: o.id } });
   });
-  /* 3. Swiggy / Zepto: on the delivery date, at the value they accepted */
+  /* 3. Swiggy / Zepto: Hangyo's sale; SahiReach's fee on what was accepted, on the delivery date */
   D.qcPOs.forEach((p) => {
-    if (!p.deliveredOn || !(p.valueAccepted > 0)) return; const d = p.deliveredOn.slice(0, 10), plat = /zepto/i.test(p.platform) ? "Zepto" : "Swiggy";
-    const I = acInvoice(1, plat, "sales-qc", p.valueAccepted, acInter(plat), true);
-    push({ id: "qc:" + p.po, date: d, kind: "sale", no: p.inv || "", party: plat, text: `${plat} PO ${p.po} · ${nf(p.pcsAccepted || 0)} pieces accepted`, lines: I.lines, taxable: I.taxable, tax: I.tax.map((t) => ({ k: t.tax, v: t.v })), total: I.total, src: { t: "qc", ref: p.po } });
+    if (!p.deliveredOn || !(p.valueAccepted > 0)) return; const d = p.deliveredOn.slice(0, 10), plat = /zepto/i.test(p.platform) ? "Zepto" : "Swiggy", fee = acR2(p.valueAccepted * AC_QC_FEE);
+    push({ id: "qc:" + p.po, date: d, kind: "qcfee", no: "", party: "Hangyo", text: `${pct(AC_QC_FEE, 0)} fee on ${plat} PO ${p.po} · ${rs(p.valueAccepted)} accepted`, lines: [{ a: acPartyId("Hangyo"), v: fee }, { a: "qc-fee", v: -fee }], src: { t: "qc", ref: p.po } });
+  });
+  /* stock moved between SahiReach and quick commerce: a purchase from Hangyo, or a return to Hangyo */
+  (D.transfers || []).forEach((t) => {
+    const val = acR2(t.amount > 0 ? t.amount : xferEst(t)); if (!(val > 0)) return; const d = String(t.docDate || t.time || "").slice(0, 10), buy = t.kind === "purchase";
+    const tl = acTaxLines(val, acInter("Hangyo"), false), tax = acR2(tl.reduce((a, l) => a + l.v, 0)), sg = buy ? 1 : -1;
+    push({ id: "trf:" + t.id, date: d, kind: buy ? "purchase" : "pret", no: t.docNo || "", party: "Hangyo", text: buy ? `Quick commerce stock used for distributors · ${nf(t.crates || 0, 1)} crates${t.status === "Pending" ? " · purchase invoice pending" : ""}` : `SahiReach stock sent with ${t.ref || "a Swiggy / Zepto delivery"} · ${nf(t.crates || 0, 1)} crates${t.status === "Pending" ? " · credit note pending" : ""}`,
+      lines: [{ a: buy ? "purchases" : "pur-ret", v: sg * val }].concat(tl.map((l) => ({ a: l.a, v: sg * l.v, tax: l.tax })), [{ a: acPartyId("Hangyo"), v: -sg * acR2(val + tax) }]), itc: tl.map((l) => ({ k: l.tax, v: sg * l.v })), taxable: sg * val, total: sg * acR2(val + tax), src: { t: "transfer", ref: t.id } });
   });
   /* 4. credit and debit notes */
   (D.notes || []).forEach((n) => {
@@ -6351,10 +6362,10 @@ function acEntries() {
     }
   });
   /* 5. purchases from Hangyo, on the invoice date */
-  const pin = {}; D.purchases.forEach((p) => { if (p.supplier !== "Hangyo" || !(p.value > 0)) return; const x = (pin[p.id] = pin[p.id] || { id: p.id, inv: p.inv, date: String(p.invDate || p.time).slice(0, 10), value: 0, n: 0, crates: 0, qc: /QC/i.test(p.pool || "") }); x.value += +p.value || 0; x.n++; x.crates += +p.crates || 0; });
+  const pin = {}; D.purchases.forEach((p) => { if (p.supplier !== "Hangyo" || !(p.value > 0) || /QC/i.test(p.pool || "")) return; /* quick commerce stock is Hangyo's */ const x = (pin[p.id] = pin[p.id] || { id: p.id, inv: p.inv, date: String(p.invDate || p.time).slice(0, 10), value: 0, n: 0, crates: 0, qc: /QC/i.test(p.pool || "") }); x.value += +p.value || 0; x.n++; x.crates += +p.crates || 0; });
   Object.values(pin).forEach((x) => {
     const tl = acTaxLines(x.value, acInter("Hangyo"), false), tot = acR2(x.value + tl.reduce((a, l) => a + l.v, 0));
-    push({ id: "pur:" + x.id, date: x.date, kind: "purchase", no: x.inv && x.inv !== "Pending" ? x.inv : "", party: "Hangyo", text: `Hangyo invoice · ${x.n} line${x.n === 1 ? "" : "s"} · ${nf(x.crates, 1)} crates${x.qc ? " · quick commerce stock" : ""}`, lines: [{ a: "purchases", v: acR2(x.value) }].concat(tl.map((l) => ({ a: l.a, v: l.v, tax: l.tax })), [{ a: acPartyId("Hangyo"), v: -tot }]), itc: tl.map((l) => ({ k: l.tax, v: l.v })), taxable: acR2(x.value), total: tot, src: { t: "purchase", ref: x.id } });
+    push({ id: "pur:" + x.id, date: x.date, kind: "purchase", no: x.inv && x.inv !== "Pending" ? x.inv : "", party: "Hangyo", text: `Hangyo invoice · ${x.n} line${x.n === 1 ? "" : "s"} · ${nf(x.crates, 1)} crates`, lines: [{ a: "purchases", v: acR2(x.value) }].concat(tl.map((l) => ({ a: l.a, v: l.v, tax: l.tax })), [{ a: acPartyId("Hangyo"), v: -tot }]), itc: tl.map((l) => ({ k: l.tax, v: l.v })), taxable: acR2(x.value), total: tot, src: { t: "purchase", ref: x.id } });
   });
   /* 6. logistics trips: the transporter's charge */
   ((D.logistics && D.logistics.trips) || []).forEach((t) => {
@@ -6372,8 +6383,8 @@ function acEntries() {
   AC_CACHE = E; AC_CACHE_T = Date.now();
   return E;
 }
-const AC_ORDER = { opening: 0, purchase: 1, sale: 2, cnote: 3, dnote: 3, pret: 3, hcn: 3, tod: 4, todr: 4, freight: 5, expense: 6, journal: 7, receipt: 8, payment: 8, contra: 9 };
-const AC_KIND = { sale: "Sale", purchase: "Purchase", cnote: "Credit note", dnote: "Debit note", pret: "Purchase return", hcn: "Hangyo credit note", tod: "TOD due", todr: "TOD received", freight: "Transport", receipt: "Money in", payment: "Money out", expense: "Expense", journal: "Journal", contra: "Bank / cash transfer" };
+const AC_ORDER = { qcfee: 4, opening: 0, purchase: 1, sale: 2, cnote: 3, dnote: 3, pret: 3, hcn: 3, tod: 4, todr: 4, freight: 5, expense: 6, journal: 7, receipt: 8, payment: 8, contra: 9 };
+const AC_KIND = { sale: "Sale", purchase: "Purchase", cnote: "Credit note", dnote: "Debit note", pret: "Purchase return", hcn: "Hangyo credit note", tod: "TOD due", todr: "TOD received", qcfee: "Quick commerce fee", freight: "Transport", receipt: "Money in", payment: "Money out", expense: "Expense", journal: "Journal", contra: "Bank / cash transfer" };
 
 /* ---------- balances ---------- */
 /* each account's opening (start of `from`), debits, credits and closing (end of `to`) */
@@ -6392,9 +6403,9 @@ const acOpeningDiff = () => acR2(Object.values(AC().opening).reduce((a, v) => a 
 
 /* ---------- stock value (at cost, excl. GST) at the end of a day ---------- */
 function acStockQtyValue(d) {
-  const pts = stkPoints(), T = d + "T23:59", own = stkValueAt(T, "own", pts).v, qc = stkValueAt(T, "qc", pts).v; let v = 0, miss = 0;
+  /* SahiReach's own stock only: quick commerce stock belongs to Hangyo */
+  const pts = stkPoints(), T = d + "T23:59", own = stkValueAt(T, "own", pts).v; let v = 0, miss = 0;
   Object.keys(own).forEach((sap) => { const q = Math.max(0, own[sap] || 0), uc = unitCost(sap); if (q && uc == null) miss++; v += q * (uc || 0); });
-  Object.keys(qc).forEach((sap) => { const q = Math.max(0, qc[sap] || 0), u = stkUpc(sap), uc = unitCost(sap); if (q && uc == null) miss++; v += q * u * (uc || 0); });
   return { v: acR2(v), miss };
 }
 /* the closing stock: a figure the accountant entered for that day wins; before the tool's stock records began, nothing is worked out */
@@ -6405,8 +6416,8 @@ function acStockAt(d) {
   const first = acStockFirst(); if (first && d < first) return { v: null, how: "before" };
   const x = acStockQtyValue(d); return { v: x.v, how: "tool", miss: x.miss };
 }
-/* the first day the tool knows the stock: the day before the first Hangyo purchase it recorded */
-function acStockFirst() { let m = ""; D.purchases.forEach((p) => { const d = String(p.invDate || p.time).slice(0, 10); if (p.supplier === "Hangyo" && (!m || d < m)) m = d; }); return m ? addDays(m, 0) : ""; }
+/* the first day the tool knows the stock: the first Hangyo purchase of SahiReach stock it recorded */
+function acStockFirst() { let m = ""; D.purchases.forEach((p) => { const d = String(p.invDate || p.time).slice(0, 10); if (p.supplier === "Hangyo" && !/QC/i.test(p.pool || "") && (!m || d < m)) m = d; }); return m; }
 
 /* sales before the tool's first Hangyo purchase, with no purchases of that time in the books: profit would be overstated */
 function acPurGap(from, to) {
@@ -6444,6 +6455,8 @@ function acBS(d) {
   const cs = acStockAt(d); if (cs.v) sides.A.stock = [{ id: "stock", name: "Closing stock", v: cs.v, how: cs.how }];
   const prof = [{ id: "pl-cur", name: `Profit this year (FY ${acFYLabel(acFY(d))} to ${fmtDate(d)})`, v: cur.np }];
   if (before) prof.unshift({ id: "pl-before", name: "Profit of earlier years", v: before.np });
+  /* an opening balance put on an income or expense account still counts (as profit brought forward) */
+  const opPL = acR2(Object.keys(A.opening).reduce((t, id) => t + (AC_PL((ACC[id] || {}).group) ? +A.opening[id] || 0 : 0), 0)); if (Math.abs(opPL) > 0.004) prof.push({ id: "pl-open", name: "Opening balances of income and cost accounts", v: -opPL });
   sides.L.profit = prof;
   const od = acOpeningDiff(); if (Math.abs(od) > 0.004) sides.L.diff = [{ id: "diff", name: "Difference in opening balances", v: od }];
   const tot = (s) => acR2(Object.values(s).reduce((a, L) => a + L.reduce((b, x) => b + x.v, 0), 0));
@@ -6475,7 +6488,7 @@ function acAgeing(to) {
   const out = []; AC_AGE = { E, d: today, op: JSON.stringify(AC().opening), out };
   Object.values(acAccounts()).filter((a) => a.group === "debtors").forEach((a) => {
     const O = acOpenBills(a.party || a.name, today); if (!O.bills.length && Math.abs(O.bal) < 0.5) return;
-    const credit = (distByKey[key(a.party || a.name)] || {}).credit || (a.platform ? 30 : 7), b = { d0: 0, d30: 0, d60: 0, d90: 0, overdue: 0, total: 0 };
+    const credit = (distByKey[key(a.party || a.name)] || {}).credit || 7, b = { d0: 0, d30: 0, d60: 0, d90: 0, overdue: 0, total: 0 };
     O.bills.forEach((x) => { const age = daysBetween(x.date, today); b.total += x.left; if (age > credit) b.overdue += x.left; if (age <= 30) b.d0 += x.left; else if (age <= 60) b.d30 += x.left; else if (age <= 90) b.d60 += x.left; else b.d90 += x.left; });
     const oldest = O.bills.length ? O.bills[0].date : null;
     out.push(Object.assign({ id: a.id, name: a.name, party: a.party || a.name, credit, bills: O.bills, advance: O.advance, bal: O.bal, oldest }, b));
@@ -6501,7 +6514,6 @@ function acGST(from, to) {
   const tf = acToolFrom();
   (D.salesBefore || []).forEach((r) => { if (r.date < from || r.date > to || r.date >= tf || r.date < AC().from) return; add(r.sap, r.product, r.ea, r.value); });
   D.orders.forEach((o) => { if (o.status !== "Dispatched" || !o.dispatched) return; const d = o.dispatched.slice(0, 10); if (d < from || d > to || d < tf) return; (linesByOrder[o.id] || []).forEach((l) => add(l.sap, l.product, l.ea, l.value)); });
-  D.qcPOs.forEach((p) => { if (!p.deliveredOn || !(p.valueAccepted > 0)) return; const d = p.deliveredOn.slice(0, 10); if (d < from || d > to) return; const L = (qcLinesByPO[p.po] || []).filter((l) => l.accepted > 0); if (L.length) L.forEach((l) => { const ppc = l.ppc || (qcBySap[l.sap] || {}).ppc || 0; add(l.sap, l.product, ppc ? (l.accepted / ppc) * stkUpc(l.sap) : 0, l.valueAccepted != null ? l.valueAccepted : l.accepted * l.price); }); else add(null, "", 0, p.valueAccepted); });
   ["cgst", "sgst", "igst"].forEach((k) => { out.tax[k] = acR2(out.tax[k]); out.itc[k] = acR2(out.itc[k]); });
   out.taxable = acR2(out.taxable); out.itcTaxable = acR2(out.itcTaxable);
   const outT = out.tax.cgst + out.tax.sgst + out.tax.igst, inT = out.itc.cgst + out.itc.sgst + out.itc.igst;
@@ -6524,14 +6536,13 @@ const acHasBank = () => Object.values(acAccounts()).some((a) => a.group === "ban
 function acNextInv() {
   let best = null; const re = /^(.*?)(\d+)$/;
   const consider = (s) => { const m = String(s || "").trim().match(re); if (!m || !/FY/i.test(m[1])) return; if (!best || +m[2] > best.n) best = { p: m[1], n: +m[2] }; };
-  (D.salesBefore || []).forEach((r) => { if (r.type !== "Credit Note") consider(r.inv); }); D.orders.forEach((o) => consider(o.inv)); D.qcPOs.forEach((p) => consider(p.inv));
+  (D.salesBefore || []).forEach((r) => { if (r.type !== "Credit Note") consider(r.inv); }); D.orders.forEach((o) => consider(o.inv));
   return best ? best.p + (best.n + 1) : "SR/FY26-27/1";
 }
 /* dispatches (and deliveries) that still need their Vyapar invoice number */
 function acToNumber() {
   const tf = acToolFrom(), A = AC(), out = [];
   D.orders.forEach((o) => { if (o.status === "Dispatched" && o.dispatched && o.dispatched.slice(0, 10) >= tf && o.dispatched.slice(0, 10) >= A.from && !o.inv) out.push({ t: "order", id: o.id, date: o.dispatched.slice(0, 10), party: o.dist, value: o.valueGst || (o.value || 0) * 1.05 }); });
-  D.qcPOs.forEach((p) => { if (p.deliveredOn && p.valueAccepted > 0 && !p.inv && p.deliveredOn.slice(0, 10) >= A.from) out.push({ t: "qc", id: p.po, date: p.deliveredOn.slice(0, 10), party: p.platform, value: p.valueAccepted * 1.05 }); });
   return out.sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
@@ -6568,7 +6579,7 @@ VIEWS.accounts = () => {
   const body = { overview: acOverviewHtml, daybook: acDaybookHtml, parties: acPartiesHtml, reports: acReportsHtml, gst: acGstHtml, bank: acBankHtml }[tab] || acOverviewHtml;
   return `<div class="page">
     <div class="page-head"><div><h1 class="title">Accounts</h1><div class="subtitle">Your books, kept from the orders, deliveries, purchases and trips already in the tool. Books from ${fmtDate(AC().from)} ${AC().from.slice(0, 4)}.</div></div>
-      <div class="head-actions">${AC_CAN ? `<button class="btn btn-primary" data-act="aceNew">${ic("plus", "sm")} New entry</button>` : ""}<button class="btn btn-secondary" data-act="acvExcel">${ic("doc", "sm")} Download Excel</button></div></div>
+      <div class="head-actions">${AC_CAN ? `<button class="btn btn-secondary" data-act="aceVyapar">${ic("upload", "sm")} Upload data</button><button class="btn btn-primary" data-act="aceNew">${ic("plus", "sm")} New entry</button>` : ""}<button class="btn btn-secondary" data-act="acvExcel">${ic("doc", "sm")} Download Excel</button></div></div>
     <div class="ac-tabs">${seg("acTab", tab, tabs)}</div>
     ${body()}
   </div>`;
@@ -6608,7 +6619,7 @@ function acSetupCard() {
     <div class="ac-steps">
       ${step(bank, 1, "Your bank accounts", "So money in and out, and the bank statement, have somewhere to go.", "aceLedgerNew", "Add bank account")}
       ${step(open, 2, `Opening balances on ${fmtDate(addDays(A.from, -1))} ${A.from.slice(0, 4) - 0}`, "Partners' capital, bank, money owed, stock, as they stood when these books start. Leave it empty if the business started after that.", "aceOpening", "Enter balances")}
-      ${step(!!A.vyDone, 3, "What happened before the tool", `The tool has your Vyapar sales from ${fmtDate((D.salesBefore || [])[0] ? D.salesBefore[0].date : A.from)}, but Hangyo purchases only from ${first ? fmtDate(first) : "when they were entered"}. Bring in the Vyapar purchase register and payments (or enter them as entries) so profit and stock are right.`, "aceVyapar", "Bring in from Vyapar")}
+      ${step(!!A.vyDone, 3, "What happened before the tool", `The tool has your Vyapar sales from ${fmtDate((D.salesBefore || [])[0] ? D.salesBefore[0].date : A.from)}, but Hangyo purchases only from ${first ? fmtDate(first) : "when they were entered"}. Upload Vyapar's All transactions report (purchases, payments, receipts, expenses) so profit and balances are right.`, "aceVyapar", "Upload accounting data")}
     </div></div>`;
 }
 function acTodo() {
@@ -6641,10 +6652,10 @@ function acMonthsCard(R) {
 }
 
 /* ---------- Day book: every entry, by date ---------- */
-const AC_DB_FILTERS = [["all", "All"], ["sale", "Sales"], ["purchase", "Purchases"], ["notes", "Notes"], ["money", "Money in and out"], ["expense", "Expenses"], ["journal", "Journals"], ["freight", "Transport"]];
-const acDbMatch = (e, f) => f === "all" || (f === "notes" ? ["cnote", "dnote", "pret", "hcn"].includes(e.kind) : f === "money" ? ["receipt", "payment", "contra"].includes(e.kind) : f === "journal" ? ["journal", "tod", "todr"].includes(e.kind) : e.kind === f);
+const AC_DB_FILTERS = [["all", "All"], ["sale", "Sales and fees"], ["purchase", "Purchases"], ["notes", "Notes"], ["money", "Money in and out"], ["expense", "Expenses"], ["journal", "Journals"], ["freight", "Transport"]];
+const acDbMatch = (e, f) => f === "all" || (f === "sale" ? ["sale", "qcfee"].includes(e.kind) : f === "notes" ? ["cnote", "dnote", "pret", "hcn"].includes(e.kind) : f === "money" ? ["receipt", "payment", "contra"].includes(e.kind) : f === "journal" ? ["journal", "tod", "todr"].includes(e.kind) : e.kind === f);
 function acEntryAmt(e) { return acR2(e.lines.reduce((a, l) => a + Math.max(0, l.v), 0)); }
-const acKindIc = (k) => ({ sale: "orders", purchase: "box", cnote: "undo", dnote: "doc", pret: "undo", hcn: "doc", tod: "tag", todr: "tag", freight: "truck", receipt: "down", payment: "up", expense: "rupee", journal: "book", contra: "repeat" }[k] || "doc");
+const acKindIc = (k) => ({ qcfee: "bolt", sale: "orders", purchase: "box", cnote: "undo", dnote: "doc", pret: "undo", hcn: "doc", tod: "tag", todr: "tag", freight: "truck", receipt: "down", payment: "up", expense: "rupee", journal: "book", contra: "repeat" }[k] || "doc");
 function acDaybookHtml() {
   const R = acRange(), f = S.acDb || "all", q = key(S.acDbQ || "");
   const E = acEntries().filter((e) => e.date >= R.from && e.date <= R.to && acDbMatch(e, f) && (!q || key(e.party + " " + e.no + " " + e.text + " " + (AC_KIND[e.kind] || "")).includes(q))).reverse();
@@ -6666,8 +6677,8 @@ IN.acvDbQ = (el) => { S.acDbQ = el.value; const at = el.selectionStart; render()
 ACT.acvEntry = (el) => {
   const e = acEntries().find((x) => x.id === el.dataset.id); if (!e) return; const ACC = acAccounts();
   const src = e.src || {}, open = src.t === "order" ? `<button class="btn btn-secondary btn-sm" data-act="orderSheet" data-id="${esc(src.ref)}">${ic("orders", "sm")} Open the order</button>` : src.t === "qc" ? `<button class="btn btn-secondary btn-sm" data-act="qcPOSheet" data-po="${esc(src.ref)}">${ic("bolt", "sm")} Open the PO</button>` : src.t === "purchase" ? `<button class="btn btn-secondary btn-sm" data-act="purchaseSheet" data-id="${esc(src.ref)}">${ic("box", "sm")} Open the purchase</button>` : "";
-  const from = { order: "a dispatched distributor order", qc: "a Swiggy / Zepto delivery", purchase: "a Hangyo purchase entered in Stock", note: "a credit or debit note (TOD & notes)", trip: "a logistics trip", tod: "TOD received (TOD & notes)", vyapar: "the Vyapar sales copied in before the tool", voucher: e.v && e.v.src === "bank" ? "the bank statement" : e.v && e.v.src === "vyapar" ? "the Vyapar import" : "an entry made in Accounts" }[src.t] || "";
-  const canNum = (src.t === "order" || src.t === "qc") && (AC_CAN || CAN_EDIT);
+  const from = { order: "a dispatched distributor order", qc: "a Swiggy / Zepto delivery (Hangyo bills it; this is SahiReach's fee)", transfer: "stock moved between SahiReach and quick commerce (Stock → moved stock)", purchase: "a Hangyo purchase entered in Stock", note: "a credit or debit note (TOD & notes)", trip: "a logistics trip", tod: "TOD received (TOD & notes)", vyapar: "the Vyapar sales copied in before the tool", voucher: e.v && e.v.src === "bank" ? "the bank statement" : e.v && e.v.src === "vyapar" ? "the Vyapar import" : "an entry made in Accounts" }[src.t] || "";
+  const canNum = src.t === "order" && (AC_CAN || CAN_EDIT);
   openSheet(`${esc(AC_KIND[e.kind] || "Entry")}${e.no ? " · " + esc(e.no) : ""}`, `<div class="card card-pad"><div class="kv"><div><div class="k">Date</div><div class="v">${fmtDate(e.date)} ${e.date.slice(0, 4)}</div></div><div><div class="k">Party</div><div class="v">${esc(e.party || "–")}</div></div><div><div class="k">Amount</div><div class="v">${acAmt(e.total != null ? e.total : acEntryAmt(e))}</div></div>${e.ewb ? `<div><div class="k">E-way bill</div><div class="v">${esc(e.ewb)}</div></div>` : ""}</div>${e.text ? `<div class="row-sub" style="margin-top:12px">${esc(e.text)}</div>` : ""}${e.v && e.v.note ? `<div class="row-sub" style="margin-top:6px">${esc(e.v.note)}</div>` : ""}</div>
     <div style="margin-top:18px"><div class="group-label"><span>Accounts</span><span>debit · credit</span></div><div class="table-wrap card"><table class="t"><thead><tr><th>Account</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>${e.lines.map((l) => `<tr><td><button class="btn-plain" data-act="acvLedger" data-id="${esc(l.a)}">${esc(acName(l.a, ACC))}</button></td><td class="r">${l.v > 0 ? acAmt(l.v) : ""}</td><td class="r">${l.v < 0 ? acAmt(-l.v) : ""}</td></tr>`).join("")}</tbody><tfoot><tr class="total"><td>Total</td><td class="r">${acAmt(e.lines.reduce((a, l) => a + Math.max(0, l.v), 0))}</td><td class="r">${acAmt(e.lines.reduce((a, l) => a + Math.max(0, -l.v), 0))}</td></tr></tfoot></table></div></div>
     ${from ? `<div class="row-sub" style="margin-top:12px">${ic("info", "sm")} Made automatically from ${from}.${src.t !== "voucher" ? " Change it there and the books follow." : ""}</div>` : ""}`,
@@ -6723,7 +6734,7 @@ function acPLHtml() {
   const R = acRange(), P = acPL(R.from, R.to), gm = P.salesNet ? P.gp / P.salesNet : null, nm = P.salesNet ? P.np / P.salesNet : null;
   const led = (x, neg) => acLine(esc(x.name), neg ? -x.v : x.v, "sub", `data-act="acvLedger" data-id="${esc(x.id)}"`);
   const stk = (s, label, d) => `<div class="ac-line sub"><span>${label}${s.how === "tool" ? ` <span class="dim">· from the tool's stock records${s.miss ? `, ${s.miss} product${s.miss > 1 ? "s" : ""} without a cost` : ""}</span>` : s.how === "entered" ? ` <span class="dim">· entered</span>` : s.how === "opening" ? ` <span class="dim">· opening balance</span>` : ""}${AC_CAN && s.how !== "opening" ? ` <button class="btn-plain" data-act="aceStock" data-d="${d}">${s.v == null ? "Enter" : "Change"}</button>` : ""}</span><span class="num">${s.v == null ? `<span style="color:var(--warn)">needed</span>` : acAmt(s.v)}</span></div>`;
-  return `${P.purGap ? `<div class="banner warn">${ic("alert", "sm")}<span><b>Profit is not final yet.</b> Sales from ${fmtDate(R.from)} are in the books, but Hangyo purchases only from ${fmtDate(P.purGap)} (when the tool started). ${AC_CAN ? `<button class="btn-plain" data-act="aceVyapar">Bring in the earlier purchases from Vyapar</button>, or pick a period from ${fmtDate(P.purGap)}.` : "Earlier purchases are to be brought in from Vyapar."}</span></div>` : ""}${P.stockGap ? `<div class="banner warn">${ic("alert", "sm")}<span><b>The stock value is needed.</b> The tool's stock records start on ${fmtDate(acStockFirst())}, so the stock on ${fmtDate(P.os.v == null ? addDays(R.from, -1) : R.to)} is not known. Enter it (from your Vyapar stock report) to see gross and net profit.</span></div>` : ""}
+  return `${P.purGap ? `<div class="banner warn">${ic("alert", "sm")}<span><b>Profit is not final yet.</b> Sales from ${fmtDate(R.from)} are in the books, but Hangyo purchases only from ${fmtDate(P.purGap)} (when the tool started). ${AC_CAN ? `<button class="btn-plain" data-act="aceVyapar">Upload the earlier purchases from Vyapar</button>, or pick a period from ${fmtDate(P.purGap)}.` : "Earlier purchases are to be brought in from Vyapar."}</span></div>` : ""}${P.stockGap ? `<div class="banner warn">${ic("alert", "sm")}<span><b>The stock value is needed.</b> The tool's stock records start on ${fmtDate(acStockFirst())}, so the stock on ${fmtDate(P.os.v == null ? addDays(R.from, -1) : R.to)} is not known. Enter it (from your Vyapar stock report) to see gross and net profit.</span></div>` : ""}
     <div class="ac-hero card card-pad"><div><div class="row-sub">Net profit · ${esc(R.label)}</div><div class="ac-hero-v"${P.np < 0 ? ' style="color:var(--bad)"' : ""}>${P.stockGap ? "–" : acAmt(P.np, 0)}</div><div class="row-sub">${nm != null && !P.stockGap ? pct(nm, 1) + " of sales" : ""}</div></div>
       <div class="ac-hero-kv"><div><div class="k">Sales</div><div class="v">${acAmt(P.salesNet, 0)}</div></div><div><div class="k">Gross profit</div><div class="v">${P.stockGap ? "–" : acAmt(P.gp, 0)}</div><div class="k">${gm != null && !P.stockGap ? pct(gm, 1) + " margin" : ""}</div></div><div><div class="k">Running costs</div><div class="v">${acAmt(P.expT, 0)}</div></div></div></div>
     <div class="card ac-stmt">
@@ -6734,7 +6745,7 @@ function acPLHtml() {
       <div class="ac-sec">Running costs</div>${P.exp.map((x) => led(x)).join("") || acLine("None entered yet", 0, "sub")}${acLine("Total running costs", P.expT, "total")}
       ${acLine("Net profit", P.stockGap ? null : P.np, "grand" + (P.np < 0 ? " neg" : ""))}
     </div>
-    <div class="row-sub">All figures exclude GST. Stock is valued at cost (the SS rate). TOD support from Hangyo is counted when the order is dispatched.</div>`;
+    <div class="row-sub">All figures exclude GST. Stock is SahiReach's own stock at cost (the SS rate); quick commerce stock is Hangyo's. Quick commerce gives a 6% fee, not sales. TOD support from Hangyo is counted when the order is dispatched.</div>`;
 }
 function acBSHtml() {
   const R = acRange(), d = R.to, BS = acBS(d), ACC = acAccounts();
@@ -6836,7 +6847,7 @@ ACT.aceNew = (el) => {
   if (t) return acVoucherSheet({ type: t, party: el.dataset.party || "" });
   const opt = (t, icon, title, sub) => `<button class="row" data-act="aceNew" data-t="${t}"><span class="attn-ic tint">${ic(icon)}</span><span class="grow"><div class="row-title">${title}</div><div class="row-sub">${sub}</div></span>${ic("chevR", "sm chev")}</button>`;
   openSheet("New entry", `<div class="group">
-    ${opt("receipt", "down", "Money in", "A distributor, Swiggy or Zepto paid us, or partners put money in")}
+    ${opt("receipt", "down", "Money in", "A distributor paid us, Hangyo paid the quick commerce fee, or partners put money in")}
     ${opt("payment", "up", "Money out", "We paid Hangyo, a transporter, salaries, GST or anything else")}
     ${opt("expense", "rupee", "Expense", "A bill: rent, electricity, cold storage, repairs… paid now or later")}
     ${opt("contra", "repeat", "Move money", "Cash deposited in the bank, cash withdrawn, between bank accounts")}
@@ -6846,7 +6857,7 @@ ACT.aceNew = (el) => {
     <button class="row" data-act="aceOpening"><span class="attn-ic info">${ic("cal")}</span><span class="grow"><div class="row-title">Opening balances</div><div class="row-sub">As the books stood on ${fmtDate(addDays(AC().from, -1))} ${AC().from.slice(0, 4) - 0}</div></span>${ic("chevR", "sm chev")}</button>
     <button class="row" data-act="aceLedgerNew"><span class="attn-ic info">${ic("plus")}</span><span class="grow"><div class="row-title">New account</div><div class="row-sub">A bank account, partner, expense head, loan…</div></span>${ic("chevR", "sm chev")}</button>
     <button class="row" data-act="aceInvSheet"><span class="attn-ic info">${ic("doc")}</span><span class="grow"><div class="row-title">Vyapar invoice numbers</div><div class="row-sub">${acToNumber().length} dispatch${acToNumber().length === 1 ? "" : "es"} still without one</div></span>${ic("chevR", "sm chev")}</button>
-    <button class="row" data-act="aceVyapar"><span class="attn-ic info">${ic("repeat")}</span><span class="grow"><div class="row-title">Bring in from Vyapar</div><div class="row-sub">Purchases, payments and expenses from before the tool</div></span>${ic("chevR", "sm chev")}</button>
+    <button class="row" data-act="aceVyapar"><span class="attn-ic info">${ic("repeat")}</span><span class="grow"><div class="row-title">Upload accounting data</div><div class="row-sub">Vyapar reports or the template: payments, receipts, expenses, purchases, notes, opening balances</div></span>${ic("chevR", "sm chev")}</button>
   </div>`);
 };
 
@@ -7043,12 +7054,6 @@ ACT.aceInvOne = (el) => {
 };
 
 /* ---------- bringing in Vyapar's records from before the tool ---------- */
-ACT.aceVyapar = () => {
-  const A = AC(), first = acStockFirst();
-  openSheet("Bring in from Vyapar", `<div class="row-sub">In Vyapar: <b>Reports → All transactions</b> (or Day book), choose ${fmtDate(A.from)} ${A.from.slice(0, 4)} to today, and export to Excel. Drop the file here. You will see what comes in before anything is added.</div>
-    <ul class="ac-list"><li><b>Purchases</b> from Hangyo dated before ${first ? fmtDate(first) + " " + first.slice(0, 4) : "the tool"} come in (later ones are already in the tool).</li><li><b>Payment-in, payment-out and expenses</b> come in as money in, money out and expenses, so balances are right.</li><li><b>Sales, credit and debit notes</b> are not brought in: the tool has them already.</li></ul>
-    <div style="margin-top:14px">${dropZone({ input: "ac-vy-file", dataIn: "aceVyFile", accept: ".xlsx,.xls,.csv", title: "Vyapar report", sub: "All transactions / Day book, Excel" })}</div><div id="ac-vy-out" style="margin-top:14px">${acVyImportsHtml()}</div>`, `<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
-};
 function acVyImportsHtml() {
   const I = AC().imports.filter((x) => !x.removed); if (!I.length) return "";
   return `<div class="group-label"><span>Brought in before</span></div><div class="group">${I.map((x) => `<div class="row"><span class="grow"><div class="row-title">${esc(x.file)}</div><div class="row-sub">${fmtDT(x.at)} · ${x.n} entries${x.by ? " · " + esc(x.by) : ""}</div></span>${AC_CAN ? `<button class="btn btn-secondary btn-sm" data-act="aceVyUndo" data-id="${esc(x.id)}">Take out</button>` : ""}</div>`).join("")}</div>`;
@@ -7085,8 +7090,6 @@ function acFindCols(rows, want) {
 function acMatchParty(text) {
   const t = key(text); if (!t) return null; const ACC = acAccounts();
   if (/hangyo/.test(t)) return acPartyId("Hangyo");
-  if (/swiggy|scootsy|instamart|jupiter ?kart/.test(t)) return acPartyId("Swiggy");
-  if (/zepto|kiranakart|geddit|drogheria/.test(t)) return acPartyId("Zepto");
   let best = null, score = 0;
   Object.values(ACC).forEach((a) => {
     if (a.sys || a.starter || !["debtors", "creditors", "capital", "loans", "deposits"].includes(a.group)) return; const words = key(a.name).replace(/[^a-z0-9 ]/g, " ").split(" ").filter((w) => w.length >= 4 && !/^(traders|agency|agencies|foods|food|distributors|distribution|enterprises|services|private|limited|kerala|marketing|ice|cream|creams|bank|account|charges|payment|transfer)$/.test(w));
@@ -7095,54 +7098,10 @@ function acMatchParty(text) {
   });
   return score >= 2 ? best : null;
 }
-IN.aceVyFile = async (el) => {
-  const f = el.files && el.files[0]; if (!f) return; part("ac-vy-out", `<div class="row-sub">Reading ${esc(f.name)}…</div>`);
-  let sheets; try { sheets = await acReadSheetFile(f); } catch (e) { part("ac-vy-out", `<div class="banner bad">${ic("alert", "sm")}<span>Could not read that file. Export it from Vyapar as Excel and try again.</span></div>`); return; }
-  const want = { date: [/^date$/, /date/], type: [/^type$/, /transaction type|txn type|^type/], party: [/party/, /name/], no: [/ref|invoice|bill|^no|number/], total: [/^total|total amount|^amount/], paid: [/received|paid/], how: [/payment type|mode/], cat: [/category|expense/], desc: [/description|remarks|note/] };
-  let H = null, rows = null; for (const s of sheets) { const h = acFindCols(s, want); if (h && h.col.type != null && h.col.total != null) { H = h; rows = s; break; } }
-  if (!H) { part("ac-vy-out", `<div class="banner bad">${ic("alert", "sm")}<span>This does not look like Vyapar's All transactions report (it needs Date, Type, Party and Total columns).</span></div>`); return; }
-  const first = acStockFirst(), A = AC(), plan = [], skip = {}, money = acMoneyAccs(), bank = (money.find((m) => m.group === "bank") || {}).id || "cash";
-  const seenPur = new Set(D.purchases.map((p) => key(p.inv))), seenV = new Set(A.vouchers.filter((v) => !v.deleted && v.vy).map((v) => v.vy));
-  rows.slice(H.at + 1).forEach((r) => {
-    const g = (k) => (H.col[k] != null ? r[H.col[k]] : ""), date = acParseDate(g("date")), type = key(g("type")), party = String(g("party") || "").trim(), no = String(g("no") || "").trim(), tot = Math.abs(acNum(g("total"))), how = key(g("how")), cat = String(g("cat") || "").trim();
-    if (!date || !type || !(tot > 0)) return; const sk = (why) => (skip[why] = (skip[why] || 0) + 1);
-    if (date < A.from) return sk("Before the books start");
-    const vk = [date, type, no, party, tot].join("|"); if (seenV.has(vk)) return sk("Already brought in");
-    const moneyAcc = /cash/.test(how) ? "cash" : bank, pid = acMatchParty(party);
-    if (/^(sale|sale order|estimate|delivery challan|credit note|debit note|sale return|purchase return|purchase order)$/.test(type) || /sale/.test(type)) return sk(/credit|debit|return/.test(type) ? "Notes (already in the tool)" : "Sales (already in the tool)");
-    if (/^purchase( bill)?$/.test(type)) {
-      if (!/hangyo/i.test(party)) return plan.push({ vk, type: "journal", date, party, no, tot, why: "Purchase from " + party, lines: (() => { const net = acR2(tot / 1.05), tl = acTaxLines(net, false, false); return [{ a: "purchases", v: net }].concat(tl.map((l) => ({ a: l.a, v: l.v, tax: l.tax })), [{ a: pid || "suspense", v: -tot }]); })(), kind: "purchase" });
-      if (first && date >= first) return sk("Purchases already in the tool");
-      if (no && seenPur.has(key(no))) return sk("Purchases already in the tool");
-      const net = acR2(tot / 1.05), tl = acTaxLines(net, acInter("Hangyo"), false);
-      return plan.push({ vk, type: "journal", kind: "purchase", date, party: "Hangyo", no, tot, lines: [{ a: "purchases", v: net }].concat(tl.map((l) => ({ a: l.a, v: l.v, tax: l.tax })), [{ a: acPartyId("Hangyo"), v: -acR2(net + tl.reduce((a, l) => a + l.v, 0)) }]), itc: tl.map((l) => ({ k: l.tax, v: l.v })), taxable: net });
-    }
-    if (/payment.?in|receipt/.test(type)) return plan.push({ vk, type: "receipt", date, party: party || "?", no, tot, lines: [{ a: moneyAcc, v: tot }, { a: pid || "suspense", v: -tot }], unk: !pid });
-    if (/payment.?out/.test(type)) return plan.push({ vk, type: "payment", date, party: party || "?", no, tot, lines: [{ a: pid || "suspense", v: tot }, { a: moneyAcc, v: -tot }], unk: !pid });
-    if (/expense/.test(type)) { const ea = acExpenseAcc(cat + " " + party); return plan.push({ vk, type: "expense", date, party: cat || party || "Expense", no, tot, lines: [{ a: ea, v: tot }, { a: moneyAcc, v: -tot }] }); }
-    if (/other income/.test(type)) return plan.push({ vk, type: "receipt", date, party: party || cat || "Other income", no, tot, lines: [{ a: moneyAcc, v: tot }, { a: "x:interest", v: -tot }] });
-    sk(String(g("type")));
-  });
-  S.acVy = { file: f.name, plan };
-  const by = {}; plan.forEach((p) => { const k = p.kind === "purchase" ? "Purchases" : AC_VTYPES[p.type][0]; const x = (by[k] = by[k] || { n: 0, v: 0 }); x.n++; x.v += p.tot; });
-  const unk = plan.filter((p) => p.unk).length;
-  part("ac-vy-out", `<div class="card card-pad"><div class="card-title">${esc(f.name)}</div><div class="card-sub">What will come in</div>
-    <div class="group" style="margin-top:10px">${Object.keys(by).map((k) => `<div class="row"><span class="grow">${esc(k)}</span><span class="row-sub">${by[k].n}</span><span class="num" style="font-weight:600;min-width:110px;text-align:right">${rs2(by[k].v)}</span></div>`).join("") || `<div class="row"><span class="row-sub">Nothing new to bring in.</span></div>`}</div>
-    ${Object.keys(skip).length ? `<div class="row-sub" style="margin-top:10px">Left out: ${Object.keys(skip).map((k) => `${esc(k)} (${skip[k]})`).join(" · ")}</div>` : ""}
-    ${unk ? `<div class="banner warn" style="margin-top:10px">${ic("alert", "sm")}<span>${unk} payment${unk === 1 ? "" : "s"} could not be matched to a party; they go to “Not yet sorted” and can be changed in the Day book.</span></div>` : ""}
-    ${plan.length ? `<button class="btn btn-primary" style="margin-top:12px" data-act="aceVyGo">${ic("check", "sm")} Bring in ${plan.length} entr${plan.length === 1 ? "y" : "ies"}</button>` : ""}</div>${acVyImportsHtml()}`);
-};
 function acExpenseAcc(t) {
   t = key(t); const m = [[/salar|wage|staff/, "x:salaries"], [/rent/, "x:rent"], [/cold|storage|tropicana/, "x:storage"], [/load|unload|hamali|coolie/, "x:loading"], [/fuel|diesel|petrol|vehicle/, "x:fuel"], [/electric|power|kseb/, "x:power"], [/phone|mobile|internet|broadband|recharge/, "x:phone"], [/bank|charge/, "x:bankchg"], [/audit|account|ca |legal|professional|consult/, "x:prof"], [/repair|maint|freezer|service/, "x:repairs"]];
   const hit = m.find(([re]) => re.test(t)); return hit ? hit[1] : "x:office";
 }
-ACT.aceVyGo = () => {
-  const P = S.acVy; if (!P || !P.plan.length) return; const A = acStore(), imp = { id: acId("I"), file: P.file, at: iso(NOW()), n: P.plan.length, by: HOST ? ME.name : undefined };
-  const ACC = acAccounts();
-  P.plan.forEach((p) => { const v = { id: acId("V"), type: p.type, no: acNextNo(p.type, p.date), date: p.date, party: p.party, text: `From Vyapar${p.no ? " · " + p.no : ""}${p.kind === "purchase" ? " · purchase" : ""}`, ref: p.no, lines: p.lines, total: p.tot, src: "vyapar", vy: p.vk, imp: imp.id, by: imp.by, time: imp.at }; if (p.itc) { v.itc = p.itc; v.taxable = p.taxable; } A.vouchers.push(v); });
-  A.imports.push(imp); A.vyDone = true; logActivity("Brought in from Vyapar", P.file, `${P.plan.length} entries`); acDirty(); S.acVy = null;
-  part("ac-vy-out", `<div class="banner good">${ic("check", "sm")}<span>${P.plan.length} entries brought in. They are in the Day book, marked “From Vyapar”.</span></div>${acVyImportsHtml()}`); toast("Brought in from Vyapar", "check");
-};
 ACT.aceVyUndo = (el) => {
   const A = acStore(), imp = A.imports.find((x) => x.id === el.dataset.id); if (!imp) return;
   if (el.dataset.sure !== "1") { el.dataset.sure = "1"; el.textContent = "Tap again"; el.classList.add("btn-danger"); return; }
@@ -7376,6 +7335,216 @@ ACT.acvStmtPdf = async (el) => {
   for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setDrawColor(...LINE); doc.setLineWidth(0.3); doc.line(M, 285, W - M, 285); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.text(`${C.name || "SahiReach LLP"} · Statement of account · ${name}`, M, 289.5); doc.text(`Page ${i} of ${pages}`, W - M, 289.5, { align: "right" }); }
   doc.save(`${name.replace(/[^\w\s-]/g, "")} statement ${dmyOf(R.to)}.pdf`);
   logActivity("Statement downloaded", name, "PDF"); toast("Statement PDF downloaded", "doc");
+};
+
+/* ===== ACCOUNTS: upload accounting data =====
+   One place to bring in everything recorded so far: Vyapar's reports (All transactions / Day book, Payment-In,
+   Payment-Out, Expenses, Purchase, Sale, credit and debit notes) and the SahiReach accounts template (for anything
+   kept elsewhere: opening balances, journals, payments from a notebook). Several files can go in one after another;
+   nothing is added until "Bring in" is tapped, and each upload can be taken out again.
+   What the tool already has is left out: sales and notes it already holds, Hangyo purchases it recorded, money
+   already in the books (from the bank statement, or an earlier upload). A Vyapar sale that matches a dispatch
+   (same distributor, total, within 3 days) gives that dispatch its Vyapar invoice number. */
+const AC_UP_WANT = {
+  date: [/^date$/, /^(txn |transaction |voucher |invoice |bill )?date/, /date/], type: [/^type$/, /transaction type|txn type|voucher type|^type/],
+  party: [/party|^account$|party or account|^name$|customer|supplier/], no: [/^ref|invoice no|bill no|^no\.?$|number|voucher no|receipt no/],
+  total: [/^total( amount)?$|^amount|grand total|^total/], paid: [/received|paid amount|^paid$|received\/paid/], how: [/payment type|payment mode|^mode|bank or cash/],
+  cat: [/category|expense head/], note: [/description|remarks|^note|narration|details/], dr: [/debit account/], cr: [/credit account/],
+};
+const acUpType = (t) => {
+  t = key(t);
+  if (!t || /order|estimate|challan|proforma|quotation/.test(t)) return "";
+  if (/^opening/.test(t)) return /cr|credit/.test(t) ? "opencr" : "opendr";
+  if (/payment.?in|receipt|money in/.test(t)) return "receipt";
+  if (/payment.?out|money out/.test(t)) return "payment";
+  if (/credit note|sale return|sales return/.test(t)) return "cnote";
+  if (/debit note|purchase return/.test(t)) return "pret";
+  if (/expense/.test(t)) return "expense";
+  if (/purchase/.test(t)) return "purchase";
+  if (/sale|invoice/.test(t)) return "sale";
+  if (/income/.test(t)) return "income";
+  if (/journal/.test(t)) return "journal";
+  return "?" + t;
+};
+const AC_UP_LABEL = { sale: "Sales", purchase: "Purchases", receipt: "Money in", payment: "Money out", expense: "Expenses", cnote: "Credit notes", pret: "Debit notes to Hangyo", income: "Other income", journal: "Journals", opendr: "Opening balances", opencr: "Opening balances" };
+
+ACT.aceVyapar = () => {
+  const A = AC(), first = acStockFirst();
+  S.acUp = { files: [], plan: [], inv: [], opening: [], newL: {} };
+  openSheet("Upload accounting data", `<div class="row-sub">Bring in everything recorded so far: receipts, payments, expenses, purchases, notes and opening balances. Upload as many files as you like, one after another; you see what comes in before anything is added.</div>
+    <div class="group" style="margin-top:14px">
+      <div class="row"><span class="attn-ic tint">${ic("doc")}</span><span class="grow"><div class="row-title">From Vyapar</div><div class="row-sub">Reports → <b>All transactions</b> (or Day book), ${fmtDate(A.from)} ${A.from.slice(0, 4)} to today → Excel. Payment-In, Payment-Out, Expense, Purchase and Sale reports work too.</div></span></div>
+      <div class="row"><span class="attn-ic tint">${ic("book")}</span><span class="grow"><div class="row-title">Anything else</div><div class="row-sub">Opening balances, journals, money paid or received in cash: fill the SahiReach template and upload it.</div></span><button class="btn btn-secondary btn-sm" data-act="acvTemplate">${ic("doc", "sm")} Template</button></div>
+    </div>
+    <ul class="ac-list"><li>Sales, credit notes and Hangyo purchases the tool already has are left out${first ? ` (Hangyo purchases are in the tool from ${fmtDate(first)})` : ""}.</li><li>A Vyapar sale that matches a dispatch gives it its invoice number.</li><li>Money already in the books (from the bank statement or an earlier upload) is not added twice.</li><li>Bank statements go in <b>Bank</b>.</li></ul>
+    <div style="margin-top:14px">${dropZone({ input: "ac-vy-file", dataIn: "aceVyFile", accept: ".xlsx,.xls,.csv", title: "Accounting file", sub: "Vyapar report or the SahiReach template · Excel or CSV" })}</div>
+    <div id="ac-vy-out" style="margin-top:14px">${acVyImportsHtml()}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Close</button>`, true);
+};
+/* money account for Vyapar's "payment type": cash, a bank named the same as one in the books, or a new bank account */
+function acUpMoney(how) {
+  const h = key(how), U = S.acUp, ACC = acAccounts();
+  if (/cash/.test(h)) return "cash";
+  const banks = Object.values(ACC).filter((a) => a.group === "bank"), words = h.replace(/[^a-z0-9 ]/g, " ").split(" ").filter((w) => w.length >= 3 && !/^(bank|account|current|savings|ltd|the)$/.test(w));
+  const hit = banks.find((b) => words.some((w) => key(b.name).includes(w))); if (hit) return hit.id;
+  const generic = !h || /^(cheque|check|bank|upi|neft|rtgs|imps|online|card|bank transfer|transfer|other)$/.test(h);
+  if (generic && banks.length) return banks[0].id;
+  const name = generic ? "Bank account" : String(how).trim(), k = key(name);
+  const pend = Object.values(U.newL).find((x) => key(x.name) === k); if (pend) return pend.id;
+  const id = "l:" + acId("L").slice(2); U.newL[id] = { id, name, group: "bank" }; return id;
+}
+/* the account for a name: a party the books know, else a new party */
+function acUpParty(name, group) {
+  const n = String(name || "").trim(); if (!n) return "suspense";
+  const ACC = acAccounts(), exact = Object.values(ACC).find((a) => key(a.name) === key(n) || (a.party && key(a.party) === key(n))); if (exact) return exact.id;
+  const m = acMatchParty(n); if (m) return m;
+  const U = S.acUp, pend = Object.values(U.newL).find((x) => key(x.name) === key(n)); if (pend) return pend.id;
+  const id = "l:" + acId("L").slice(2); U.newL[id] = { id, name: n, group, party: n }; return id;
+}
+/* any account by name (template journals) */
+function acUpAcc(name) {
+  const n = key(name); if (!n) return ""; const ACC = acAccounts();
+  /* whole words only: "current account" is not "Rent" */
+  const wb = (hay, needle) => needle.length >= 3 && new RegExp("(^|[^a-z0-9])" + needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^a-z0-9])").test(hay);
+  const a = Object.values(ACC).find((x) => key(x.name) === n) || Object.values(ACC).find((x) => wb(key(x.name), n) || wb(n, key(x.name)));
+  return a ? a.id : acMatchParty(name) || "";
+}
+IN.aceVyFile = async (el) => {
+  const f = el.files && el.files[0]; if (!f) return; const U = S.acUp || (S.acUp = { files: [], plan: [], inv: [], opening: [], newL: {} });
+  part("ac-vy-out", `<div class="row-sub">Reading ${esc(f.name)}…</div>`);
+  let sheets; try { sheets = await acReadSheetFile(f); } catch (e) { part("ac-vy-out", `<div class="banner bad">${ic("alert", "sm")}<span>Could not read that file. Export it as Excel and try again.</span></div>${acUpPreview()}`); return; }
+  const R = { file: f.name, n: 0, skip: {}, unmatched: [], kind: "" };
+  let found = false;
+  sheets.forEach((rows, si) => {
+    const H = acFindCols(rows, AC_UP_WANT); if (!H || H.col.total == null) return;
+    const title = key(rows.slice(0, H.at).map((r) => r.join(" ")).join(" ") + " " + f.name), fileType = H.col.type == null ? acUpType(/payment.?in|receipt/.test(title) ? "payment-in" : /payment.?out/.test(title) ? "payment-out" : /expense/.test(title) ? "expense" : /purchase/.test(title) ? "purchase" : /credit note|sale return/.test(title) ? "credit note" : /debit note|purchase return/.test(title) ? "debit note" : /sale/.test(title) ? "sale" : "") : "";
+    if (H.col.type == null && !fileType) return;
+    found = true; R.kind = H.col.type != null ? (/template|sahireach accounts/.test(title) ? "SahiReach template" : "All transactions") : AC_UP_LABEL[fileType] + " report";
+    rows.slice(H.at + 1).forEach((r) => acUpRow(r, H.col, fileType, R));
+  });
+  if (!found) {
+    const bank = sheets.some((s) => { const b = acBankParse(s); return b && b.length; });
+    part("ac-vy-out", `<div class="banner ${bank ? "info" : "bad"}">${ic(bank ? "info" : "alert", "sm")}<span>${bank ? `<b>${esc(f.name)}</b> looks like a bank statement. Upload it in Accounts → <button class="btn-plain" data-act="acvGoBankClose">Bank</button>.` : `<b>${esc(f.name)}</b> is not a report this can read. It needs Date, Type (or a report of one kind) and Amount / Total columns.`}</span></div>${acUpPreview()}`);
+    return;
+  }
+  U.files.push(R); part("ac-vy-out", acUpPreview());
+};
+ACT.acvGoBankClose = () => { closeSheet(); S.acTab = "bank"; go("accounts"); };
+function acUpRow(r, C, fileType, R) {
+  const U = S.acUp, A = AC(), g = (k) => (C[k] != null ? r[C[k]] : ""), date = acParseDate(g("date"));
+  const typ = C.type != null ? acUpType(g("type")) : fileType, party = String(g("party") || "").trim(), no = String(g("no") || "").trim(), raw = acNum(g("total")), tot = acR2(Math.abs(raw)), paid = acR2(Math.abs(acNum(g("paid")))), how = String(g("how") || ""), cat = String(g("cat") || "").trim(), note = String(g("note") || "").trim();
+  const sk = (why) => (R.skip[why] = (R.skip[why] || 0) + 1);
+  if (!date || !typ || !(tot > 0)) return; if (typ[0] === "?") return sk(`“${typ.slice(1)}” (not a type this reads)`);
+  if (date < A.from && !/^open/.test(typ)) return sk("Before the books start");
+  const vk = [date, typ, no, key(party), tot].join("|");
+  if (A.vouchers.some((v) => !v.deleted && v.vy === vk) || U.plan.some((p) => p.vk === vk)) return sk("Already brought in");
+  const add = (p) => { U.plan.push(Object.assign({ vk, date, no, file: R.file }, p)); R.n++; };
+  const moneyDupe = (acc, pid, amt, sign) => A.vouchers.some((v) => !v.deleted && v.lines.some((l) => l.a === pid && Math.abs(l.v - sign * amt) < 0.01) && Math.abs(daysBetween(v.date, date)) <= 3) || U.plan.some((p) => p.vk !== vk && p.lines && p.lines.some((l) => l.a === pid && Math.abs(l.v - sign * amt) < 0.01) && Math.abs(daysBetween(p.date, date)) <= 3 && p.file !== R.file);
+  const tf = acToolFrom(), first = acStockFirst();
+  if (typ === "sale") {
+    const inTool = no && ((D.salesBefore || []).some((x) => x.inv === no) || D.orders.some((o) => o.inv === no));
+    if (inTool) sk("Sales already in the tool");
+    else if (date >= tf) {
+      const pid = acUpParty(party, "debtors"), dn = pid.startsWith("p:") ? pid.slice(2) : party;
+      const o = D.orders.find((x) => x.status === "Dispatched" && !x.inv && x.dispatched && Math.abs(daysBetween(x.dispatched.slice(0, 10), date)) <= 3 && canonDist(x.dist) === canonDist(dn) && Math.abs(Math.round(x.valueGst || (x.value || 0) * 1.05) - tot) <= 2 && !U.inv.some((i) => i.id === x.id));
+      if (o && no) { U.inv.push({ id: o.id, no, file: R.file }); R.inv = (R.inv || 0) + 1; } else { sk("Sales not matched to a dispatch"); R.unmatched.push(`${fmtDate(date)} · ${party} · ${no || "no number"} · ${rs2(tot)}`); }
+    } else {
+      const pid = acUpParty(party, "debtors"), net = acR2(tot / 1.05), I = acInvoice(1, pid.startsWith("p:") ? pid.slice(2) : party, "sales-gt", net, false, false); I.lines[0].a = pid;
+      add({ type: "journal", kind: "sale", party, tot, lines: I.lines, text: "Sale from Vyapar" });
+    }
+    if (paid > 0) { const m = acUpMoney(how), pid = acUpParty(party, "debtors"); if (!moneyDupe(m, pid, paid, -1)) add({ vk: vk + "|paid", type: "receipt", party, tot: paid, lines: [{ a: m, v: paid }, { a: pid, v: -paid }], text: "Paid at the time of sale" }); }
+    return;
+  }
+  if (typ === "purchase") {
+    const hangyo = /hangyo/i.test(party);
+    if (hangyo && ((first && date >= first) || (no && D.purchases.some((p) => key(p.inv) === key(no))))) sk("Hangyo purchases already in the tool");
+    else {
+      const pid = hangyo ? acPartyId("Hangyo") : acUpParty(party, "creditors"), inter = hangyo ? acInter("Hangyo") : false, net = acR2(tot / 1.05), tl = acTaxLines(net, inter, false), gross = acR2(net + tl.reduce((a, l) => a + l.v, 0));
+      add({ type: "journal", kind: "purchase", party: hangyo ? "Hangyo" : party, tot, lines: [{ a: "purchases", v: net }].concat(tl.map((l) => ({ a: l.a, v: l.v, tax: l.tax })), [{ a: pid, v: -gross }]).concat(Math.abs(gross - tot) > 0.004 ? [{ a: "round", v: acR2(gross - tot) }, { a: pid, v: acR2(tot - gross) }] : []), itc: tl.map((l) => ({ k: l.tax, v: l.v })), taxable: net, text: "Purchase from Vyapar" });
+    }
+    if (paid > 0) { const m = acUpMoney(how), pid = hangyo ? acPartyId("Hangyo") : acUpParty(party, "creditors"); if (!moneyDupe(m, pid, paid, 1)) add({ vk: vk + "|paid", type: "payment", party, tot: paid, lines: [{ a: pid, v: paid }, { a: m, v: -paid }], text: "Paid at the time of purchase" }); }
+    return;
+  }
+  if (typ === "receipt" || typ === "payment") {
+    const inn = typ === "receipt", pid = acUpParty(party, inn ? "debtors" : "creditors"), m = acUpMoney(how);
+    if (moneyDupe(m, pid, tot, inn ? -1 : 1)) return sk("Money already in the books");
+    return add({ type: typ, party, tot, lines: inn ? [{ a: m, v: tot }, { a: pid, v: -tot }] : [{ a: pid, v: tot }, { a: m, v: -tot }], unk: pid === "suspense", text: note || (inn ? "Received" : "Paid") });
+  }
+  if (typ === "expense") {
+    const ea = acExpenseAcc(cat + " " + party + " " + note), m = acUpMoney(how);
+    if (A.vouchers.some((v) => !v.deleted && v.lines.some((l) => l.a === m && Math.abs(l.v + tot) < 0.01) && v.lines.some((l) => l.a === ea) && Math.abs(daysBetween(v.date, date)) <= 3)) return sk("Money already in the books");
+    return add({ type: "expense", party: cat || party || "Expense", tot, lines: [{ a: ea, v: tot }, { a: m, v: -tot }], text: [cat, party, note].filter(Boolean).join(" · ") });
+  }
+  if (typ === "income") { const m = acUpMoney(how); return add({ type: "receipt", party: party || cat || "Other income", tot, lines: [{ a: m, v: tot }, { a: "x:interest", v: -tot }], text: note || cat || "Other income" }); }
+  if (typ === "cnote") {
+    if (no && ((D.notes || []).some((n) => key(n.no) === key(no)) || (D.salesBefore || []).some((x) => x.inv === no))) return sk("Notes already in the tool");
+    const pid = acUpParty(party, "debtors"), net = acR2(tot / 1.05), I = acInvoice(-1, pid.startsWith("p:") ? pid.slice(2) : party, "sales-ret", net, false, false); I.lines[0].a = pid;
+    return add({ type: "journal", kind: "cnote", party, tot, lines: I.lines, text: "Credit note from Vyapar" });
+  }
+  if (typ === "pret") {
+    if (no && (D.notes || []).some((n) => key(n.no) === key(no))) return sk("Notes already in the tool");
+    const hangyo = /hangyo/i.test(party) || !party, pid = hangyo ? acPartyId("Hangyo") : acUpParty(party, "creditors"), net = acR2(tot / 1.05), tl = acTaxLines(net, hangyo ? acInter("Hangyo") : false, false), gross = acR2(net + tl.reduce((a, l) => a + l.v, 0));
+    return add({ type: "journal", kind: "pret", party: hangyo ? "Hangyo" : party, tot, lines: [{ a: pid, v: gross }, { a: "pur-ret", v: -net }].concat(tl.map((l) => ({ a: l.a, v: -l.v, tax: l.tax }))), itc: tl.map((l) => ({ k: l.tax, v: -l.v })), taxable: -net, text: "Debit note from Vyapar (stock returned)" });
+  }
+  if (typ === "opendr" || typ === "opencr") {
+    const k = key(party), U2 = S.acUp, grp = /cash/.test(k) ? "cash" : /bank|a\/c|current|savings/.test(k) ? "bank" : /capital|partner/.test(k) ? "capital" : /loan/.test(k) ? "loans" : /deposit/.test(k) ? (typ === "opendr" ? "advances" : "deposits") : /stock/.test(k) ? "stock" : /freezer|vehicle|furniture|computer|equipment/.test(k) ? "fixed" : typ === "opendr" ? "debtors" : "creditors";
+    let id = grp === "cash" ? "cash" : grp === "stock" ? "stock" : acUpAcc(party); if (id && AC_PL((acAccounts()[id] || {}).group)) id = ""; /* opening balances are never on income or expense accounts */
+    if (!id) { const pend = Object.values(U2.newL).find((x) => key(x.name) === k); if (pend) id = pend.id; else { id = "l:" + acId("L").slice(2); U2.newL[id] = Object.assign({ id, name: party, group: grp }, ["debtors", "creditors"].includes(grp) ? { party } : {}); } }
+    U.opening.push({ id, name: party, v: typ === "opendr" ? tot : -tot, file: R.file }); R.n++; return;
+  }
+  if (typ === "journal") {
+    const da = acUpAcc(g("dr")), ca = acUpAcc(g("cr"));
+    if (!da || !ca) return sk("Journals whose accounts are not in the books");
+    return add({ type: "journal", party: "", tot, lines: [{ a: da, v: tot }, { a: ca, v: -tot }], text: note || "Journal" });
+  }
+}
+function acUpPreview() {
+  const U = S.acUp; if (!U || !U.files.length) return acVyImportsHtml();
+  const ACC = acAccounts(), by = {}; U.plan.forEach((p) => { const k = AC_UP_LABEL[p.kind || p.type] || "Other"; const x = (by[k] = by[k] || { n: 0, v: 0 }); x.n++; x.v += p.tot; });
+  if (U.opening.length) by["Opening balances"] = { n: U.opening.length, v: U.opening.reduce((a, o) => a + Math.abs(o.v), 0) };
+  const newL = Object.values(U.newL), unk = U.plan.filter((p) => p.unk).length, total = U.plan.length + U.opening.length + U.inv.length;
+  return `<div class="stack gap-12">${U.files.map((R) => `<div class="card card-pad"><div class="hstack" style="justify-content:space-between;gap:10px"><div><div class="card-title" style="font-size:15px">${esc(R.file)}</div><div class="card-sub">${esc(R.kind)} · ${R.n} to bring in${R.inv ? ` · ${R.inv} invoice number${R.inv === 1 ? "" : "s"} for dispatches` : ""}</div></div>${ic("check", "sm")}</div>
+      ${Object.keys(R.skip).length ? `<div class="row-sub" style="margin-top:8px">Left out: ${Object.keys(R.skip).map((k) => `${esc(k)} (${R.skip[k]})`).join(" · ")}</div>` : ""}
+      ${R.unmatched.length ? `<details style="margin-top:8px"><summary class="row-sub" style="cursor:pointer">${R.unmatched.length} Vyapar sale${R.unmatched.length === 1 ? "" : "s"} not matched to a dispatch (not added, so nothing is counted twice)</summary><div class="row-sub" style="margin-top:6px">${R.unmatched.slice(0, 30).map(esc).join("<br>")}${R.unmatched.length > 30 ? "<br>…" : ""}</div></details>` : ""}</div>`).join("")}
+    <div class="card card-pad"><div class="card-title">What will come in</div>
+      <div class="group" style="margin-top:10px">${Object.keys(by).map((k) => `<div class="row"><span class="grow">${esc(k)}</span><span class="row-sub">${by[k].n}</span><span class="num" style="font-weight:600;min-width:120px;text-align:right">${rs2(by[k].v)}</span></div>`).join("")}${U.inv.length ? `<div class="row"><span class="grow">Vyapar invoice numbers for dispatches</span><span class="row-sub">${U.inv.length}</span><span style="min-width:120px"></span></div>` : ""}${!total ? `<div class="row"><span class="row-sub">Nothing new to bring in.</span></div>` : ""}</div>
+      ${newL.length ? `<div class="row-sub" style="margin-top:10px">New accounts: ${newL.map((l) => `${esc(l.name)} <span class="dim">(${esc((AC_GROUP[l.group] || {}).label || l.group)})</span>`).join(", ")}</div>` : ""}
+      ${unk ? `<div class="banner warn" style="margin-top:10px">${ic("alert", "sm")}<span>${unk} entr${unk === 1 ? "y has" : "ies have"} no party name; they go to “Not yet sorted” and can be changed in the Day book.</span></div>` : ""}
+      ${total && AC_CAN ? `<button class="btn btn-primary" style="margin-top:12px" data-act="aceVyGo">${ic("check", "sm")} Bring in ${total} item${total === 1 ? "" : "s"}</button>` : ""}</div>
+    ${acVyImportsHtml()}</div>`;
+}
+ACT.aceVyGo = () => {
+  const U = S.acUp; if (!U) return; const A = acStore(), imp = { id: acId("I"), file: U.files.map((f) => f.file).join(", "), at: iso(NOW()), n: 0, by: HOST ? ME.name : undefined, inv: [], opening: {}, ledgers: [] };
+  Object.values(U.newL).forEach((l) => { if (!A.ledgers.some((x) => x.id === l.id)) { A.ledgers.push(Object.assign({}, l, { by: imp.by, time: imp.at, imp: imp.id })); imp.ledgers.push(l.id); } });
+  U.plan.forEach((p) => { const v = { id: acId("V"), type: p.type, no: acNextNo(AC_VTYPES[p.type] ? p.type : "journal", p.date), date: p.date, party: p.party, text: `From Vyapar${p.no ? " · " + p.no : ""} · ${p.text || ""}`.replace(/ · $/, ""), ref: p.no, note: p.text, lines: p.lines.map((l) => Object.assign({}, l)), total: p.tot, src: "vyapar", vy: p.vk, imp: imp.id, by: imp.by, time: imp.at }; if (p.itc) { v.itc = p.itc; v.taxable = p.taxable; } if (/template/i.test(p.file || "") || /SahiReach template/.test((U.files.find((f) => f.file === p.file) || {}).kind || "")) v.text = v.text.replace("From Vyapar", "Uploaded"); A.vouchers.push(v); imp.n++; });
+  U.inv.forEach((x) => { const o = D.orders.find((y) => y.id === x.id); if (o && !o.inv) { o.inv = x.no; imp.inv.push(x.id); imp.n++; } });
+  U.opening.forEach((o) => { if (!(o.id in imp.opening)) imp.opening[o.id] = A.opening[o.id] == null ? null : A.opening[o.id]; A.opening[o.id] = acR2((+A.opening[o.id] || 0) + o.v); imp.n++; });
+  if (U.opening.length) A.openingDone = true;
+  A.imports.push(imp); A.vyDone = true; logActivity("Accounting data uploaded", imp.file, `${imp.n} items`); acDirty();
+  const n = imp.n; S.acUp = { files: [], plan: [], inv: [], opening: [], newL: {} };
+  part("ac-vy-out", `<div class="banner good">${ic("check", "sm")}<span>${n} item${n === 1 ? "" : "s"} brought in. Entries are in the Day book, marked “From Vyapar”. Upload another file, or close.</span></div>${acVyImportsHtml()}`); render(); toast("Accounting data brought in", "check");
+};
+/* take an upload out again: its entries, the invoice numbers it filled, the opening balances it set, the accounts it made (if unused) */
+ACT.aceVyUndo = (el) => {
+  const A = acStore(), imp = A.imports.find((x) => x.id === el.dataset.id); if (!imp) return;
+  if (el.dataset.sure !== "1") { el.dataset.sure = "1"; el.textContent = "Tap again"; el.classList.add("btn-danger"); return; }
+  let n = 0; A.vouchers.forEach((v) => { if (v.imp === imp.id && !v.deleted) { v.deleted = true; v.deletedAt = iso(NOW()); n++; } });
+  (imp.inv || []).forEach((id) => { const o = D.orders.find((y) => y.id === id); if (o) delete o.inv; });
+  Object.keys(imp.opening || {}).forEach((id) => { const was = imp.opening[id]; if (was == null) delete A.opening[id]; else A.opening[id] = was; });
+  acDirty(); const used = new Set(); acEntries().forEach((e) => e.lines.forEach((l) => used.add(l.a)));
+  (imp.ledgers || []).forEach((id) => { const l = A.ledgers.find((x) => x.id === id); if (l && !used.has(id) && !(id in A.opening)) l.deleted = true; });
+  imp.removed = true; logActivity("Upload taken out", imp.file, `${n} entries`); acDirty(); part("ac-vy-out", acVyImportsHtml()); render(); toast(`${n} entries taken out`, "undo");
+};
+/* the template, for anything not in Vyapar */
+ACT.acvTemplate = async (el) => {
+  const X = await acXlsx(el); if (!X) return; const t = acToday(), fy = acFYStart(t);
+  const head = [{ t: "Date", z: AC_X.DATE }, { t: "Type" }, { t: "Party or account" }, { t: "Amount", r: 1, z: AC_X.RS }, { t: "Bank or cash" }, { t: "Reference" }, { t: "Note" }, { t: "Debit account" }, { t: "Credit account" }];
+  const ex = [[acD(addDays(fy, -1)), "Opening Dr", "HDFC current account", 250000, "", "", "Bank balance on 31 March", "", ""], [acD(addDays(fy, -1)), "Opening Cr", "Partners' capital", 250000, "", "", "", "", ""], [acD(fy), "Money in", "Supreme Traders Kerala LLP", 50000, "HDFC", "UTR123", "", "", ""], [acD(fy), "Money out", "Hangyo", 100000, "HDFC", "", "", "", ""], [acD(fy), "Expense", "Rent", 15000, "Cash", "", "Office rent", "", ""], [acD(fy), "Journal", "", 5000, "", "", "Depreciation on freezers", "Office and general expenses", "Freezers"]];
+  const L = ilLedgerRows("SahiReach accounts template", "One line per entry. Delete the example lines, fill yours, save, and upload in Accounts → Upload accounting data.", [], head, ex, null);
+  const help = [["Type", "What it is", "Fill in"], ["Money in", "Money received", "Party, amount, bank or cash"], ["Money out", "Money paid", "Party (or what it was for), amount, bank or cash"], ["Expense", "A cost paid", "What it was for (rent, salary, fuel…), amount, bank or cash"], ["Purchase", "A purchase bill (amount incl. 5% GST)", "Supplier, amount, reference"], ["Sale", "A sale invoice (amount incl. 5% GST)", "Distributor, amount, invoice number"], ["Credit note", "Sales return / rate difference to a distributor", "Party, amount incl. GST, note number"], ["Debit note", "Stock returned to Hangyo", "Amount incl. GST, note number"], ["Opening Dr", "Opening balance: what we have or are owed", "Account, amount (date: the day before the books start)"], ["Opening Cr", "Opening balance: what we owe, partners' capital", "Account, amount"], ["Journal", "Anything else", "Amount, Debit account, Credit account (names as in Accounts)"]];
+  const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ilSheet(X, L.rows, [13, 13, 32, 15, 18, 14, 30, 28, 28], L.merges), "Entries");
+  const H = ilLedgerRows("How to fill it", "Dates as dd-mm-yyyy. Amounts in rupees. Names as they are in the tool (distributors, Hangyo, transporters, accounts).", [], [{ t: "Type" }, { t: "What it is" }, { t: "Fill in" }], help.slice(1), null);
+  X.utils.book_append_sheet(wb, ilSheet(X, H.rows, [14, 46, 60], H.merges), "How to fill it");
+  X.writeFile(wb, "SahiReach accounts template.xlsx", { compression: true, cellStyles: true }); toast("Template downloaded", "doc");
 };
 
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
