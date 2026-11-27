@@ -3,13 +3,15 @@ const HOST = window.SR || null; /* set by the staff-login page after sign-in; ab
 const D = HOST && HOST.data ? HOST.data : JSON.parse(document.getElementById("seed").textContent);
 const LOGO = HOST && HOST.logo ? HOST.logo : document.getElementById("logo-data").textContent.trim();
 const ME = (HOST && HOST.me) || { name: "Vishnu", role: "owner" };
-/* roles: owner = everything; staff = day-to-day work, no costs or profit; viewer = sees everything, changes nothing.
-   The database enforces the same rules: staff are sent no cost data, and a viewer's changes are refused. */
-const ROLE = (() => { if (HOST) return ["owner", "staff", "viewer"].includes(ME.role) ? ME.role : "staff"; let r = ""; try { r = new URLSearchParams(location.search).get("as") || ""; } catch (e) {} return ["staff", "viewer"].includes(r) ? r : "owner"; })();
-const CAN_EDIT = ROLE !== "viewer", SEE_MONEY = ROLE !== "staff";
+/* roles: owner = everything; staff = day-to-day work, no costs or profit; viewer = sees everything, changes nothing;
+   accountant = sees everything and keeps the books (Accounts, invoice numbers), but cannot change orders, stock or setup.
+   The database enforces the same rules: staff are sent no cost data or books, a viewer's changes are refused, and an
+   accountant's save only changes the books and invoice numbers. */
+const ROLE = (() => { if (HOST) return ["owner", "staff", "viewer", "accountant"].includes(ME.role) ? ME.role : "staff"; let r = ""; try { r = new URLSearchParams(location.search).get("as") || ""; } catch (e) {} return ["staff", "viewer", "accountant"].includes(r) ? r : "owner"; })();
+const CAN_EDIT = ROLE === "owner" || ROLE === "staff", SEE_MONEY = ROLE !== "staff";
 /* the system admin (an owner) can undo anything in the activity log; in the preview the owner is the admin */
 const ADMIN = ROLE === "owner" && (HOST ? !!ME.admin : true);
-const ROLE_LABEL = { owner: "Owner", staff: "Staff", viewer: "Viewer" };
+const ROLE_LABEL = { owner: "Owner", staff: "Staff", viewer: "Viewer", accountant: "Accountant" };
 const FIRST = String(ME.name || "").trim().split(/\s+/)[0] || "there";
 const CO = D.company || { name: "SahiReach LLP", address: "", gstin: "", fssai: "" };
 const $ = (s, r) => (r || document).querySelector(s);
@@ -135,11 +137,12 @@ const ROUTES = {
   replenish: { label: "Replenishment", icon: "cycle" },
   tod: { label: "TOD & notes", icon: "rupee" },
   logistics: { label: "Logistics", icon: "truck" },
+  accounts: { label: "Accounts", icon: "book" },
   setup: { label: "Setup", icon: "gear" },
   activity: { label: "Activity log", icon: "clock" },
   more: { label: "More", icon: "grid" },
 };
-if (!SEE_MONEY) { delete ROUTES.tod; delete ROUTES.logistics; }
+if (!SEE_MONEY) { delete ROUTES.tod; delete ROUTES.logistics; delete ROUTES.accounts; }
 if (!CAN_EDIT) delete ROUTES["new-order"];
 let sheetOpen = false;
 const VIEWS = {};
@@ -158,7 +161,7 @@ function openQC() { return D.qcPOs.filter((p) => p.status === "Open"); }
 function render() {
   const cur = ROUTES[S.route].parent || S.route;
   $$("[data-nav]").forEach((el) => {
-    const on = el.dataset.nav === cur || (el.dataset.nav === "more" && ["quick", "replenish", "tod", "setup", "activity", "backups", "more"].includes(cur) && el.classList.contains("tab"));
+    const on = el.dataset.nav === cur || (el.dataset.nav === "more" && ["quick", "replenish", "tod", "accounts", "setup", "activity", "backups", "more"].includes(cur) && el.classList.contains("tab"));
     if (on) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current");
   });
   const pb = $("#badge-dispatch"); if (pb) { const n = pendingOrders().length; pb.textContent = n; pb.hidden = !n; }
@@ -1395,6 +1398,7 @@ function showOrder(id, confirmCancel, confirmUndo) {
     ${o.status === "Pending" ? orderQCOfferHtml(o) : ""}
     ${o.notes ? `<div class="banner info">${ic("info", "sm")}<span>${esc(o.notes)}</span></div>` : ""}
     <div><div class="group-label"><span>Timeline</span></div><div class="card card-pad"><div class="timeline">${tl.join("")}</div></div></div>
+    ${o.status === "Dispatched" ? `<div><div class="group-label"><span>Vyapar invoice</span></div><div class="group"><button class="row" data-act="aceInvOne" data-t="order" data-id="${id}" data-back="order"><span class="attn-ic ${o.inv ? "tint" : "warn"}">${ic("doc")}</span><span class="grow"><div class="row-title">${o.inv ? esc(o.inv) : "Add the invoice number"}</div><div class="row-sub">${o.ewb ? "E-way bill " + esc(o.ewb) : "E-way bill not recorded"} · as made in Vyapar</div></span>${ic("chevR", "sm chev")}</button></div></div>` : ""}
     ${lines.length ? `<div><div class="group-label"><span>${lines.length} line${lines.length > 1 ? "s" : ""}</span><span>${nf(lines.reduce((a, l) => a + (l.crates || 0), 0))} crates</span></div><div class="group">${lines.map((l) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(shortName(l.product))}</div><div class="row-sub">${nf(l.crates, 2)} crate${l.crates === 1 ? "" : "s"} · ${nf(l.ea)} boxes × ${rs2(l.billed)}${l.tod ? ` · TOD ${rs2(l.tod)}` : ""}${l.qc > 0 ? ` · <span style="color:var(--tint);font-weight:600">${nf(l.qc, 2)} from quick commerce stock</span>` : ""}${l.part || (l.crates % 1 && Math.abs(l.crates % 1) > 1e-6) ? ` · <span style="color:var(--tint);font-weight:600">broken crate</span>` : ""}</div></span><span class="row-end"><span class="row-value">${rs2(l.value)}</span></span></div>`).join("")}</div></div>` : ""}
     ${missed.length ? `<div><div class="group-label"><span>Not supplied in full</span></div><div class="group">${missed.map((m) => `<div class="row"><span class="attn-ic warn" style="width:28px;height:28px">${ic("alert", "sm")}</span><span class="grow"><div class="row-title clip">${esc(shortName(m.product))}</div><div class="row-sub">${esc(m.reason)}</div></span>${typeof m.missed === "number" ? `<span class="row-end"><span class="pill warn plain">${m.missed} missed</span></span>` : ""}</div>`).join("")}</div></div>` : ""}`;
   const foot = `<button class="btn btn-secondary" data-act="soPreview" data-id="${id}">${ic("doc", "sm")} Sales order</button>${o.status !== "Cancelled" && lines.length ? `<button class="btn btn-secondary" data-act="${o.status === "Dispatched" ? "emailDispatch" : "emailSO"}" data-id="${id}">${ic("arrowR", "sm")} ${o.status === "Dispatched" ? "Email: on its way" : "Email sales order"}</button>` : ""}${o.status === "Pending" ? `<button class="btn btn-danger" data-act="cancelOrderAsk" data-id="${id}">Cancel order</button><button class="btn btn-primary" data-act="editOrder" data-id="${id}">${ic("pencil", "sm")} Edit order</button>` : ""}${o.status === "Dispatched" && ROLE === "owner" ? `<button class="btn btn-secondary" data-act="undoDispatchAsk" data-id="${id}">${ic("undo", "sm")} Undo dispatch</button>` : ""}`;
@@ -4613,7 +4617,7 @@ ACT.orderFor = (el) => { S.draft = newDraft(); S.draft.dist = el.dataset.name; c
 
 /* ===== MORE (phone) ===== */
 VIEWS.more = () => `<div class="page narrow"><div class="page-head"><h1 class="title">More</h1></div>
-  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["activity", "Activity log", ADMIN ? "Who did what and when, with undo" : "Who did what and when", "clock"], ...(ADMIN ? [["backups", "Backups", "Copies of all the data: download as Excel, or restore", "lock"]] : []), ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["logistics", "Logistics", "Trips, transport cost and its share of sales", "truck", unloggedRuns().length], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].filter((x) => ROUTES[x[0]]).map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
+  <div class="group">${[["quick", "Quick commerce", "Swiggy and Zepto POs, deliveries and GRN", "bolt", openQC().length], ["activity", "Activity log", ADMIN ? "Who did what and when, with undo" : "Who did what and when", "clock"], ...(ADMIN ? [["backups", "Backups", "Copies of all the data: download as Excel, or restore", "lock"]] : []), ["replenish", "Replenishment", "Plan the Hangyo truck", "cycle"], ["accounts", "Accounts", "Books, ledgers, profit and loss, balance sheet, GST", "book"], ["tod", "TOD & notes", "TOD due, credit and debit notes", "rupee"], ["logistics", "Logistics", "Trips, transport cost and its share of sales", "truck", unloggedRuns().length], ["setup", "Setup", "Distributors, products, prices, activity", "gear"]].filter((x) => ROUTES[x[0]]).map(([r, t, s, i, n]) => `<button class="row" data-act="nav" data-to="${r}"><span class="attn-ic tint">${ic(i)}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span><span class="row-end">${n ? `<span class="pill plain info">${n}</span>` : ""}${ic("chevR", "sm chev")}</span></button>`).join("")}</div>
   <div class="group"><button class="row" data-act="cmd"><span class="attn-ic info">${ic("search")}</span><span class="grow"><div class="row-title">Search everything</div><div class="row-sub">Distributors, products, orders</div></span>${ic("chevR", "sm chev")}</button>${HOST ? `<button class="row" data-act="account"><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow"><div class="row-title">${esc(ME.name)}</div><div class="row-sub">Account, team and sign out</div></span>${ic("chevR", "sm chev")}</button>` : ""}</div></div>`;
 
 /* ===== ACCOUNT (only on the staff-login page) ===== */
@@ -4621,6 +4625,7 @@ const ROLE_WHAT = {
   owner: "Everything, including costs and profit. Can invite people and change their access.",
   staff: "Orders, dispatch, pick lists, stock and quick commerce. Costs, profit, TOD and logistics are hidden.",
   viewer: "Can see everything, including costs and profit, but cannot change anything.",
+  accountant: "Keeps the books: enters receipts, payments, expenses and journals, invoice numbers and the bank statement. Sees everything else but cannot change orders, stock or setup.",
 };
 ACT.account = () => {
   if (!HOST) return;
@@ -4651,7 +4656,7 @@ ACT.pwSave = (el) => {
 };
 function inviteBoxHtml() {
   const r = S.inviteRole || "staff";
-  return `<div class="row-sub" style="margin-bottom:8px">What can they do?</div><div class="chips" style="margin:0 0 6px">${["staff", "viewer", "owner"].map((x) => `<button class="chip" data-act="inviteRole" data-r="${x}" aria-pressed="${r === x}">${ROLE_LABEL[x]}</button>`).join("")}</div>
+  return `<div class="row-sub" style="margin-bottom:8px">What can they do?</div><div class="chips" style="margin:0 0 6px">${["staff", "viewer", "accountant", "owner"].map((x) => `<button class="chip" data-act="inviteRole" data-r="${x}" aria-pressed="${r === x}">${ROLE_LABEL[x]}</button>`).join("")}</div>
     <div class="row-sub" style="margin-bottom:14px">${esc(ROLE_WHAT[r])}</div>
     <button class="btn btn-primary" data-act="inviteStaff">${ic("plus", "sm")} Create a setup code for ${ROLE_LABEL[r].toLowerCase()}</button>
     <div class="row-sub" style="margin-top:8px">Your teammate opens sahireach.com/staff-login, chooses “Set up your account” and enters the code. You can change their role later.</div>`;
@@ -4667,7 +4672,7 @@ function loadTeam() {
 function teamRowHtml(r) {
   const seen = r.last_sign_in ? "last signed in " + fmtDate(String(r.last_sign_in).slice(0, 10)) : "has not signed in yet";
   return `<div class="row" style="flex-wrap:wrap;gap:10px${r.active ? "" : ";opacity:.6"}"><span class="avatar soft">${esc(initials(r.name).slice(0, 1) || "S")}</span><span class="grow" style="min-width:160px"><div class="row-title clip">${esc(r.name)}${r.me ? ` <span class="pill plain" style="height:20px;font-size:11px">You</span>` : ""}</div><div class="row-sub clip">${r.email ? esc(r.email) + " · " : ""}${r.active ? seen : "no access"}</div></span>
-    ${r.me ? `<span class="row-sub">${ROLE_LABEL[r.role]}</span>` : r.active ? `<select class="select sm" style="width:auto" data-in="teamRole" data-id="${esc(r.id)}" aria-label="Role for ${esc(r.name)}">${["owner", "staff", "viewer"].map((x) => `<option value="${x}" ${r.role === x ? "selected" : ""}>${ROLE_LABEL[x]}</option>`).join("")}</select>${r.email && HOST.sendReset ? `<button class="btn btn-sm btn-secondary" data-act="teamReset" data-email="${esc(r.email)}" title="Email ${esc(r.name)} a link to choose a new password">Send reset link</button>` : ""}<button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="0">Remove access</button>` : `<span class="row-sub">${ROLE_LABEL[r.role]}</span><button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="1">Give access back</button>`}</div>`;
+    ${r.me ? `<span class="row-sub">${ROLE_LABEL[r.role]}</span>` : r.active ? `<select class="select sm" style="width:auto" data-in="teamRole" data-id="${esc(r.id)}" aria-label="Role for ${esc(r.name)}">${["owner", "staff", "viewer", "accountant"].map((x) => `<option value="${x}" ${r.role === x ? "selected" : ""}>${ROLE_LABEL[x]}</option>`).join("")}</select>${r.email && HOST.sendReset ? `<button class="btn btn-sm btn-secondary" data-act="teamReset" data-email="${esc(r.email)}" title="Email ${esc(r.name)} a link to choose a new password">Send reset link</button>` : ""}<button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="0">Remove access</button>` : `<span class="row-sub">${ROLE_LABEL[r.role]}</span><button class="btn btn-sm btn-secondary" data-act="teamAccess" data-id="${esc(r.id)}" data-on="1">Give access back</button>`}</div>`;
 }
 const teamName = (id) => ((S.team || []).find((x) => x.id === id) || {}).name || "They";
 IN.teamRole = (el) => {
@@ -4699,7 +4704,7 @@ ACT.signOut = () => { if (HOST) HOST.signOut(); };
 let cmdItems = [], cmdSel = 0;
 function cmdResults(q) {
   const k = key(q), out = [];
-  const screens = [["new-order", "New order", "plus"], ["home", "Home", "home"], ["orders", "Orders", "orders"], ["dispatch", "Dispatch", "truck"], ["quick", "Quick commerce", "bolt"], ["stock", "Stock", "box"], ["replenish", "Replenishment", "cycle"], ["tod", "TOD & notes", "rupee"], ["logistics", "Logistics", "truck"], ["setup", "Setup", "gear"]].filter((x) => ROUTES[x[0]] && (CAN_EDIT || x[0] !== "new-order"));
+  const screens = [["new-order", "New order", "plus"], ["home", "Home", "home"], ["orders", "Orders", "orders"], ["dispatch", "Dispatch", "truck"], ["quick", "Quick commerce", "bolt"], ["stock", "Stock", "box"], ["replenish", "Replenishment", "cycle"], ["tod", "TOD & notes", "rupee"], ["logistics", "Logistics", "truck"], ["accounts", "Accounts", "book"], ["setup", "Setup", "gear"]].filter((x) => ROUTES[x[0]] && (CAN_EDIT || x[0] !== "new-order"));
   screens.filter((s) => !k || key(s[1]).includes(k)).forEach((s) => out.push({ sec: "Go to", icon: s[2], label: s[1], run: () => { if (s[0] === "new-order") ACT.newOrder(); else go(s[0]); } }));
   if (k) {
     D.distributors.filter((d) => key(d.name + " " + d.short).includes(k)).slice(0, 5).forEach((d) => out.push(!CAN_EDIT ? { sec: "Distributors", icon: "people", label: d.name, hint: d.district, run: () => ACT.distSheet({ dataset: { name: d.name } }) } : { sec: "Distributors", icon: "people", label: "New order for " + d.name, hint: d.district, run: () => ACT.orderFor({ dataset: { name: d.name } }) }));
@@ -4726,7 +4731,9 @@ function afterRender() { bindCharts(); }
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
 const VIEW_ACTS = new Set("purF purExcel purOpen hpoPdf itemExcel reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("stkDate stkMonth ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
-const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
+/* the books: anyone who sees them can look (acv…); owners and the accountant can enter (ace…); staff and owners can also record invoice numbers at dispatch */
+const acOK = (n) => /^acv/.test(n || "") || (ROLE === "accountant" && /^ace/.test(n || ""));
+const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) || acOK(el.dataset.act) : VIEW_INS.has(el.dataset.in) || acOK(el.dataset.in));
 function viewOnlyMark(root) {
   if (CAN_EDIT || !root || !root.querySelectorAll) return;
   const els = [...root.querySelectorAll("[data-act],[data-in],form input,form select,form textarea")]; if (root.matches && root.matches("[data-act],[data-in]")) els.push(root);
@@ -4739,7 +4746,7 @@ if (!CAN_EDIT) {
   const st = document.createElement("style"); st.textContent = ".vo-off{opacity:.4!important;cursor:not-allowed!important}"; document.head.appendChild(st);
   new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1) viewOnlyMark(n); }))).observe(document.body, { childList: true, subtree: true });
 }
-document.addEventListener("click", (e) => { const el = e.target.closest("[data-act]"); if (!el) return; if (!viewOK(el)) { e.preventDefault(); toast("View only: you can look, but not change anything", "info"); return; } const fn = ACT[el.dataset.act]; if (fn) afterAsync(fn(el, e)); });
+document.addEventListener("click", (e) => { const el = e.target.closest("[data-act]"); if (!el) return; if (!viewOK(el)) { e.preventDefault(); toast(ROLE === "accountant" ? "The accountant login changes only the books (Accounts)" : "View only: you can look, but not change anything", "info"); return; } const fn = ACT[el.dataset.act]; if (fn) afterAsync(fn(el, e)); });
 document.addEventListener("input", (e) => { const el = e.target.closest("[data-in]"); if (!el) return; if (!viewOK(el)) return; const fn = IN[el.dataset.in]; if (fn) afterAsync(fn(el, e)); });
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if ($("#cmd")) closeCmd(); else ACT.cmd(); return; }
@@ -6184,6 +6191,1193 @@ ACT.tripJoinTo = (el) => {
   S.join = null; closeSheet(); render(); toast(`Added to the trip of ${fmtDate(t.date)} · no new trip needed`, "truck");
 };
 
+/* ===== ACCOUNTS: the books, worked out from what the tool already records =====
+   Nothing is typed twice. Every dispatched order, Swiggy / Zepto delivery, Hangyo purchase, credit or debit note,
+   logistics trip and TOD receipt becomes an accounting entry on its own date. What the tool cannot know (money
+   received and paid, expenses, partners' capital, opening balances) is entered as a voucher, or comes from the
+   bank statement. Reports (profit and loss, balance sheet, trial balance, ledgers, party statements, GST) are
+   worked out from those entries every time they are opened, so they always match the rest of the tool.
+   Invoice numbers come from Vyapar for now: the tool records them against each dispatch.
+   Amounts: an entry line is { a: account id, v: amount }, v > 0 is a debit and v < 0 a credit. */
+ICONS.book = '<path d="M5 5.5A2 2 0 0 1 7 3.5h11.5v14H7a2 2 0 0 0-2 2z"/><path d="M5 19.5a2 2 0 0 0 2 2h11.5v-4"/><path d="M9 8h6"/>';
+ICONS.bank = '<path d="m3.5 9 8.5-5 8.5 5"/><path d="M5 9.5v8M9.5 9.5v8M14.5 9.5v8M19 9.5v8"/><path d="M3.5 20h17"/>';
+const AC_STATE = "32"; /* Kerala */
+const AC_GST = 0.05;
+const AC_BOOKS_FROM = "2026-04-01";
+const AC_CAN = ROLE === "owner" || ROLE === "accountant"; /* can enter vouchers and set the books up */
+const AC_SEE = SEE_MONEY; /* owners, accountants and viewers see the books */
+
+/* ---------- groups: plain words first, the accounting term under it ---------- */
+const AC_GROUPS = [
+  ["bank", "Bank accounts", "Bank accounts", "A"], ["cash", "Cash", "Cash-in-hand", "A"], ["debtors", "Money owed to us", "Sundry debtors", "A"],
+  ["stock", "Stock", "Stock-in-hand", "A"], ["taxin", "GST paid on purchases", "Input tax credit", "A"], ["advances", "Deposits and advances given", "Loans and advances (asset)", "A"],
+  ["fixed", "Fixed assets", "Fixed assets", "A"], ["curasset", "Other assets", "Other current assets", "A"],
+  ["capital", "Partners' capital", "Capital account", "L"], ["loans", "Loans taken", "Loans (liability)", "L"], ["creditors", "Money we owe", "Sundry creditors", "L"],
+  ["taxout", "GST collected on sales", "Duties and taxes", "L"], ["deposits", "Deposits from distributors", "Security deposits received", "L"], ["curliab", "Other liabilities", "Current liabilities and provisions", "L"],
+  ["sales", "Sales", "Sales accounts", "I"], ["income", "Other income", "Indirect incomes", "I"],
+  ["purchases", "Purchases", "Purchase accounts", "E"], ["direct", "Direct costs", "Direct expenses", "E"], ["expenses", "Running costs", "Indirect expenses", "E"],
+];
+const AC_GROUP = {}; AC_GROUPS.forEach(([id, label, formal, side]) => (AC_GROUP[id] = { id, label, formal, side }));
+const AC_PL = (g) => ["I", "E"].includes((AC_GROUP[g] || {}).side);
+/* accounts the tool posts to itself */
+const AC_SYS = [
+  ["sales-gt", "Sales to distributors", "sales"], ["sales-qc", "Sales to Swiggy and Zepto", "sales"], ["sales-ret", "Sales returns and rate differences", "sales"],
+  ["purchases", "Purchases from Hangyo", "purchases"], ["pur-ret", "Purchase returns to Hangyo", "purchases"],
+  ["out-cgst", "Output CGST", "taxout"], ["out-sgst", "Output SGST", "taxout"], ["out-igst", "Output IGST", "taxout"],
+  ["in-cgst", "Input CGST", "taxin"], ["in-sgst", "Input SGST", "taxin"], ["in-igst", "Input IGST", "taxin"],
+  ["tod-claim", "TOD to get from Hangyo", "curasset"], ["tod-income", "TOD support from Hangyo", "income"], ["hangyo-cn", "Other credit notes from Hangyo", "income"],
+  ["freight", "Transport (logistics trips)", "expenses"], ["round", "Rounding off", "expenses"],
+  ["cash", "Cash in hand", "cash"], ["stock", "Opening stock", "stock"], ["suspense", "Not yet sorted (suspense)", "curliab"],
+];
+/* everyday ledgers offered from the start; more can be added */
+const AC_STARTER = [
+  ["x:capital", "Partners' capital", "capital"], ["x:salaries", "Salaries and wages", "expenses"], ["x:rent", "Rent", "expenses"], ["x:storage", "Cold storage charges", "direct"],
+  ["x:loading", "Loading and unloading", "direct"], ["x:fuel", "Fuel and vehicle running", "expenses"], ["x:power", "Electricity", "expenses"], ["x:phone", "Phone and internet", "expenses"],
+  ["x:bankchg", "Bank charges", "expenses"], ["x:prof", "Professional and accounting fees", "expenses"], ["x:office", "Office and general expenses", "expenses"], ["x:repairs", "Freezer repairs and maintenance", "expenses"],
+  ["x:interest", "Interest received", "income"], ["x:freezers", "Freezers", "fixed"], ["x:tds", "TDS receivable", "curasset"], ["x:gstpaid", "GST paid to the government (cash ledger)", "curasset"],
+];
+
+/* ---------- the stored part: D.acct ---------- */
+function acStore() {
+  if (!D.acct || typeof D.acct !== "object") D.acct = {};
+  const A = D.acct;
+  A.from = A.from || AC_BOOKS_FROM; A.ledgers = A.ledgers || []; A.opening = A.opening || {}; A.vouchers = A.vouchers || []; A.parties = A.parties || {};
+  A.stockAt = A.stockAt || {}; A.bank = A.bank || { stmts: [] }; A.bank.stmts = A.bank.stmts || []; A.imports = A.imports || [];
+  return A;
+}
+/* reading must not create the stored part (a viewer, or a page that never touches the books) */
+const AC = () => D.acct || { from: AC_BOOKS_FROM, ledgers: [], opening: {}, vouchers: [], parties: {}, stockAt: {}, bank: { stmts: [] }, imports: [] };
+let AC_N = 0;
+const acId = (p) => p + "-" + Date.now().toString(36) + (AC_N++).toString(36) + Math.random().toString(36).slice(2, 5);
+const acR2 = (n) => Math.round((+n || 0) * 100) / 100;
+const acFY = (d) => { const y = +d.slice(0, 4), m = +d.slice(5, 7); return m >= 4 ? y : y - 1; };
+const acFYLabel = (y) => `${y}-${String(y + 1).slice(2)}`;
+const acFYStart = (d) => `${acFY(d)}-04-01`;
+
+/* the day the tool's own sales take over from the Vyapar sales copied in before it */
+function acToolFrom() {
+  const A = AC(); if (A.toolFrom) return A.toolFrom;
+  let m = "9999-12-31"; D.orders.forEach((o) => { if (o.status === "Dispatched" && o.dispatched && o.dispatched.slice(0, 10) < m) m = o.dispatched.slice(0, 10); });
+  (D.salesBefore || []).forEach((r) => { if (r.date >= m) m = addDays(r.date, 1); });
+  return m;
+}
+
+/* ---------- parties ---------- */
+const acPartyId = (name) => "p:" + canonDist(name);
+function acPartyInfo(name) {
+  const n = canonDist(name), P = AC().parties[n] || {}, d = distByKey[key(n)] || {};
+  const gstin = String(P.gstin || d.gstin || "").toUpperCase().replace(/\s+/g, "");
+  return { name: n, gstin, state: gstin.slice(0, 2) || P.state || (n === "Hangyo" ? P.state || "" : AC_STATE), addr: P.addr || "", dist: !!distByKey[key(n)] };
+}
+const acGstinOK = (g) => /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(String(g || ""));
+/* inter-state when the party's GSTIN is from another state */
+const acInter = (name) => { const p = acPartyInfo(name); return !!(p.state && p.state !== AC_STATE); };
+const AC_NO_TR = "Transporter not named";
+const AC_CREDITOR = (n) => /^hangyo$/i.test(n) || (D.logistics && (D.logistics.transporters || []).some((t) => key(t.name) === key(n)));
+
+/* ---------- the chart of accounts ---------- */
+function acAccounts() {
+  const A = AC(), out = {};
+  const add = (id, name, group, extra) => { if (!out[id]) out[id] = Object.assign({ id, name, group }, extra || {}); return out[id]; };
+  AC_SYS.forEach(([id, name, g]) => add(id, name, g, { sys: true }));
+  AC_STARTER.forEach(([id, name, g]) => add(id, name, g, { starter: true }));
+  A.ledgers.forEach((l) => { if (l.deleted) return; out[l.id] = Object.assign({}, out[l.id] || {}, l); });
+  D.distributors.forEach((d) => add(acPartyId(d.name), d.name, "debtors", { party: d.name }));
+  ["Swiggy", "Zepto"].forEach((p) => add(acPartyId(p), p, "debtors", { party: p, platform: true }));
+  add(acPartyId("Hangyo"), "Hangyo Ice Creams", "creditors", { party: "Hangyo" });
+  ((D.logistics && D.logistics.transporters) || []).forEach((t) => add(acPartyId(t.name), t.name, "creditors", { party: t.name }));
+  /* anyone else the records name: a transporter only on a trip, a party only in the Vyapar sales or a note */
+  ((D.logistics && D.logistics.trips) || []).forEach((t) => { const n = t.transporter || AC_NO_TR; add(acPartyId(n), n, "creditors", { party: n }); });
+  (D.salesBefore || []).forEach((r) => { const n = canonDist(r.dist); add(acPartyId(n), n, "debtors", { party: n }); });
+  (D.notes || []).forEach((r) => { if (!r.party) return; const n = canonDist(r.party); add(acPartyId(n), n, "debtors", { party: n }); });
+  return out;
+}
+const acName = (id, ACC) => ((ACC || acAccounts())[id] || {}).name || (String(id).startsWith("p:") ? String(id).slice(2) : id);
+
+/* ---------- GST split ---------- */
+function acTaxLines(taxable, inter, out) {
+  const t = acR2(taxable * AC_GST), p = out ? "out-" : "in-";
+  if (inter) return [{ a: p + "igst", v: t, tax: "igst" }];
+  const c = acR2(t / 2); return [{ a: p + "cgst", v: c, tax: "cgst" }, { a: p + "sgst", v: acR2(t - c), tax: "sgst" }];
+}
+/* an invoice: party debited with the rounded total, sales and GST credited, the paise to rounding */
+function acInvoice(sign, party, salesAcc, taxable, inter, round) {
+  const tax = acTaxLines(taxable, inter, true), gross = acR2(taxable + tax.reduce((a, l) => a + l.v, 0)), tot = round ? Math.round(gross) : gross;
+  const L = [{ a: acPartyId(party), v: sign * tot }, { a: salesAcc, v: -sign * acR2(taxable) }].concat(tax.map((l) => ({ a: l.a, v: -sign * l.v, tax: l.tax })));
+  if (Math.abs(tot - gross) > 0.001) L.push({ a: "round", v: -sign * acR2(tot - gross) });
+  return { lines: L, total: tot, taxable: acR2(taxable), tax };
+}
+
+/* ---------- every entry, from the records and the vouchers ---------- */
+let AC_CACHE = null, AC_CACHE_T = 0;
+const acDirty = () => { AC_CACHE = null; };
+function acEntries() {
+  if (AC_CACHE && Date.now() - AC_CACHE_T < 800) return AC_CACHE;
+  const A = AC(), E = [], from = A.from, tf = acToolFrom();
+  const push = (e) => { if (!e.date || e.date < from) return; e.lines = e.lines.filter((l) => Math.abs(l.v) > 0.004); if (e.lines.length) E.push(e); };
+  /* 1. sales from Vyapar, before the tool took over: one entry per invoice */
+  const vy = {}; (D.salesBefore || []).forEach((r) => { if (r.date >= tf) return; const k = r.inv || r.date + "|" + r.dist; const x = (vy[k] = vy[k] || { inv: r.inv, date: r.date, dist: canonDist(r.dist), cn: r.type === "Credit Note", value: 0, n: 0, crates: 0 }); x.value += r.value || 0; x.n++; x.crates += r.crates || 0; });
+  Object.values(vy).forEach((x) => {
+    const sg = x.cn ? -1 : 1, I = acInvoice(sg, x.dist, x.cn ? "sales-ret" : "sales-gt", Math.abs(x.value), acInter(x.dist), true);
+    push({ id: "vy:" + (x.inv || x.date), date: x.date, kind: x.cn ? "cnote" : "sale", no: x.inv || "", party: x.dist, text: `${x.cn ? "Credit note" : "Invoice"} from Vyapar · ${x.n} line${x.n === 1 ? "" : "s"} · ${nf(Math.abs(x.crates), 1)} crates`, lines: I.lines, taxable: sg * I.taxable, tax: I.tax.map((t) => ({ k: t.tax, v: sg * t.v })), total: sg * I.total, src: { t: "vyapar", ref: x.inv } });
+  });
+  /* 2. distributor orders, on the day they were dispatched */
+  D.orders.forEach((o) => {
+    if (o.status !== "Dispatched" || !o.dispatched) return; const d = o.dispatched.slice(0, 10); if (d < tf) return;
+    const L = linesByOrder[o.id] || [], val = L.length ? L.reduce((a, l) => a + (l.value || 0), 0) : o.value || 0, tod = L.length ? L.reduce((a, l) => a + (l.tod || 0), 0) : o.tod || 0;
+    const I = acInvoice(1, o.dist, "sales-gt", val, acInter(o.dist), true);
+    push({ id: "ord:" + o.id, date: d, kind: "sale", no: o.inv || "", party: canonDist(o.dist), text: `Invoice for order ${o.id.replace("ORD-", "")} · ${L.length} line${L.length === 1 ? "" : "s"} · ${nf(o.crates || 0, 1)} crates`, lines: I.lines, taxable: I.taxable, tax: I.tax.map((t) => ({ k: t.tax, v: t.v })), total: I.total, src: { t: "order", ref: o.id }, ewb: o.ewb || "" });
+    if (tod > 0.004) push({ id: "tod:" + o.id, date: d, kind: "tod", no: "", party: "Hangyo", text: `TOD Hangyo pays for special prices on order ${o.id.replace("ORD-", "")} (${o.dist})`, lines: [{ a: "tod-claim", v: acR2(tod) }, { a: "tod-income", v: -acR2(tod) }], src: { t: "order", ref: o.id } });
+  });
+  /* 3. Swiggy / Zepto: on the delivery date, at the value they accepted */
+  D.qcPOs.forEach((p) => {
+    if (!p.deliveredOn || !(p.valueAccepted > 0)) return; const d = p.deliveredOn.slice(0, 10), plat = /zepto/i.test(p.platform) ? "Zepto" : "Swiggy";
+    const I = acInvoice(1, plat, "sales-qc", p.valueAccepted, acInter(plat), true);
+    push({ id: "qc:" + p.po, date: d, kind: "sale", no: p.inv || "", party: plat, text: `${plat} PO ${p.po} · ${nf(p.pcsAccepted || 0)} pieces accepted`, lines: I.lines, taxable: I.taxable, tax: I.tax.map((t) => ({ k: t.tax, v: t.v })), total: I.total, src: { t: "qc", ref: p.po } });
+  });
+  /* 4. credit and debit notes */
+  (D.notes || []).forEach((n) => {
+    if (n.status !== "Active") return; const d = (n.date || n.time || "").slice(0, 10), amt = Math.abs(+n.amount || Math.abs(+n.sales || 0)), k = /debit note to hangyo/i.test(n.type) ? "pret" : /hangyo credit note/i.test(n.type) ? "hcn" : /debit note to distributor/i.test(n.type) ? "dnote" : "cnote";
+    if (!(amt > 0)) return;
+    if (k === "cnote" || k === "dnote") {
+      const sg = k === "cnote" ? -1 : 1, inter = acInter(n.party), tl = acTaxLines(amt, inter, true), t0 = tl.reduce((a, t) => a + t.v, 0), f = n.gst != null && t0 > 0 ? Math.abs(+n.gst) / t0 : 1;
+      const tax = tl.map((t) => ({ a: t.a, tax: t.tax, v: acR2(t.v * f) })), tot = acR2(amt + tax.reduce((a, t) => a + t.v, 0));
+      const lines = [{ a: acPartyId(n.party), v: sg * tot }, { a: "sales-ret", v: -sg * amt }].concat(tax.map((t) => ({ a: t.a, v: -sg * t.v, tax: t.tax })));
+      push({ id: "note:" + n.id, date: d, kind: k, no: n.no || "", party: canonDist(n.party), text: `${k === "cnote" ? "Credit note" : "Debit note"} · ${n.reason || n.type}`, lines, taxable: sg * amt, tax: tax.map((t) => ({ k: t.tax, v: sg * t.v })), total: sg * tot, src: { t: "note", ref: n.id } });
+    } else {
+      const inter = acInter("Hangyo"), tl = acTaxLines(amt, inter, false), gst = n.gst != null ? Math.abs(+n.gst) : tl.reduce((a, t) => a + t.v, 0), f = gst / Math.max(0.01, tl.reduce((a, t) => a + t.v, 0));
+      const lines = [{ a: acPartyId("Hangyo"), v: acR2(amt + gst) }, { a: k === "pret" ? "pur-ret" : "hangyo-cn", v: -amt }].concat(tl.map((t) => ({ a: t.a, v: -acR2(t.v * f), tax: t.tax })));
+      push({ id: "note:" + n.id, date: d, kind: k, no: n.no || "", party: "Hangyo", text: k === "pret" ? "Debit note to Hangyo (stock returned)" : "Credit note from Hangyo", lines, itc: tl.map((t) => ({ k: t.tax, v: -acR2(t.v * f) })), taxable: -amt, src: { t: "note", ref: n.id } });
+    }
+  });
+  /* 5. purchases from Hangyo, on the invoice date */
+  const pin = {}; D.purchases.forEach((p) => { if (p.supplier !== "Hangyo" || !(p.value > 0)) return; const x = (pin[p.id] = pin[p.id] || { id: p.id, inv: p.inv, date: String(p.invDate || p.time).slice(0, 10), value: 0, n: 0, crates: 0, qc: /QC/i.test(p.pool || "") }); x.value += +p.value || 0; x.n++; x.crates += +p.crates || 0; });
+  Object.values(pin).forEach((x) => {
+    const tl = acTaxLines(x.value, acInter("Hangyo"), false), tot = acR2(x.value + tl.reduce((a, l) => a + l.v, 0));
+    push({ id: "pur:" + x.id, date: x.date, kind: "purchase", no: x.inv && x.inv !== "Pending" ? x.inv : "", party: "Hangyo", text: `Hangyo invoice · ${x.n} line${x.n === 1 ? "" : "s"} · ${nf(x.crates, 1)} crates${x.qc ? " · quick commerce stock" : ""}`, lines: [{ a: "purchases", v: acR2(x.value) }].concat(tl.map((l) => ({ a: l.a, v: l.v, tax: l.tax })), [{ a: acPartyId("Hangyo"), v: -tot }]), itc: tl.map((l) => ({ k: l.tax, v: l.v })), taxable: acR2(x.value), total: tot, src: { t: "purchase", ref: x.id } });
+  });
+  /* 6. logistics trips: the transporter's charge */
+  ((D.logistics && D.logistics.trips) || []).forEach((t) => {
+    if (!(t.cost > 0)) return; const tr = t.transporter || AC_NO_TR;
+    push({ id: "trip:" + t.id, date: t.date, kind: "freight", no: "", party: tr, text: `Trip · ${t.sellers || t.type || ""} · ${nf(t.crates || 0)} crates${t.km ? " · " + nf(t.km) + " km" : ""}`, lines: [{ a: "freight", v: acR2(t.cost) }, { a: acPartyId(tr), v: -acR2(t.cost) }], src: { t: "trip", ref: t.id } });
+  });
+  /* 7. TOD Hangyo has paid (it reduces what we owe Hangyo) */
+  ((D.tod && D.tod.receipts) || []).forEach((r, i) => {
+    if (!(r.amount > 0)) return; const ap = acR2(r.applied != null ? r.applied : r.amount), ex = acR2(r.amount - ap);
+    push({ id: "todr:" + (r.ref || r.date) + ":" + i, date: (r.date || "").slice(0, 10), kind: "todr", no: r.ref || "", party: "Hangyo", text: `TOD from Hangyo${r.month ? " for " + stkMonthName(r.month) : ""}`, lines: [{ a: acPartyId("Hangyo"), v: acR2(r.amount) }, { a: "tod-claim", v: -ap }, { a: "tod-income", v: -ex }], src: { t: "tod", ref: r.ref } });
+  });
+  /* 8. vouchers entered in Accounts (receipts, payments, expenses, journals, contra, imports) */
+  A.vouchers.forEach((v) => { if (v.deleted) return; push({ id: "v:" + v.id, date: v.date, kind: v.type, no: v.no || "", party: v.party || "", text: v.text || "", lines: v.lines.map((l) => ({ a: l.a, v: +l.v || 0, tax: l.tax })), itc: v.itc, taxable: v.taxable, total: v.total, src: { t: "voucher", ref: v.id }, v }); });
+  E.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : AC_ORDER[a.kind] - AC_ORDER[b.kind]));
+  AC_CACHE = E; AC_CACHE_T = Date.now();
+  return E;
+}
+const AC_ORDER = { opening: 0, purchase: 1, sale: 2, cnote: 3, dnote: 3, pret: 3, hcn: 3, tod: 4, todr: 4, freight: 5, expense: 6, journal: 7, receipt: 8, payment: 8, contra: 9 };
+const AC_KIND = { sale: "Sale", purchase: "Purchase", cnote: "Credit note", dnote: "Debit note", pret: "Purchase return", hcn: "Hangyo credit note", tod: "TOD due", todr: "TOD received", freight: "Transport", receipt: "Money in", payment: "Money out", expense: "Expense", journal: "Journal", contra: "Bank / cash transfer" };
+
+/* ---------- balances ---------- */
+/* each account's opening (start of `from`), debits, credits and closing (end of `to`) */
+function acBalances(from, to) {
+  const A = AC(), B = {}, b = (id) => (B[id] = B[id] || { open: 0, dr: 0, cr: 0, close: 0 });
+  Object.keys(A.opening).forEach((id) => { const v = +A.opening[id] || 0; if (v) b(id).open += v; });
+  acEntries().forEach((e) => {
+    if (e.date > to) return;
+    e.lines.forEach((l) => { const x = b(l.a); if (e.date < from) x.open += l.v; else if (l.v > 0) x.dr += l.v; else x.cr -= l.v; });
+  });
+  Object.values(B).forEach((x) => { x.open = acR2(x.open); x.dr = acR2(x.dr); x.cr = acR2(x.cr); x.close = acR2(x.open + x.dr - x.cr); });
+  return B;
+}
+/* the opening balances must balance; whatever does not, shows as a difference (like any accounts package) */
+const acOpeningDiff = () => acR2(Object.values(AC().opening).reduce((a, v) => a + (+v || 0), 0));
+
+/* ---------- stock value (at cost, excl. GST) at the end of a day ---------- */
+function acStockQtyValue(d) {
+  const pts = stkPoints(), T = d + "T23:59", own = stkValueAt(T, "own", pts).v, qc = stkValueAt(T, "qc", pts).v; let v = 0, miss = 0;
+  Object.keys(own).forEach((sap) => { const q = Math.max(0, own[sap] || 0), uc = unitCost(sap); if (q && uc == null) miss++; v += q * (uc || 0); });
+  Object.keys(qc).forEach((sap) => { const q = Math.max(0, qc[sap] || 0), u = stkUpc(sap), uc = unitCost(sap); if (q && uc == null) miss++; v += q * u * (uc || 0); });
+  return { v: acR2(v), miss };
+}
+/* the closing stock: a figure the accountant entered for that day wins; before the tool's stock records began, nothing is worked out */
+function acStockAt(d) {
+  const A = AC(); if (A.stockAt[d] != null) return { v: +A.stockAt[d], how: "entered" };
+  if (d < A.from) return { v: 0, how: "none" };
+  if (d === addDays(A.from, -1)) return { v: +A.opening.stock || 0, how: "opening" };
+  const first = acStockFirst(); if (first && d < first) return { v: null, how: "before" };
+  const x = acStockQtyValue(d); return { v: x.v, how: "tool", miss: x.miss };
+}
+/* the first day the tool knows the stock: the day before the first Hangyo purchase it recorded */
+function acStockFirst() { let m = ""; D.purchases.forEach((p) => { const d = String(p.invDate || p.time).slice(0, 10); if (p.supplier === "Hangyo" && (!m || d < m)) m = d; }); return m ? addDays(m, 0) : ""; }
+
+/* sales before the tool's first Hangyo purchase, with no purchases of that time in the books: profit would be overstated */
+function acPurGap(from, to) {
+  const first = acStockFirst(), A = AC(); if (!first || from >= first || A.vyDone) return null;
+  const E = acEntries(), sold = E.some((e) => e.kind === "sale" && e.date >= from && e.date < first && e.date <= to), bought = E.some((e) => e.date < first && e.lines.some((l) => l.a === "purchases" && l.v > 0));
+  return sold && !bought ? first : null;
+}
+/* ---------- profit and loss ---------- */
+function acPL(from, to) {
+  const A = AC(), B = acBalances(from, to), ACC = acAccounts(), mv = (id) => acR2((B[id] ? B[id].dr - B[id].cr : 0));
+  const ofGroup = (g) => Object.keys(B).filter((id) => (ACC[id] || {}).group === g && Math.abs(B[id].dr - B[id].cr) > 0.004).map((id) => ({ id, name: acName(id, ACC), v: mv(id) }));
+  const sales = ofGroup("sales"), salesNet = -sales.reduce((a, x) => a + x.v, 0);
+  const purch = ofGroup("purchases"), purNet = purch.reduce((a, x) => a + x.v, 0), direct = ofGroup("direct"), directT = direct.reduce((a, x) => a + x.v, 0);
+  const os = from <= A.from ? { v: +A.opening.stock || 0, how: "opening" } : acStockAt(addDays(from, -1)), cs = acStockAt(to);
+  const cogs = (os.v || 0) + purNet + directT - (cs.v || 0), gp = salesNet - cogs;
+  const inc = ofGroup("income"), incT = -inc.reduce((a, x) => a + x.v, 0), exp = ofGroup("expenses"), expT = exp.reduce((a, x) => a + x.v, 0);
+  const np = gp + incT - expT;
+  return { from, to, purGap: acPurGap(from, to), sales, salesNet: acR2(salesNet), purch, purNet: acR2(purNet), direct, directT: acR2(directT), os, cs, cogs: acR2(cogs), gp: acR2(gp), inc, incT: acR2(incT), exp, expT: acR2(expT), np: acR2(np), stockGap: os.v == null || cs.v == null };
+}
+
+/* ---------- balance sheet as on a day ---------- */
+function acBS(d) {
+  const A = AC(), B = acBalances(A.from, d), ACC = acAccounts(), fy = acFYStart(d) > A.from ? acFYStart(d) : A.from;
+  const cur = acPL(fy, d), before = fy > A.from ? acPL(A.from, addDays(fy, -1)) : null;
+  const sides = { A: {}, L: {} }; let gstNet = 0;
+  Object.keys(B).forEach((id) => {
+    const a = ACC[id] || { name: id, group: id.startsWith("p:") ? "debtors" : "curliab" }, g = AC_GROUP[a.group]; if (!g || AC_PL(a.group) || id === "stock") return;
+    const bal = B[id].close; if (Math.abs(bal) < 0.005) return;
+    if (a.group === "taxin" || a.group === "taxout") { gstNet += bal; return; }
+    /* a party who has paid in advance (or whom we have overpaid) sits on the other side */
+    const side = (a.group === "debtors" || a.group === "creditors") ? (bal > 0 ? "A" : "L") : g.side, gid = (a.group === "debtors" && bal < 0) ? "advrecv" : (a.group === "creditors" && bal > 0) ? "advpaid" : a.group;
+    (sides[side][gid] = sides[side][gid] || []).push({ id, name: a.name, v: side === "A" ? bal : -bal });
+  });
+  if (Math.abs(gstNet) > 0.004) (gstNet > 0 ? (sides.A.gst = [{ id: "gst", name: "GST credit to carry forward", v: acR2(gstNet) }]) : (sides.L.gst = [{ id: "gst", name: "GST to pay", v: acR2(-gstNet) }]));
+  const cs = acStockAt(d); if (cs.v) sides.A.stock = [{ id: "stock", name: "Closing stock", v: cs.v, how: cs.how }];
+  const prof = [{ id: "pl-cur", name: `Profit this year (FY ${acFYLabel(acFY(d))} to ${fmtDate(d)})`, v: cur.np }];
+  if (before) prof.unshift({ id: "pl-before", name: "Profit of earlier years", v: before.np });
+  sides.L.profit = prof;
+  const od = acOpeningDiff(); if (Math.abs(od) > 0.004) sides.L.diff = [{ id: "diff", name: "Difference in opening balances", v: od }];
+  const tot = (s) => acR2(Object.values(s).reduce((a, L) => a + L.reduce((b, x) => b + x.v, 0), 0));
+  return { d, sides, assets: tot(sides.A), liab: tot(sides.L), pl: cur, stockGap: cs.v == null };
+}
+
+/* ---------- a party's account: invoices, notes, money in and out, with what is still open (oldest first) ---------- */
+function acLedger(id, from, to) {
+  const A = AC(), rows = []; let open = +A.opening[id] || 0;
+  acEntries().forEach((e) => {
+    if (e.date > to) return; const v = e.lines.filter((l) => l.a === id).reduce((a, l) => a + l.v, 0); if (Math.abs(v) < 0.004) return;
+    if (e.date < from) { open += v; return; }
+    rows.push({ e, v: acR2(v) });
+  });
+  let run = acR2(open); rows.forEach((r) => { run = acR2(run + r.v); r.bal = run; });
+  return { id, open: acR2(open), rows, close: run, dr: acR2(rows.reduce((a, r) => a + Math.max(0, r.v), 0)), cr: acR2(rows.reduce((a, r) => a + Math.max(0, -r.v), 0)) };
+}
+/* what a distributor still owes, bill by bill: payments and credit notes clear the oldest bills first */
+function acOpenBills(party, to) {
+  const id = acPartyId(party), L = acLedger(id, AC().from, to || ymd(NOW())), bills = [], open0 = L.open; let credit = 0;
+  if (open0 > 0.004) bills.push({ date: AC().from, no: "Opening balance", amt: open0, left: open0 }); else credit -= open0;
+  L.rows.forEach((r) => { if (r.v > 0) bills.push({ date: r.e.date, no: r.e.no || AC_KIND[r.e.kind] || "", amt: r.v, left: r.v, e: r.e }); else credit += -r.v; });
+  bills.forEach((b) => { const use = Math.min(b.left, credit); b.left = acR2(b.left - use); credit = acR2(credit - use); });
+  return { bills: bills.filter((b) => b.left > 0.004), advance: acR2(credit), bal: L.close };
+}
+let AC_AGE = null;
+function acAgeing(to) {
+  const today = to || ymd(NOW()), E = acEntries(); if (AC_AGE && AC_AGE.E === E && AC_AGE.d === today && AC_AGE.op === JSON.stringify(AC().opening)) return AC_AGE.out;
+  const out = []; AC_AGE = { E, d: today, op: JSON.stringify(AC().opening), out };
+  Object.values(acAccounts()).filter((a) => a.group === "debtors").forEach((a) => {
+    const O = acOpenBills(a.party || a.name, today); if (!O.bills.length && Math.abs(O.bal) < 0.5) return;
+    const credit = (distByKey[key(a.party || a.name)] || {}).credit || (a.platform ? 30 : 7), b = { d0: 0, d30: 0, d60: 0, d90: 0, overdue: 0, total: 0 };
+    O.bills.forEach((x) => { const age = daysBetween(x.date, today); b.total += x.left; if (age > credit) b.overdue += x.left; if (age <= 30) b.d0 += x.left; else if (age <= 60) b.d30 += x.left; else if (age <= 90) b.d60 += x.left; else b.d90 += x.left; });
+    const oldest = O.bills.length ? O.bills[0].date : null;
+    out.push(Object.assign({ id: a.id, name: a.name, party: a.party || a.name, credit, bills: O.bills, advance: O.advance, bal: O.bal, oldest }, b));
+  });
+  return out.sort((a, b) => b.total - a.total);
+}
+
+/* ---------- GST for a month (or any range) ---------- */
+function acGST(from, to) {
+  const out = { b2b: [], b2c: [], cdn: [], tax: { cgst: 0, sgst: 0, igst: 0 }, taxable: 0, itc: { cgst: 0, sgst: 0, igst: 0 }, itcTaxable: 0, purchases: [], missingNo: [], missingGstin: {}, hsn: {} };
+  acEntries().forEach((e) => {
+    if (e.date < from || e.date > to) return;
+    if (["sale", "cnote", "dnote"].includes(e.kind) && e.tax) {
+      const p = acPartyInfo(e.party), row = { e, party: e.party, gstin: p.gstin, no: e.no, date: e.date, taxable: e.taxable || 0, total: e.total || 0, cgst: 0, sgst: 0, igst: 0, inter: acInter(e.party) };
+      e.tax.forEach((t) => { row[t.k] += t.v; out.tax[t.k] += t.v; }); out.taxable += row.taxable;
+      if (!e.no) out.missingNo.push(row);
+      if (e.kind !== "sale") out.cdn.push(row); else if (acGstinOK(p.gstin)) out.b2b.push(row); else { out.b2c.push(row); if (!p.gstin) out.missingGstin[e.party] = (out.missingGstin[e.party] || 0) + 1; }
+    }
+    if (e.itc && e.itc.length) { const row = { e, party: e.party, no: e.no, date: e.date, taxable: e.taxable || 0, cgst: 0, sgst: 0, igst: 0 }; e.itc.forEach((t) => { row[t.k] += t.v; out.itc[t.k] += t.v; }); out.itcTaxable += row.taxable; out.purchases.push(row); }
+  });
+  /* HSN summary from the product lines behind the sales */
+  const add = (sap, name, qty, val) => { const st = stockBySap[sap] || catBySap[sap] || {}, h = String(st.hsn || "21050000"), x = (out.hsn[h] = out.hsn[h] || { hsn: h, desc: "Ice cream and other edible ice", qty: 0, taxable: 0 }); x.qty += qty || 0; x.taxable += val || 0; };
+  const tf = acToolFrom();
+  (D.salesBefore || []).forEach((r) => { if (r.date < from || r.date > to || r.date >= tf || r.date < AC().from) return; add(r.sap, r.product, r.ea, r.value); });
+  D.orders.forEach((o) => { if (o.status !== "Dispatched" || !o.dispatched) return; const d = o.dispatched.slice(0, 10); if (d < from || d > to || d < tf) return; (linesByOrder[o.id] || []).forEach((l) => add(l.sap, l.product, l.ea, l.value)); });
+  D.qcPOs.forEach((p) => { if (!p.deliveredOn || !(p.valueAccepted > 0)) return; const d = p.deliveredOn.slice(0, 10); if (d < from || d > to) return; const L = (qcLinesByPO[p.po] || []).filter((l) => l.accepted > 0); if (L.length) L.forEach((l) => { const ppc = l.ppc || (qcBySap[l.sap] || {}).ppc || 0; add(l.sap, l.product, ppc ? (l.accepted / ppc) * stkUpc(l.sap) : 0, l.valueAccepted != null ? l.valueAccepted : l.accepted * l.price); }); else add(null, "", 0, p.valueAccepted); });
+  ["cgst", "sgst", "igst"].forEach((k) => { out.tax[k] = acR2(out.tax[k]); out.itc[k] = acR2(out.itc[k]); });
+  out.taxable = acR2(out.taxable); out.itcTaxable = acR2(out.itcTaxable);
+  const outT = out.tax.cgst + out.tax.sgst + out.tax.igst, inT = out.itc.cgst + out.itc.sgst + out.itc.igst;
+  out.outTax = acR2(outT); out.inTax = acR2(inT); out.net = acR2(outT - inT);
+  return out;
+}
+
+/* ---------- vouchers ---------- */
+const AC_VTYPES = { receipt: ["Money in", "RV"], payment: ["Money out", "PV"], expense: ["Expense", "EV"], journal: ["Journal", "JV"], contra: ["Bank / cash transfer", "CV"] };
+function acNextNo(type, date) {
+  const p = AC_VTYPES[type] ? AC_VTYPES[type][1] : "V", fy = acFYLabel(acFY(date)), re = new RegExp("^" + p + "/" + fy + "/(\\d+)$"); let n = 0;
+  AC().vouchers.forEach((v) => { const m = String(v.no || "").match(re); if (m) n = Math.max(n, +m[1]); });
+  return `${p}/${fy}/${n + 1}`;
+}
+/* money accounts: banks first, then cash */
+const acMoneyAccs = () => Object.values(acAccounts()).filter((a) => a.group === "bank" || a.group === "cash").sort((a, b) => (a.group === b.group ? a.name.localeCompare(b.name) : a.group === "bank" ? -1 : 1));
+const acHasBank = () => Object.values(acAccounts()).some((a) => a.group === "bank");
+
+/* the next Vyapar invoice number, from the last one recorded */
+function acNextInv() {
+  let best = null; const re = /^(.*?)(\d+)$/;
+  const consider = (s) => { const m = String(s || "").trim().match(re); if (!m || !/FY/i.test(m[1])) return; if (!best || +m[2] > best.n) best = { p: m[1], n: +m[2] }; };
+  (D.salesBefore || []).forEach((r) => { if (r.type !== "Credit Note") consider(r.inv); }); D.orders.forEach((o) => consider(o.inv)); D.qcPOs.forEach((p) => consider(p.inv));
+  return best ? best.p + (best.n + 1) : "SR/FY26-27/1";
+}
+/* dispatches (and deliveries) that still need their Vyapar invoice number */
+function acToNumber() {
+  const tf = acToolFrom(), A = AC(), out = [];
+  D.orders.forEach((o) => { if (o.status === "Dispatched" && o.dispatched && o.dispatched.slice(0, 10) >= tf && o.dispatched.slice(0, 10) >= A.from && !o.inv) out.push({ t: "order", id: o.id, date: o.dispatched.slice(0, 10), party: o.dist, value: o.valueGst || (o.value || 0) * 1.05 }); });
+  D.qcPOs.forEach((p) => { if (p.deliveredOn && p.valueAccepted > 0 && !p.inv && p.deliveredOn.slice(0, 10) >= A.from) out.push({ t: "qc", id: p.po, date: p.deliveredOn.slice(0, 10), party: p.platform, value: p.valueAccepted * 1.05 }); });
+  return out.sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/* ===== ACCOUNTS: the screens =====
+   One place, six views: Overview, Day book, Parties, Reports (profit and loss, balance sheet, trial balance,
+   ledgers), GST and Bank. Read-only for viewers; owners and the accountant can enter vouchers. */
+const acAmt = (v, d) => (v == null || isNaN(v) ? "–" : (v < -0.004 ? "−" : "") + "₹" + (d === 0 ? inr0.format(Math.round(Math.abs(v))) : inr2.format(Math.abs(v))));
+const acDrCr = (v) => (Math.abs(v) < 0.005 ? "₹0.00" : `${acAmt(Math.abs(v))} <span class="ac-dc">${v > 0 ? "Dr" : "Cr"}</span>`);
+const acToday = () => ymd(NOW());
+/* the period shown: this financial year, a month, a quarter or any dates */
+function acRange() {
+  const F = (S.acP = S.acP || { preset: "fy" }), t = acToday(), A = AC();
+  const clamp = (d) => (d < A.from ? A.from : d);
+  if (F.preset === "custom" && F.from && F.to) return { from: clamp(F.from), to: F.to, label: `${fmtDate(F.from)} to ${fmtDate(F.to)}` };
+  if (F.preset === "month" || F.preset === "lastMonth") { const n = toDate(t), m = F.preset === "month" ? n.getMonth() : n.getMonth() - 1, d0 = new Date(n.getFullYear(), m, 1), d1 = new Date(n.getFullYear(), m + 1, 0), to = ymd(d1) > t ? t : ymd(d1); return { from: clamp(ymd(d0)), to, label: `${MONTH_LONG[d0.getMonth()]} ${d0.getFullYear()}` }; }
+  if (F.preset === "lastFy") { const y = acFY(t) - 1; return { from: clamp(`${y}-04-01`), to: `${y + 1}-03-31`, label: `FY ${acFYLabel(y)}` }; }
+  if (F.preset === "quarter") { const n = toDate(t), q = Math.floor(((n.getMonth() + 9) % 12) / 3), y = acFY(t), sm = 3 + q * 3, d0 = new Date(y, sm, 1), d1 = new Date(y, sm + 3, 0); return { from: clamp(ymd(d0)), to: ymd(d1) > t ? t : ymd(d1), label: `Q${q + 1} FY ${acFYLabel(y)}` }; }
+  const y = acFY(t); return { from: clamp(`${y}-04-01`), to: t, label: `FY ${acFYLabel(y)} so far` };
+}
+function acPeriodChips(withAsOn) {
+  const F = (S.acP = S.acP || { preset: "fy" }), R = acRange();
+  const ch = [["fy", "This year"], ["quarter", "This quarter"], ["month", "This month"], ["lastMonth", "Last month"], ["lastFy", "Last year"], ["custom", "Dates"]];
+  return `<div class="ac-period"><div class="chips" style="margin:0">${ch.map(([v, l]) => `<button class="chip" data-act="acvP" data-v="${v}" aria-pressed="${F.preset === v}">${l}</button>`).join("")}</div>
+    ${F.preset === "custom" ? `<div class="hstack gap-8 ac-dates"><input class="input sm" type="date" data-in="acvFrom" value="${esc(F.from || R.from)}" aria-label="From"><span class="dim">to</span><input class="input sm" type="date" data-in="acvTo" value="${esc(F.to || R.to)}" aria-label="To"></div>` : `<span class="row-sub">${withAsOn ? "As on " + fmtDate(R.to) + " " + R.to.slice(0, 4) : esc(R.label) + " · " + fmtDate(R.from) + " to " + fmtDate(R.to)}</span>`}</div>`;
+}
+ACT.acvP = (el) => { S.acP = S.acP || {}; S.acP.preset = el.dataset.v; if (el.dataset.v === "custom" && !S.acP.from) { const R = acRange(); S.acP.from = acFYStart(acToday()); S.acP.to = acToday(); } render(); };
+IN.acvFrom = (el) => { if (el.value) { S.acP.from = el.value; render(); } };
+IN.acvTo = (el) => { if (el.value) { S.acP.to = el.value; render(); } };
+
+/* ---------- the page ---------- */
+VIEWS.accounts = () => {
+  const tab = S.acTab || "overview";
+  const tabs = [["overview", "Overview"], ["daybook", "Day book"], ["parties", "Parties"], ["reports", "Reports"], ["gst", "GST"], ["bank", "Bank"]];
+  const body = { overview: acOverviewHtml, daybook: acDaybookHtml, parties: acPartiesHtml, reports: acReportsHtml, gst: acGstHtml, bank: acBankHtml }[tab] || acOverviewHtml;
+  return `<div class="page">
+    <div class="page-head"><div><h1 class="title">Accounts</h1><div class="subtitle">Your books, kept from the orders, deliveries, purchases and trips already in the tool. Books from ${fmtDate(AC().from)} ${AC().from.slice(0, 4)}.</div></div>
+      <div class="head-actions">${AC_CAN ? `<button class="btn btn-primary" data-act="aceNew">${ic("plus", "sm")} New entry</button>` : ""}<button class="btn btn-secondary" data-act="acvExcel">${ic("doc", "sm")} Download Excel</button></div></div>
+    <div class="ac-tabs">${seg("acTab", tab, tabs)}</div>
+    ${body()}
+  </div>`;
+};
+
+/* ---------- Overview ---------- */
+function acOverviewHtml() {
+  const R = acRange(), P = acPL(R.from, R.to), t = acToday(), B = acBalances(AC().from, t), ACC = acAccounts();
+  const money = acMoneyAccs().reduce((a, x) => a + ((B[x.id] || {}).close || 0), 0);
+  const age = acAgeing(t), owed = age.reduce((a, x) => a + x.total, 0), overdue = age.reduce((a, x) => a + x.overdue, 0);
+  const hang = -((B[acPartyId("Hangyo")] || {}).close || 0), mo = t.slice(0, 7), G = acGST(mo + "-01", t);
+  const gm = P.salesNet ? P.gp / P.salesNet : null, nm = P.salesNet ? P.np / P.salesNet : null;
+  const tile = (label, value, sub, cls, act) => `<${act ? `button data-act="${act}"` : "div"} class="tile${act ? " tile-btn" : ""}"><div class="tile-label"><span>${esc(label)}</span>${act ? ic("chevR", "sm dim") : ""}</div><div class="tile-value"${cls ? ` style="color:var(--${cls})"` : ""}>${value}</div><div class="tile-sub">${sub}</div></${act ? "button" : "div"}>`;
+  const todo = acTodo();
+  return `<div class="stack gap-16">
+    ${acPeriodChips()}
+    ${acSetupCard()}
+    <div class="tiles tiles-4">
+      ${tile("Sales", lakhS(P.salesNet) + "<small>L</small>", `Excl. GST, after returns · ${esc(R.label)}`, "", "acvGoPL")}
+      ${tile("Gross profit", lakhS(P.gp) + "<small>L</small>", P.purGap ? `<span style="color:var(--warn);font-weight:600">Not final:</span> Hangyo purchases before ${fmtDate(P.purGap)} are not in the books yet` : P.stockGap ? "Needs the stock figure · see below" : `${gm != null ? pct(gm, 1) + " of sales" : ""} · after cost of stock sold`, P.gp < 0 ? "bad" : "", "acvGoPL")}
+      ${tile("Net profit", lakhS(P.np) + "<small>L</small>", P.purGap ? `<span style="color:var(--warn);font-weight:600">Not final</span> · purchases before ${fmtDate(P.purGap)} missing` : `${nm != null ? pct(nm, 1) + " of sales · " : ""}after ₹${lakh(P.expT)} L running costs`, P.np < 0 ? "bad" : "good", "acvGoPL")}
+      ${tile("Cash and bank", rs(money), acHasBank() ? `${acMoneyAccs().length} account${acMoneyAccs().length === 1 ? "" : "s"} · as per the books today` : "Add your bank account to start", "", "acvGoBank")}
+      ${tile("Money owed to us", lakhS(owed) + "<small>L</small>", overdue > 0.5 ? `<span style="color:var(--bad);font-weight:600">${rs(overdue)} overdue</span> · ${age.filter((x) => x.overdue > 0.5).length} parties` : "Nothing overdue", "", "acvGoParties")}
+      ${tile("Money we owe Hangyo", rs(hang), hang > 0 ? "Purchases less payments, returns and TOD" : "Nothing due", "", "acvGoHangyo")}
+      ${tile(`GST for ${MONTH_LONG[+mo.slice(5) - 1]}`, rs(Math.max(0, G.net)), G.net >= 0 ? `To pay so far · output ${rs(G.outTax)} less credit ${rs(G.inTax)}` : `Credit to carry forward: ${rs(-G.net)}`, "", "acvGoGst")}
+    </div>
+    ${todo.length ? `<div><div class="group-label"><span>To sort out</span><span>${todo.length}</span></div><div class="group">${todo.map((x) => `<button class="row" data-act="${x.act}"${x.data || ""}><span class="attn-ic ${x.cls || "warn"}">${ic(x.icon || "alert")}</span><span class="grow"><div class="row-title">${x.title}</div><div class="row-sub">${x.sub}</div></span>${ic("chevR", "sm chev")}</button>`).join("")}</div></div>` : ""}
+    ${acMonthsCard(R)}
+  </div>`;
+}
+/* first steps, until done */
+function acSetupCard() {
+  const A = AC(), bank = acHasBank(), open = Object.keys(A.opening).length > 0 || A.openingDone, first = acStockFirst();
+  if (bank && open && A.setupDone) return "";
+  const step = (done, n, t, s, act, btn) => `<div class="ac-step${done ? " done" : ""}"><span class="ac-step-n">${done ? ic("check", "sm") : n}</span><span class="grow"><div class="row-title">${t}</div><div class="row-sub">${s}</div></span>${!done && AC_CAN && act ? `<button class="btn btn-secondary btn-sm" data-act="${act}">${btn}</button>` : ""}</div>`;
+  return `<div class="card card-pad ac-setup"><div class="hstack" style="justify-content:space-between;align-items:flex-start;gap:12px"><div><div class="card-title">Set up the books</div><div class="card-sub">Three things the tool cannot know. Everything else is already filled in from your records.</div></div>${AC_CAN && bank && open ? `<button class="btn-plain" data-act="aceSetupDone">Hide</button>` : ""}</div>
+    <div class="ac-steps">
+      ${step(bank, 1, "Your bank accounts", "So money in and out, and the bank statement, have somewhere to go.", "aceLedgerNew", "Add bank account")}
+      ${step(open, 2, `Opening balances on ${fmtDate(addDays(A.from, -1))} ${A.from.slice(0, 4) - 0}`, "Partners' capital, bank, money owed, stock, as they stood when these books start. Leave it empty if the business started after that.", "aceOpening", "Enter balances")}
+      ${step(!!A.vyDone, 3, "What happened before the tool", `The tool has your Vyapar sales from ${fmtDate((D.salesBefore || [])[0] ? D.salesBefore[0].date : A.from)}, but Hangyo purchases only from ${first ? fmtDate(first) : "when they were entered"}. Bring in the Vyapar purchase register and payments (or enter them as entries) so profit and stock are right.`, "aceVyapar", "Bring in from Vyapar")}
+    </div></div>`;
+}
+function acTodo() {
+  const out = [], A = AC(), num = acToNumber(), R = acRange();
+  if (num.length) out.push({ act: "aceInvSheet", title: `${num.length} sale${num.length === 1 ? "" : "s"} without a Vyapar invoice number`, sub: `Oldest ${fmtDate(num[0].date)} · needed for GSTR-1. Add the number (and e-way bill) from Vyapar.`, icon: "doc" });
+  const G = acGST(R.from, R.to), mg = Object.keys(G.missingGstin);
+  if (mg.length) out.push({ act: "acvGoParties", title: `${mg.length} part${mg.length === 1 ? "y has" : "ies have"} no GSTIN`, sub: `${esc(mg.slice(0, 3).join(", "))}${mg.length > 3 ? "…" : ""} · their sales show as B2C in GST until it is added`, icon: "info", cls: "info" });
+  if (!(acPartyInfo("Hangyo").gstin)) out.push({ act: "aceParty", data: ` data-p="Hangyo"`, title: "Hangyo's GSTIN is not in the books", sub: "It decides whether purchases carry IGST or CGST + SGST. Taken as CGST + SGST until it is added.", icon: "info", cls: "info" });
+  const un = acBankUnmatched(); if (un) out.push({ act: "acvGoBank", title: `${un} bank line${un === 1 ? "" : "s"} not in the books yet`, sub: "From the statements you uploaded. Most come with a suggestion.", icon: "bank" });
+  const od = acOpeningDiff(); if (Math.abs(od) > 0.5) out.push({ act: "aceOpening", title: `Opening balances are off by ${rs(Math.abs(od))}`, sub: "What we have should equal what we owe plus partners' capital.", icon: "alert", cls: "bad" });
+  const P = acPL(R.from, R.to); if (P.stockGap) out.push({ act: "aceStock", data: ` data-d="${P.os.v == null ? addDays(R.from, -1) : R.to}"`, title: "Stock value needed for the profit", sub: `The tool's stock records start ${fmtDate(acStockFirst())}. Enter the stock value on ${fmtDate(P.os.v == null ? addDays(R.from, -1) : R.to)}, or pick a later period.`, icon: "box" });
+  return out;
+}
+ACT.acvGoPL = () => { S.acTab = "reports"; S.acRep = "pl"; render(); };
+ACT.acvGoBank = () => { S.acTab = "bank"; render(); };
+ACT.acvGoParties = () => { S.acTab = "parties"; S.acParties = "owed"; render(); };
+ACT.acvGoGst = () => { S.acTab = "gst"; S.acGstM = acToday().slice(0, 7); render(); };
+ACT.acvGoHangyo = () => acStatementSheet(acPartyId("Hangyo"));
+ACT.aceSetupDone = () => { acStore().setupDone = true; render(); };
+/* month by month for the period */
+function acMonthsCard(R) {
+  const ms = []; let d = toDate(R.from.slice(0, 7) + "-01");
+  while (ymd(d) <= R.to && ms.length < 24) { const f = ymd(d) < R.from ? R.from : ymd(d), e = ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)), t = e > R.to ? R.to : e; ms.push({ k: ymd(d).slice(0, 7), label: MONTH_LONG[d.getMonth()].slice(0, 3) + " " + String(d.getFullYear()).slice(2), P: acPL(f, t) }); d = new Date(d.getFullYear(), d.getMonth() + 1, 1); }
+  if (ms.length < 2) return "";
+  const max = Math.max(1, ...ms.map((m) => Math.abs(m.P.salesNet)));
+  return `<div class="card"><div class="card-head"><div><div class="card-title">Month by month</div><div class="card-sub">Sales, gross profit and net profit · ${esc(R.label)}</div></div></div>
+    <div class="table-wrap"><table class="t ac-months"><thead><tr><th>Month</th><th class="r">Sales</th><th></th><th class="r">Gross profit</th><th class="r">Margin</th><th class="r">Running costs</th><th class="r">Net profit</th></tr></thead><tbody>
+    ${ms.map((m) => `<tr><td>${m.label}</td><td class="r">${rs(m.P.salesNet)}</td><td style="width:22%;min-width:90px"><span class="ac-bar"><i style="width:${Math.max(0, (m.P.salesNet / max) * 100).toFixed(1)}%"></i><b style="width:${Math.max(0, (m.P.gp / max) * 100).toFixed(1)}%"></b></span></td><td class="r">${m.P.stockGap ? `<span class="dim" title="Needs the stock value">–</span>` : rs(m.P.gp)}</td><td class="r">${m.P.stockGap || !m.P.salesNet ? "–" : pct(m.P.gp / m.P.salesNet, 1)}</td><td class="r">${rs(m.P.expT)}</td><td class="r" style="font-weight:600;${m.P.np < 0 ? "color:var(--bad)" : ""}">${m.P.stockGap ? "–" : rs(m.P.np)}</td></tr>`).join("")}
+    </tbody></table></div></div>`;
+}
+
+/* ---------- Day book: every entry, by date ---------- */
+const AC_DB_FILTERS = [["all", "All"], ["sale", "Sales"], ["purchase", "Purchases"], ["notes", "Notes"], ["money", "Money in and out"], ["expense", "Expenses"], ["journal", "Journals"], ["freight", "Transport"]];
+const acDbMatch = (e, f) => f === "all" || (f === "notes" ? ["cnote", "dnote", "pret", "hcn"].includes(e.kind) : f === "money" ? ["receipt", "payment", "contra"].includes(e.kind) : f === "journal" ? ["journal", "tod", "todr"].includes(e.kind) : e.kind === f);
+function acEntryAmt(e) { return acR2(e.lines.reduce((a, l) => a + Math.max(0, l.v), 0)); }
+const acKindIc = (k) => ({ sale: "orders", purchase: "box", cnote: "undo", dnote: "doc", pret: "undo", hcn: "doc", tod: "tag", todr: "tag", freight: "truck", receipt: "down", payment: "up", expense: "rupee", journal: "book", contra: "repeat" }[k] || "doc");
+function acDaybookHtml() {
+  const R = acRange(), f = S.acDb || "all", q = key(S.acDbQ || "");
+  const E = acEntries().filter((e) => e.date >= R.from && e.date <= R.to && acDbMatch(e, f) && (!q || key(e.party + " " + e.no + " " + e.text + " " + (AC_KIND[e.kind] || "")).includes(q))).reverse();
+  const byD = {}; E.forEach((e) => (byD[e.date] = byD[e.date] || []).push(e));
+  const shown = Object.keys(byD).slice(0, S.acDbMore ? 400 : 45);
+  return `<div class="stack gap-16">${acPeriodChips()}
+    <div class="ac-filters"><div class="chips" style="margin:0">${AC_DB_FILTERS.map(([v, l]) => `<button class="chip" data-act="acvDb" data-v="${v}" aria-pressed="${f === v}">${l}</button>`).join("")}</div><div class="search sm">${ic("search")}<input class="input sm" data-in="acvDbQ" placeholder="Party, number, note" value="${esc(S.acDbQ || "")}" aria-label="Search entries"></div></div>
+    ${E.length ? shown.map((d) => `<div><div class="group-label"><span>${dayLabel(d)} ${d.slice(0, 4)}</span><span>${byD[d].length}</span></div><div class="group">${byD[d].map(acEntryRow).join("")}</div></div>`).join("") + (Object.keys(byD).length > shown.length ? `<button class="btn btn-secondary" data-act="acvDbMore">Show all ${Object.keys(byD).length} days</button>` : "") : `<div class="empty">No entries ${f === "all" ? "" : "of this kind "}in this period.</div>`}
+  </div>`;
+}
+function acEntryRow(e) {
+  const amt = e.total != null ? e.total : acEntryAmt(e), neg = amt < 0;
+  return `<button class="row" data-act="acvEntry" data-id="${esc(e.id)}"><span class="attn-ic tint">${ic(acKindIc(e.kind))}</span><span class="grow" style="min-width:0"><div class="row-title clip">${esc(e.party || AC_KIND[e.kind] || "Entry")}</div><div class="row-sub clip">${esc(AC_KIND[e.kind] || "")}${e.no ? " · " + esc(e.no) : e.kind === "sale" ? ` · <span style="color:var(--warn)">no invoice number</span>` : ""}${e.text ? " · " + esc(e.text) : ""}</div></span><span class="row-end"><span class="num" style="font-weight:600${neg ? ";color:var(--bad)" : ""}">${acAmt(amt)}</span>${ic("chevR", "sm chev")}</span></button>`;
+}
+ACT.acvDb = (el) => { S.acDb = el.dataset.v; S.acDbMore = false; render(); };
+ACT.acvDbMore = () => { S.acDbMore = true; render(); };
+IN.acvDbQ = (el) => { S.acDbQ = el.value; const at = el.selectionStart; render(); const i = $('[data-in="acvDbQ"]'); if (i) { i.focus(); try { i.setSelectionRange(at, at); } catch (x) {} } };
+/* one entry: its debits and credits, and where it came from */
+ACT.acvEntry = (el) => {
+  const e = acEntries().find((x) => x.id === el.dataset.id); if (!e) return; const ACC = acAccounts();
+  const src = e.src || {}, open = src.t === "order" ? `<button class="btn btn-secondary btn-sm" data-act="orderSheet" data-id="${esc(src.ref)}">${ic("orders", "sm")} Open the order</button>` : src.t === "qc" ? `<button class="btn btn-secondary btn-sm" data-act="qcPOSheet" data-po="${esc(src.ref)}">${ic("bolt", "sm")} Open the PO</button>` : src.t === "purchase" ? `<button class="btn btn-secondary btn-sm" data-act="purchaseSheet" data-id="${esc(src.ref)}">${ic("box", "sm")} Open the purchase</button>` : "";
+  const from = { order: "a dispatched distributor order", qc: "a Swiggy / Zepto delivery", purchase: "a Hangyo purchase entered in Stock", note: "a credit or debit note (TOD & notes)", trip: "a logistics trip", tod: "TOD received (TOD & notes)", vyapar: "the Vyapar sales copied in before the tool", voucher: e.v && e.v.src === "bank" ? "the bank statement" : e.v && e.v.src === "vyapar" ? "the Vyapar import" : "an entry made in Accounts" }[src.t] || "";
+  const canNum = (src.t === "order" || src.t === "qc") && (AC_CAN || CAN_EDIT);
+  openSheet(`${esc(AC_KIND[e.kind] || "Entry")}${e.no ? " · " + esc(e.no) : ""}`, `<div class="card card-pad"><div class="kv"><div><div class="k">Date</div><div class="v">${fmtDate(e.date)} ${e.date.slice(0, 4)}</div></div><div><div class="k">Party</div><div class="v">${esc(e.party || "–")}</div></div><div><div class="k">Amount</div><div class="v">${acAmt(e.total != null ? e.total : acEntryAmt(e))}</div></div>${e.ewb ? `<div><div class="k">E-way bill</div><div class="v">${esc(e.ewb)}</div></div>` : ""}</div>${e.text ? `<div class="row-sub" style="margin-top:12px">${esc(e.text)}</div>` : ""}${e.v && e.v.note ? `<div class="row-sub" style="margin-top:6px">${esc(e.v.note)}</div>` : ""}</div>
+    <div style="margin-top:18px"><div class="group-label"><span>Accounts</span><span>debit · credit</span></div><div class="table-wrap card"><table class="t"><thead><tr><th>Account</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>${e.lines.map((l) => `<tr><td><button class="btn-plain" data-act="acvLedger" data-id="${esc(l.a)}">${esc(acName(l.a, ACC))}</button></td><td class="r">${l.v > 0 ? acAmt(l.v) : ""}</td><td class="r">${l.v < 0 ? acAmt(-l.v) : ""}</td></tr>`).join("")}</tbody><tfoot><tr class="total"><td>Total</td><td class="r">${acAmt(e.lines.reduce((a, l) => a + Math.max(0, l.v), 0))}</td><td class="r">${acAmt(e.lines.reduce((a, l) => a + Math.max(0, -l.v), 0))}</td></tr></tfoot></table></div></div>
+    ${from ? `<div class="row-sub" style="margin-top:12px">${ic("info", "sm")} Made automatically from ${from}.${src.t !== "voucher" ? " Change it there and the books follow." : ""}</div>` : ""}`,
+    `${open}${canNum ? `<button class="btn btn-secondary" data-act="aceInvOne" data-t="${src.t}" data-id="${esc(src.ref)}">${ic("pencil", "sm")} Invoice number</button>` : ""}${e.v && AC_CAN ? `<button class="btn btn-secondary" data-act="aceEdit" data-id="${esc(e.v.id)}">${ic("pencil", "sm")} Edit</button><button class="btn btn-secondary" data-act="aceDel" data-id="${esc(e.v.id)}">${ic("trash", "sm")} Delete</button>` : ""}<button class="btn btn-primary" data-act="closeSheet">Done</button>`);
+};
+
+/* ---------- Parties: who owes us, whom we owe ---------- */
+function acPartiesHtml() {
+  const mode = S.acParties || "owed", t = acToday();
+  const tog = seg("acParties", mode, [["owed", "Owed to us"], ["owe", "We owe"]]);
+  if (mode === "owe") {
+    const B = acBalances(AC().from, t), ACC = acAccounts(), L = Object.values(ACC).filter((a) => a.group === "creditors").map((a) => ({ a, bal: -((B[a.id] || {}).close || 0) })).filter((x) => Math.abs(x.bal) > 0.5 || x.a.party === "Hangyo").sort((a, b) => b.bal - a.bal);
+    const tot = L.reduce((s, x) => s + x.bal, 0);
+    return `<div class="stack gap-16"><div class="ac-filters">${tog}<span class="row-sub">As on ${fmtDate(t)} · total ${rs(tot)}</span></div>
+      <div class="group">${L.map((x) => `<button class="row" data-act="acvStatement" data-id="${esc(x.a.id)}"><span class="avatar soft">${esc(initials(x.a.name).slice(0, 1))}</span><span class="grow"><div class="row-title clip">${esc(x.a.name)}</div><div class="row-sub">${x.a.party === "Hangyo" ? "Purchases, less payments, returns and TOD" : "Transport charges, less payments"}</div></span><span class="row-end"><span class="num" style="font-weight:600">${x.bal < 0 ? "Advance " + rs(-x.bal) : rs(x.bal)}</span>${ic("chevR", "sm chev")}</span></button>`).join("") || `<div class="row"><span class="row-sub">Nothing owed.</span></div>`}</div></div>`;
+  }
+  const age = acAgeing(t), tot = age.reduce((a, x) => a + x.total, 0), od = age.reduce((a, x) => a + x.overdue, 0);
+  const B = (k) => age.reduce((a, x) => a + x[k], 0);
+  return `<div class="stack gap-16"><div class="ac-filters">${tog}<span class="row-sub">As on ${fmtDate(t)}</span></div>
+    <div class="tiles tiles-4"><div class="tile"><div class="tile-label">Owed to us</div><div class="tile-value">${lakhS(tot)}<small>L</small></div><div class="tile-sub">${age.length} part${age.length === 1 ? "y" : "ies"}</div></div><div class="tile"><div class="tile-label">Overdue</div><div class="tile-value" style="color:var(${od > 0.5 ? "--bad" : "--good"})">${rs(od)}</div><div class="tile-sub">Past each party's credit days</div></div><div class="tile"><div class="tile-label">Up to 30 days</div><div class="tile-value">${rs(B("d0"))}</div><div class="tile-sub">31–60: ${rs(B("d30"))}</div></div><div class="tile"><div class="tile-label">Over 60 days</div><div class="tile-value"${B("d60") + B("d90") > 0.5 ? ' style="color:var(--warn)"' : ""}>${rs(B("d60") + B("d90"))}</div><div class="tile-sub">Over 90: ${rs(B("d90"))}</div></div></div>
+    <div class="group">${age.map((x) => { const gst = acPartyInfo(x.party).gstin; return `<button class="row" data-act="acvStatement" data-id="${esc(x.id)}"><span class="avatar soft">${esc(initials(x.name).slice(0, 1))}</span><span class="grow" style="min-width:0"><div class="row-title clip">${esc(x.name)}</div><div class="row-sub clip">${x.bills.length} bill${x.bills.length === 1 ? "" : "s"} open${x.oldest ? " · oldest " + fmtDate(x.oldest) + " (" + daysBetween(x.oldest, t) + " days)" : ""} · ${x.credit} days credit${gst ? "" : ` · <span style="color:var(--warn)">no GSTIN</span>`}</div></span><span class="row-end" style="flex-direction:column;align-items:flex-end;gap:2px"><span class="num" style="font-weight:600">${x.total > 0.5 ? rs(x.total) : x.advance > 0.5 ? "Advance " + rs(x.advance) : "Settled"}</span>${x.overdue > 0.5 ? `<span class="pill bad" style="height:20px;font-size:11px">${rs(x.overdue)} overdue</span>` : ""}</span>${ic("chevR", "sm chev")}</button>`; }).join("") || `<div class="row"><span class="row-sub">Nobody owes anything.</span></div>`}</div>
+    ${AC_CAN ? `<div class="row-sub">Payments recorded as Money in (or from the bank statement) clear the oldest bills first.</div>` : ""}</div>`;
+}
+ACT.acvStatement = (el) => acStatementSheet(el.dataset.id);
+ACT.acvLedger = (el) => acStatementSheet(el.dataset.id);
+/* a ledger / party statement: opening, every entry with a running balance, closing */
+function acStatementSheet(id) {
+  const ACC = acAccounts(), a = ACC[id] || { id, name: acName(id, ACC), group: "" }, R = acRange(), L = acLedger(id, R.from, R.to), party = a.party, info = party ? acPartyInfo(party) : null;
+  const O = party && a.group === "debtors" ? acOpenBills(party, acToday()) : null, g = AC_GROUP[a.group] || {};
+  S.acStmt = id;
+  openSheet(esc(a.name), `<div class="card card-pad"><div class="hstack" style="justify-content:space-between;gap:12px;align-items:flex-start"><div><div class="row-sub">${esc(g.label || "")}${g.formal && g.formal !== g.label ? " · " + esc(g.formal) : ""}</div><div class="section-title" style="font-size:24px;margin-top:4px">${acDrCr(L.close)}</div><div class="row-sub">Balance on ${fmtDate(R.to)} ${R.to.slice(0, 4)}${a.group === "debtors" ? (L.close > 0 ? " · they owe us" : L.close < 0 ? " · paid in advance" : "") : a.group === "creditors" ? (L.close < 0 ? " · we owe them" : "") : ""}</div></div>${info ? `<div style="text-align:right"><div class="row-sub">GSTIN</div><div class="mono" style="font-weight:600">${info.gstin ? esc(info.gstin) : '<span style="color:var(--warn)">not added</span>'}</div>${AC_CAN ? `<button class="btn-plain" data-act="aceParty" data-p="${esc(party)}">Edit details</button>` : ""}</div>` : ""}</div>
+      <div class="kv" style="margin-top:14px"><div><div class="k">Opening ${fmtDate(R.from)}</div><div class="v">${acDrCr(L.open)}</div></div><div><div class="k">Debits</div><div class="v">${acAmt(L.dr)}</div></div><div><div class="k">Credits</div><div class="v">${acAmt(L.cr)}</div></div><div><div class="k">Entries</div><div class="v">${L.rows.length}</div></div></div></div>
+    ${O && O.bills.length ? `<div style="margin-top:18px"><div class="group-label"><span>Bills still open</span><span>${rs(O.bills.reduce((s, b) => s + b.left, 0))}</span></div><div class="group">${O.bills.slice(0, 12).map((b) => { const age = daysBetween(b.date, acToday()), cr = (distByKey[key(party)] || {}).credit || 7; return `<div class="row"><span class="grow"><div class="row-title">${esc(b.no || "Bill")}</div><div class="row-sub">${fmtDate(b.date)} · ${age} days${age > cr ? ` · <span style="color:var(--bad)">overdue</span>` : ""}${b.left < b.amt - 0.5 ? ` · part paid (bill ${rs(b.amt)})` : ""}</div></span><span class="num" style="font-weight:600">${rs2(b.left)}</span></div>`; }).join("")}${O.bills.length > 12 ? `<div class="row"><span class="row-sub">and ${O.bills.length - 12} more</span></div>` : ""}</div></div>` : ""}
+    <div style="margin-top:18px"><div class="group-label"><span>Entries · ${esc(R.label)}</span><span>debit · credit · balance</span></div>
+      <div class="table-wrap card" style="max-height:420px;overflow:auto"><table class="t"><thead><tr><th>Date</th><th>Particulars</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Balance</th></tr></thead><tbody>
+      <tr><td>${fmtDate(R.from)}</td><td class="dim">Opening balance</td><td></td><td></td><td class="r">${acDrCr(L.open)}</td></tr>
+      ${L.rows.map((r) => `<tr><td>${fmtDate(r.e.date)}</td><td><button class="btn-plain" style="text-align:left" data-act="acvEntry" data-id="${esc(r.e.id)}">${esc(AC_KIND[r.e.kind] || "Entry")}${r.e.no ? " " + esc(r.e.no) : ""}</button><div class="row-sub clip" style="max-width:320px">${esc(id.startsWith("p:") ? r.e.text : r.e.party || r.e.text)}</div></td><td class="r">${r.v > 0 ? acAmt(r.v) : ""}</td><td class="r">${r.v < 0 ? acAmt(-r.v) : ""}</td><td class="r">${acDrCr(r.bal)}</td></tr>`).join("")}
+      </tbody><tfoot><tr class="total"><td></td><td>Closing balance</td><td class="r">${acAmt(L.dr)}</td><td class="r">${acAmt(L.cr)}</td><td class="r">${acDrCr(L.close)}</td></tr></tfoot></table></div></div>`,
+    `${party ? `<button class="btn btn-secondary" data-act="acvStmtPdf" data-id="${esc(id)}">${ic("doc", "sm")} Statement PDF</button>` : ""}<button class="btn btn-secondary" data-act="acvStmtExcel" data-id="${esc(id)}">${ic("doc", "sm")} Excel</button>${AC_CAN && a.group === "debtors" ? `<button class="btn btn-primary" data-act="aceNew" data-t="receipt" data-party="${esc(id)}">${ic("down", "sm")} Money in</button>` : AC_CAN && a.group === "creditors" ? `<button class="btn btn-primary" data-act="aceNew" data-t="payment" data-party="${esc(id)}">${ic("up", "sm")} Pay</button>` : `<button class="btn btn-primary" data-act="closeSheet">Done</button>`}`, true);
+}
+
+/* ---------- Reports ---------- */
+function acReportsHtml() {
+  const r = S.acRep || "pl";
+  const ch = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["tb", "Trial balance"], ["ledgers", "Ledgers"]];
+  return `<div class="stack gap-16"><div class="chips" style="margin:0">${ch.map(([v, l]) => `<button class="chip" data-act="acvRep" data-v="${v}" aria-pressed="${r === v}">${l}</button>`).join("")}</div>
+    ${acPeriodChips(r === "bs" || r === "tb")}
+    ${{ pl: acPLHtml, bs: acBSHtml, tb: acTBHtml, ledgers: acLedgersHtml }[r]()}</div>`;
+}
+ACT.acvRep = (el) => { S.acRep = el.dataset.v; render(); };
+const acLine = (label, v, cls, act) => `<div class="ac-line${cls ? " " + cls : ""}">${act ? `<button class="btn-plain" ${act}>${label}</button>` : `<span>${label}</span>`}<span class="num">${v == null ? "–" : acAmt(v)}</span></div>`;
+function acPLHtml() {
+  const R = acRange(), P = acPL(R.from, R.to), gm = P.salesNet ? P.gp / P.salesNet : null, nm = P.salesNet ? P.np / P.salesNet : null;
+  const led = (x, neg) => acLine(esc(x.name), neg ? -x.v : x.v, "sub", `data-act="acvLedger" data-id="${esc(x.id)}"`);
+  const stk = (s, label, d) => `<div class="ac-line sub"><span>${label}${s.how === "tool" ? ` <span class="dim">· from the tool's stock records${s.miss ? `, ${s.miss} product${s.miss > 1 ? "s" : ""} without a cost` : ""}</span>` : s.how === "entered" ? ` <span class="dim">· entered</span>` : s.how === "opening" ? ` <span class="dim">· opening balance</span>` : ""}${AC_CAN && s.how !== "opening" ? ` <button class="btn-plain" data-act="aceStock" data-d="${d}">${s.v == null ? "Enter" : "Change"}</button>` : ""}</span><span class="num">${s.v == null ? `<span style="color:var(--warn)">needed</span>` : acAmt(s.v)}</span></div>`;
+  return `${P.purGap ? `<div class="banner warn">${ic("alert", "sm")}<span><b>Profit is not final yet.</b> Sales from ${fmtDate(R.from)} are in the books, but Hangyo purchases only from ${fmtDate(P.purGap)} (when the tool started). ${AC_CAN ? `<button class="btn-plain" data-act="aceVyapar">Bring in the earlier purchases from Vyapar</button>, or pick a period from ${fmtDate(P.purGap)}.` : "Earlier purchases are to be brought in from Vyapar."}</span></div>` : ""}${P.stockGap ? `<div class="banner warn">${ic("alert", "sm")}<span><b>The stock value is needed.</b> The tool's stock records start on ${fmtDate(acStockFirst())}, so the stock on ${fmtDate(P.os.v == null ? addDays(R.from, -1) : R.to)} is not known. Enter it (from your Vyapar stock report) to see gross and net profit.</span></div>` : ""}
+    <div class="ac-hero card card-pad"><div><div class="row-sub">Net profit · ${esc(R.label)}</div><div class="ac-hero-v"${P.np < 0 ? ' style="color:var(--bad)"' : ""}>${P.stockGap ? "–" : acAmt(P.np, 0)}</div><div class="row-sub">${nm != null && !P.stockGap ? pct(nm, 1) + " of sales" : ""}</div></div>
+      <div class="ac-hero-kv"><div><div class="k">Sales</div><div class="v">${acAmt(P.salesNet, 0)}</div></div><div><div class="k">Gross profit</div><div class="v">${P.stockGap ? "–" : acAmt(P.gp, 0)}</div><div class="k">${gm != null && !P.stockGap ? pct(gm, 1) + " margin" : ""}</div></div><div><div class="k">Running costs</div><div class="v">${acAmt(P.expT, 0)}</div></div></div></div>
+    <div class="card ac-stmt">
+      <div class="ac-sec">Sales</div>${P.sales.map((x) => led(x, true)).join("") || acLine("No sales", 0, "sub")}${acLine("Net sales", P.salesNet, "total")}
+      <div class="ac-sec">Cost of the stock sold</div>${stk(P.os, "Opening stock", addDays(R.from, -1))}${P.purch.map((x) => led(x)).join("")}${P.direct.map((x) => led(x)).join("")}${stk(P.cs, "Less closing stock", R.to)}${acLine("Cost of goods sold", P.stockGap ? null : P.cogs, "total")}
+      ${acLine("Gross profit", P.stockGap ? null : P.gp, "grand")}
+      ${P.inc.length ? `<div class="ac-sec">Other income</div>${P.inc.map((x) => led(x, true)).join("")}${acLine("Total other income", P.incT, "total")}` : ""}
+      <div class="ac-sec">Running costs</div>${P.exp.map((x) => led(x)).join("") || acLine("None entered yet", 0, "sub")}${acLine("Total running costs", P.expT, "total")}
+      ${acLine("Net profit", P.stockGap ? null : P.np, "grand" + (P.np < 0 ? " neg" : ""))}
+    </div>
+    <div class="row-sub">All figures exclude GST. Stock is valued at cost (the SS rate). TOD support from Hangyo is counted when the order is dispatched.</div>`;
+}
+function acBSHtml() {
+  const R = acRange(), d = R.to, BS = acBS(d), ACC = acAccounts();
+  const glabel = { advrecv: "Advances received from parties", advpaid: "Advances paid to parties", gst: "GST", profit: "Profit and loss", diff: "Opening balances", stock: "Stock" };
+  const side = (s, order) => order.filter((g) => s[g] && s[g].length).map((g) => { const L = s[g], t = L.reduce((a, x) => a + x.v, 0), lab = (AC_GROUP[g] || {}).label || glabel[g] || g; return `<div class="ac-sec">${esc(lab)}<span class="num">${acAmt(t)}</span></div>${L.sort((a, b) => b.v - a.v).slice(0, 40).map((x) => acLine(esc(x.name), x.v, "sub", ACC[x.id] ? `data-act="acvLedger" data-id="${esc(x.id)}"` : "")).join("")}${L.length > 40 ? acLine(`and ${L.length - 40} more`, L.slice(40).reduce((a, x) => a + x.v, 0), "sub") : ""}`; }).join("");
+  const ok = Math.abs(BS.assets - BS.liab) < 1;
+  return `${BS.stockGap ? `<div class="banner warn">${ic("alert", "sm")}<span>The stock value on ${fmtDate(d)} is not known (the tool's stock records start ${fmtDate(acStockFirst())}). ${AC_CAN ? `<button class="btn-plain" data-act="aceStock" data-d="${d}">Enter it</button>` : ""}</span></div>` : ""}
+    <div class="grid-2">
+      <div class="card ac-stmt"><div class="ac-head">What we have <span class="row-sub">Assets</span></div>${side(BS.sides.A, ["fixed", "stock", "debtors", "advpaid", "bank", "cash", "taxin", "gst", "advances", "curasset"])}${acLine("Total", BS.assets, "grand")}</div>
+      <div class="card ac-stmt"><div class="ac-head">What we owe, and partners' money <span class="row-sub">Liabilities and capital</span></div>${side(BS.sides.L, ["capital", "profit", "loans", "creditors", "advrecv", "deposits", "taxout", "gst", "curliab", "diff"])}${acLine("Total", BS.liab, "grand")}</div>
+    </div>
+    <div class="banner ${ok ? "good" : "warn"}">${ic(ok ? "check" : "alert", "sm")}<span>${ok ? `Balanced on ${fmtDate(d)} ${d.slice(0, 4)}: what we have equals what we owe plus partners' money.` : `Off by ${rs(Math.abs(BS.assets - BS.liab))}. Check the opening balances and the stock value.`}</span></div>`;
+}
+function acTB(d) {
+  const B = acBalances(AC().from, d), ACC = acAccounts(), rows = [];
+  Object.keys(B).forEach((id) => { const v = B[id].close; if (Math.abs(v) < 0.005) return; const a = ACC[id] || { name: acName(id, ACC), group: id.startsWith("p:") ? "debtors" : "curliab" }; rows.push({ id, name: a.name, group: a.group, v }); });
+  const order = AC_GROUPS.map((g) => g[0]); rows.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || a.name.localeCompare(b.name));
+  const dr = acR2(rows.reduce((a, r) => a + Math.max(0, r.v), 0)), cr = acR2(rows.reduce((a, r) => a + Math.max(0, -r.v), 0));
+  return { rows, dr, cr };
+}
+function acTBHtml() {
+  const R = acRange(), T = acTB(R.to), cs = acStockAt(R.to); let g = "";
+  return `<div class="card"><div class="table-wrap"><table class="t"><thead><tr><th>Account</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>
+    ${T.rows.map((r) => { const head = r.group !== g ? ((g = r.group), `<tr class="ac-grp"><td colspan="3">${esc((AC_GROUP[r.group] || {}).label || r.group)} <span class="dim">· ${esc((AC_GROUP[r.group] || {}).formal || "")}</span></td></tr>`) : ""; return head + `<tr><td><button class="btn-plain" data-act="acvLedger" data-id="${esc(r.id)}">${esc(r.name)}</button></td><td class="r">${r.v > 0 ? acAmt(r.v) : ""}</td><td class="r">${r.v < 0 ? acAmt(-r.v) : ""}</td></tr>`; }).join("")}
+    </tbody><tfoot><tr class="total"><td>Total</td><td class="r">${acAmt(T.dr)}</td><td class="r">${acAmt(T.cr)}</td></tr></tfoot></table></div></div>
+    <div class="banner ${Math.abs(T.dr - T.cr) < 0.05 ? "good" : "warn"}">${ic(Math.abs(T.dr - T.cr) < 0.05 ? "check" : "alert", "sm")}<span>${Math.abs(T.dr - T.cr) < 0.05 ? "Debits equal credits." : `Debits and credits differ by ${rs2(Math.abs(T.dr - T.cr))}: the opening balances do not balance.`} Closing stock on ${fmtDate(R.to)}: ${cs.v == null ? "not known" : acAmt(cs.v)} (shown in the balance sheet, not in the trial balance).</span></div>`;
+}
+function acLedgersHtml() {
+  const R = acRange(), B = acBalances(R.from, R.to), ACC = acAccounts(), q = key(S.acLedQ || "");
+  const all = Object.values(ACC).filter((a) => !q || key(a.name).includes(q));
+  return `<div class="ac-filters"><div class="search sm">${ic("search")}<input class="input sm" data-in="acvLedQ" placeholder="Find an account" value="${esc(S.acLedQ || "")}" aria-label="Find an account"></div>${AC_CAN ? `<button class="btn btn-secondary btn-sm" data-act="aceLedgerNew">${ic("plus", "sm")} New account</button>` : ""}</div>
+    ${AC_GROUPS.map(([gid, label, formal]) => { const L = all.filter((a) => a.group === gid); if (!L.length) return ""; const used = L.filter((a) => B[a.id] && (Math.abs(B[a.id].close) > 0.004 || B[a.id].dr || B[a.id].cr)); const show = q ? L : used.length ? used.concat(L.filter((a) => !used.includes(a) && !a.starter && !a.sys)) : L.filter((a) => !a.sys || a.group === "cash"); if (!show.length) return ""; return `<div><div class="group-label"><span>${esc(label)} <span class="dim">· ${esc(formal)}</span></span><span>${show.length}</span></div><div class="group">${show.sort((a, b) => a.name.localeCompare(b.name)).map((a) => { const x = B[a.id] || { close: 0 }; return `<button class="row" data-act="acvLedger" data-id="${esc(a.id)}"><span class="grow clip"><div class="row-title clip">${esc(a.name)}</div></span><span class="row-end"><span class="num">${acDrCr(x.close)}</span>${ic("chevR", "sm chev")}</span></button>`; }).join("")}</div></div>`; }).join("")}`;
+}
+IN.acvLedQ = (el) => { S.acLedQ = el.value; const at = el.selectionStart; render(); const i = $('[data-in="acvLedQ"]'); if (i) { i.focus(); try { i.setSelectionRange(at, at); } catch (x) {} } };
+
+/* ---------- GST ---------- */
+function acGstMonths() { const out = [], t = acToday(); let d = toDate(acFYStart(t)); const A = AC(); if (ymd(d) < A.from) d = toDate(A.from.slice(0, 7) + "-01"); while (ymd(d) <= t) { out.push(ymd(d).slice(0, 7)); d = new Date(d.getFullYear(), d.getMonth() + 1, 1); } const p = acFY(t) - 1; if (`${p}-04-01` >= A.from) { /* last year too */ } return out.reverse(); }
+function acGstHtml() {
+  const ms = acGstMonths(), m = S.acGstM && ms.includes(S.acGstM) ? S.acGstM : ms[0] || acToday().slice(0, 7), from = m + "-01", end = ymd(new Date(+m.slice(0, 4), +m.slice(5, 7), 0)), to = end > acToday() ? acToday() : end, G = acGST(from, to);
+  const sum = (L, k) => L.reduce((a, r) => a + (r[k] || 0), 0), mg = Object.keys(G.missingGstin);
+  const tbl = (head, rows, foot) => `<div class="table-wrap"><table class="t"><thead><tr>${head.map((h, i) => `<th class="${i > 2 ? "r" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody>${foot ? `<tfoot><tr class="total">${foot.map((c, i) => `<td class="${i > 2 ? "r" : ""}">${c}</td>`).join("")}</tr></tfoot>` : ""}</table></div>`;
+  const invRow = (r) => `<tr><td>${r.no ? esc(r.no) : `<span style="color:var(--warn)">No number</span>`}</td><td>${fmtDate(r.date)}</td><td class="clip" style="max-width:220px">${esc(r.party)}${r.gstin ? `<div class="row-sub mono">${esc(r.gstin)}</div>` : ""}</td><td class="r">${acAmt(r.taxable)}</td><td class="r">${acAmt(r.cgst + r.sgst)}</td><td class="r">${acAmt(r.igst)}</td><td class="r">${acAmt(r.total)}</td></tr>`;
+  const H = ["Invoice", "Date", "Party", "Taxable", "CGST + SGST", "IGST", "Total"];
+  const b2cT = sum(G.b2c, "taxable"), hs = Object.values(G.hsn);
+  return `<div class="stack gap-16">
+    <div class="chips" style="margin:0">${ms.map((k) => `<button class="chip" data-act="acvGstM" data-m="${k}" aria-pressed="${k === m}">${MONTH_LONG[+k.slice(5) - 1].slice(0, 3)} ${k.slice(2, 4)}</button>`).join("")}</div>
+    <div class="tiles tiles-4">
+      <div class="tile"><div class="tile-label">Sales (taxable)</div><div class="tile-value">${rs(G.taxable)}</div><div class="tile-sub">${G.b2b.length} B2B invoices · ${G.b2c.length} B2C · ${G.cdn.length} notes</div></div>
+      <div class="tile"><div class="tile-label">GST on sales</div><div class="tile-value">${rs(G.outTax)}</div><div class="tile-sub">CGST ${rs(G.tax.cgst)} · SGST ${rs(G.tax.sgst)}${G.tax.igst ? " · IGST " + rs(G.tax.igst) : ""}</div></div>
+      <div class="tile"><div class="tile-label">GST paid on purchases</div><div class="tile-value">${rs(G.inTax)}</div><div class="tile-sub">Input credit from ${G.purchases.length} bill${G.purchases.length === 1 ? "" : "s"}</div></div>
+      <div class="tile"><div class="tile-label">${G.net >= 0 ? "GST to pay" : "Credit to carry forward"}</div><div class="tile-value" style="color:var(--${G.net >= 0 ? "ink" : "good"})">${rs(Math.abs(G.net))}</div><div class="tile-sub">${MONTH_LONG[+m.slice(5) - 1]} ${m.slice(0, 4)}${to < end ? " so far" : ""} · due by 20 ${MONTH_LONG[(+m.slice(5)) % 12]}</div></div>
+    </div>
+    ${G.missingNo.length ? `<div class="banner warn">${ic("alert", "sm")}<span><b>${G.missingNo.length} sale${G.missingNo.length === 1 ? "" : "s"} without an invoice number.</b> GSTR-1 needs the Vyapar number for each one. ${AC_CAN || CAN_EDIT ? `<button class="btn-plain" data-act="aceInvSheet">Add them</button>` : ""}</span></div>` : ""}
+    ${mg.length ? `<div class="banner info">${ic("info", "sm")}<span>${mg.length} part${mg.length === 1 ? "y has" : "ies have"} no GSTIN (${esc(mg.slice(0, 4).join(", "))}${mg.length > 4 ? "…" : ""}), so their sales are counted as B2C. ${AC_CAN ? `<button class="btn-plain" data-act="aceParty" data-p="${esc(mg[0])}">Add GSTIN</button>` : ""}</span></div>` : ""}
+    <div class="card"><div class="card-head"><div><div class="card-title">GSTR-3B summary</div><div class="card-sub">What goes in the monthly return</div></div></div><div class="table-wrap"><table class="t"><thead><tr><th>Section</th><th class="r">Taxable</th><th class="r">IGST</th><th class="r">CGST</th><th class="r">SGST</th></tr></thead><tbody>
+      <tr><td>3.1 (a) Outward taxable supplies</td><td class="r">${acAmt(G.taxable)}</td><td class="r">${acAmt(G.tax.igst)}</td><td class="r">${acAmt(G.tax.cgst)}</td><td class="r">${acAmt(G.tax.sgst)}</td></tr>
+      <tr><td>4 (A)(5) Input tax credit, all other</td><td class="r">${acAmt(G.itcTaxable)}</td><td class="r">${acAmt(G.itc.igst)}</td><td class="r">${acAmt(G.itc.cgst)}</td><td class="r">${acAmt(G.itc.sgst)}</td></tr>
+      </tbody><tfoot><tr class="total"><td>Net tax ${G.net >= 0 ? "payable" : "(credit)"}</td><td></td><td class="r">${acAmt(G.tax.igst - G.itc.igst)}</td><td class="r">${acAmt(G.tax.cgst - G.itc.cgst)}</td><td class="r">${acAmt(G.tax.sgst - G.itc.sgst)}</td></tr></tfoot></table></div>
+      <div class="card-pad row-sub" style="padding-top:8px">Credit is used IGST first, then CGST and SGST, on the GST portal. Any credit carried in from earlier months is not shown here.</div></div>
+    <div class="card"><div class="card-head"><div><div class="card-title">GSTR-1 · B2B invoices</div><div class="card-sub">Parties with a GSTIN · ${G.b2b.length}</div></div></div>${G.b2b.length ? tbl(H, G.b2b.map(invRow), ["", "", "Total", acAmt(sum(G.b2b, "taxable")), acAmt(sum(G.b2b, "cgst") + sum(G.b2b, "sgst")), acAmt(sum(G.b2b, "igst")), acAmt(sum(G.b2b, "total"))]) : `<div class="empty">None this month${G.b2c.length ? " (add the parties' GSTINs)" : ""}.</div>`}</div>
+    ${G.b2c.length ? `<div class="card"><div class="card-head"><div><div class="card-title">GSTR-1 · B2C (small)</div><div class="card-sub">No GSTIN on record · reported as one total per state and rate</div></div></div>${tbl(H, G.b2c.map(invRow), ["", "", "Total", acAmt(b2cT), acAmt(sum(G.b2c, "cgst") + sum(G.b2c, "sgst")), acAmt(sum(G.b2c, "igst")), acAmt(sum(G.b2c, "total"))])}</div>` : ""}
+    ${G.cdn.length ? `<div class="card"><div class="card-head"><div><div class="card-title">GSTR-1 · Credit and debit notes</div><div class="card-sub">${G.cdn.length}</div></div></div>${tbl(["Note", "Date", "Party", "Taxable", "CGST + SGST", "IGST", "Total"], G.cdn.map(invRow))}</div>` : ""}
+    <div class="card"><div class="card-head"><div><div class="card-title">GSTR-1 · HSN summary</div><div class="card-sub">Quantity in boxes</div></div></div>${tbl(["HSN", "Description", "", "Boxes", "Taxable", "Rate"], hs.map((h) => `<tr><td class="mono">${esc(h.hsn)}</td><td>${esc(h.desc)}</td><td></td><td class="r">${nf(h.qty)}</td><td class="r">${acAmt(h.taxable)}</td><td class="r">5%</td></tr>`))}</div>
+    <div class="card"><div class="card-head"><div><div class="card-title">Input tax credit · purchase bills</div><div class="card-sub">${G.purchases.length} · check against GSTR-2B before claiming</div></div></div>${G.purchases.length ? tbl(["Bill", "Date", "From", "Taxable", "CGST + SGST", "IGST", ""], G.purchases.map((r) => `<tr><td>${esc(r.no || "–")}</td><td>${fmtDate(r.date)}</td><td>${esc(r.party)}</td><td class="r">${acAmt(r.taxable)}</td><td class="r">${acAmt(r.cgst + r.sgst)}</td><td class="r">${acAmt(r.igst)}</td><td></td></tr>`)) : `<div class="empty">No purchase bills this month.</div>`}</div>
+    <div class="hstack gap-8 wrap"><button class="btn btn-secondary" data-act="acvGstExcel" data-m="${m}">${ic("doc", "sm")} GSTR-1 and 3B workings (Excel)</button></div>
+    <div class="row-sub">E-way bills stay in Vyapar; their numbers are kept against each dispatch. E-invoicing (IRN) can be switched on here when it becomes compulsory for SahiReach.</div>
+  </div>`;
+}
+ACT.acvGstM = (el) => { S.acGstM = el.dataset.m; render(); };
+
+/* ---------- Bank ---------- */
+function acBankHtml() {
+  const t = acToday(), B = acBalances(AC().from, t), money = acMoneyAccs(), A = AC();
+  return `<div class="stack gap-16">
+    <div class="group">${money.map((a) => { const st = A.bank.stmts.filter((s) => s.acc === a.id), last = st.reduce((m, s) => (s.to > (m ? m.to : "") ? s : m), null), un = st.reduce((n, s) => n + s.rows.filter((r) => !r.v && !r.skip).length, 0); return `<button class="row" data-act="acvLedger" data-id="${esc(a.id)}"><span class="attn-ic tint">${ic(a.group === "bank" ? "bank" : "rupee")}</span><span class="grow"><div class="row-title">${esc(a.name)}</div><div class="row-sub">${a.group === "bank" ? (last ? `Statement to ${fmtDate(last.to)}${last.bal != null ? " · bank says " + rs2(last.bal) : ""}${un ? ` · <span style="color:var(--warn)">${un} line${un === 1 ? "" : "s"} to sort</span>` : " · all in the books"}` : "No statement uploaded yet") : "Cash in hand"}</div></span><span class="row-end"><span class="num" style="font-weight:600">${acDrCr((B[a.id] || {}).close || 0)}</span>${ic("chevR", "sm chev")}</span></button>`; }).join("")}</div>
+    ${AC_CAN ? `<div class="hstack gap-8 wrap"><button class="btn btn-secondary btn-sm" data-act="aceLedgerNew" data-g="bank">${ic("plus", "sm")} Add bank account</button><button class="btn btn-secondary btn-sm" data-act="aceNew" data-t="contra">${ic("repeat", "sm")} Move money between accounts</button></div>` : ""}
+    ${AC_CAN ? (acHasBank() ? `<div class="card card-pad"><div class="card-title" style="margin-bottom:4px">Upload a bank statement</div><div class="card-sub" style="margin-bottom:12px">Excel or CSV from net banking. Each line is matched to a distributor, Hangyo, a transporter or an expense; you check and add them.</div>${money.filter((a) => a.group === "bank").length > 1 ? `<div class="field" style="margin-bottom:10px"><label class="label" for="ac-bank-acc">Statement of</label><select class="select" id="ac-bank-acc">${money.filter((a) => a.group === "bank").map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select></div>` : ""}${dropZone({ input: "ac-bank-file", dataIn: "aceBankFile", accept: ".xlsx,.xls,.csv", title: "Bank statement", sub: "Excel (.xlsx, .xls) or CSV" })}</div>` : `<div class="banner info">${ic("info", "sm")}<span>Add your bank account first, then upload its statement here.</span></div>`) : ""}
+    ${acBankRowsHtml()}
+  </div>`;
+}
+const acBankUnmatched = () => AC().bank.stmts.reduce((n, s) => n + s.rows.filter((r) => !r.v && !r.skip).length, 0);
+
+/* ===== ACCOUNTS: entering things =====
+   Money in, money out, expenses, transfers between bank and cash, journals, opening balances, new accounts,
+   party GST details, a stock value for a day, the Vyapar invoice numbers of dispatches, and bringing in what
+   Vyapar recorded before the tool. Each voucher is kept in D.acct.vouchers and saved like everything else. */
+/* an account picker, grouped */
+function acSelect(id, val, groups, dataIn, extra) {
+  const ACC = acAccounts(), L = Object.values(ACC).filter((a) => !groups || groups.includes(a.group));
+  return `<select class="select" id="${id}" data-in="${dataIn}"${extra || ""}><option value="">Choose…</option>${AC_GROUPS.filter(([g]) => L.some((a) => a.group === g)).map(([g, label]) => `<optgroup label="${esc(label)}">${L.filter((a) => a.group === g).sort((a, b) => a.name.localeCompare(b.name)).map((a) => `<option value="${esc(a.id)}"${a.id === val ? " selected" : ""}>${esc(a.name)}</option>`).join("")}</optgroup>`).join("")}</select>`;
+}
+const AC_MONEY_G = ["bank", "cash"], AC_EXP_G = ["expenses", "direct", "fixed", "purchases", "advances", "curasset"];
+const AC_PARTY_IN = ["debtors", "creditors", "capital", "loans", "deposits", "income", "curliab", "advances", "curasset", "taxout", "taxin"];
+const AC_PARTY_OUT = ["creditors", "debtors", "expenses", "direct", "fixed", "capital", "loans", "deposits", "taxout", "taxin", "curliab", "advances", "curasset"];
+
+/* ---------- choose what to enter ---------- */
+ACT.aceNew = (el) => {
+  const t = el && el.dataset && el.dataset.t;
+  if (t) return acVoucherSheet({ type: t, party: el.dataset.party || "" });
+  const opt = (t, icon, title, sub) => `<button class="row" data-act="aceNew" data-t="${t}"><span class="attn-ic tint">${ic(icon)}</span><span class="grow"><div class="row-title">${title}</div><div class="row-sub">${sub}</div></span>${ic("chevR", "sm chev")}</button>`;
+  openSheet("New entry", `<div class="group">
+    ${opt("receipt", "down", "Money in", "A distributor, Swiggy or Zepto paid us, or partners put money in")}
+    ${opt("payment", "up", "Money out", "We paid Hangyo, a transporter, salaries, GST or anything else")}
+    ${opt("expense", "rupee", "Expense", "A bill: rent, electricity, cold storage, repairs… paid now or later")}
+    ${opt("contra", "repeat", "Move money", "Cash deposited in the bank, cash withdrawn, between bank accounts")}
+    ${opt("journal", "book", "Journal", "Anything else: adjustments, depreciation, provisions (debits = credits)")}
+  </div>
+  <div class="group" style="margin-top:16px">
+    <button class="row" data-act="aceOpening"><span class="attn-ic info">${ic("cal")}</span><span class="grow"><div class="row-title">Opening balances</div><div class="row-sub">As the books stood on ${fmtDate(addDays(AC().from, -1))} ${AC().from.slice(0, 4) - 0}</div></span>${ic("chevR", "sm chev")}</button>
+    <button class="row" data-act="aceLedgerNew"><span class="attn-ic info">${ic("plus")}</span><span class="grow"><div class="row-title">New account</div><div class="row-sub">A bank account, partner, expense head, loan…</div></span>${ic("chevR", "sm chev")}</button>
+    <button class="row" data-act="aceInvSheet"><span class="attn-ic info">${ic("doc")}</span><span class="grow"><div class="row-title">Vyapar invoice numbers</div><div class="row-sub">${acToNumber().length} dispatch${acToNumber().length === 1 ? "" : "es"} still without one</div></span>${ic("chevR", "sm chev")}</button>
+    <button class="row" data-act="aceVyapar"><span class="attn-ic info">${ic("repeat")}</span><span class="grow"><div class="row-title">Bring in from Vyapar</div><div class="row-sub">Purchases, payments and expenses from before the tool</div></span>${ic("chevR", "sm chev")}</button>
+  </div>`);
+};
+
+/* ---------- the voucher form ---------- */
+function acVoucherSheet(init) {
+  const t = init.type, today = acToday(), money = acMoneyAccs();
+  S.acV = Object.assign({ type: t, date: today, party: "", money: (money[0] || {}).id || "cash", to: "", amount: "", ref: "", note: "", gst: "0", inter: false, gstin: "", bill: "", paidHow: "money", lines: [{ a: "", dr: "", cr: "" }, { a: "", dr: "", cr: "" }] }, init);
+  if (t === "contra" && !S.acV.to) S.acV.to = (money.find((m) => m.id !== S.acV.money) || {}).id || "";
+  acVoucherOpen();
+}
+function acVoucherOpen() {
+  const V = S.acV, title = (V.id ? "Edit · " : "") + (AC_VTYPES[V.type] || ["Entry"])[0];
+  openSheet(title, `<div id="acv-form">${acVoucherForm()}</div>`, `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="aceSave">${ic("check", "sm")} ${V.id ? "Save changes" : "Save"}</button>`);
+}
+function acVoucherForm() {
+  const V = S.acV, f = (label, html, full, hint) => `<div class="field${full ? " full" : ""}"><label class="label">${label}</label>${html}${hint ? `<div class="row-sub" style="margin-top:4px">${hint}</div>` : ""}</div>`;
+  const inp = (k, type, ph, extra) => `<input class="input${type === "number" ? " num-in" : ""}" type="${type}" data-in="aceV" data-k="${k}" value="${esc(V[k])}" placeholder="${esc(ph || "")}"${type === "number" ? ' inputmode="decimal" step="0.01" min="0"' : ""}${extra || ""}>`;
+  const date = f("Date", inp("date", "date")), amt = f("Amount (₹)", inp("amount", "number", "0.00")), ref = f(V.type === "receipt" || V.type === "payment" ? "Reference" : "Bill / reference no.", inp("ref", "text", V.type === "receipt" ? "UTR, cheque no." : "Optional")), note = f("Note", inp("note", "text", "Optional"), true);
+  let hint = "";
+  if ((V.type === "receipt" || V.type === "payment") && V.party) { const L = acLedger(V.party, AC().from, acToday()); hint = `Balance now: ${acDrCr(L.close)}${V.party.startsWith("p:") && (acAccounts()[V.party] || {}).group === "debtors" ? (() => { const O = acOpenBills((acAccounts()[V.party] || {}).party, acToday()); return O.bills.length ? ` · ${O.bills.length} bill${O.bills.length > 1 ? "s" : ""} open, oldest ${fmtDate(O.bills[0].date)} for ${rs2(O.bills[0].left)}` : ""; })() : ""}`; }
+  if (V.type === "receipt") return `<div class="form-grid">${f("Received from", acSelect("acv-party", V.party, AC_PARTY_IN, "aceV", ' data-k="party"'), true, hint)}${f("Into", acSelect("acv-money", V.money, AC_MONEY_G, "aceV", ' data-k="money"'))}${amt}${date}${ref}${note}</div>`;
+  if (V.type === "payment") return `<div class="form-grid">${f("Paid to", acSelect("acv-party", V.party, AC_PARTY_OUT, "aceV", ' data-k="party"'), true, hint)}${f("From", acSelect("acv-money", V.money, AC_MONEY_G, "aceV", ' data-k="money"'))}${amt}${date}${ref}${note}</div>`;
+  if (V.type === "contra") return `<div class="form-grid">${f("From", acSelect("acv-money", V.money, AC_MONEY_G, "aceV", ' data-k="money"'))}${f("To", acSelect("acv-to", V.to, AC_MONEY_G, "aceV", ' data-k="to"'))}${amt}${date}${note}</div>`;
+  if (V.type === "expense") {
+    const sp = acExpenseSplit();
+    return `<div class="form-grid">${f("What for", acSelect("acv-party", V.party, AC_EXP_G, "aceV", ' data-k="party"'), true)}
+      ${f("Amount on the bill (₹)", inp("amount", "number", "0.00"), false, "Including any GST")}
+      ${f("GST on the bill", `<select class="select" data-in="aceV" data-k="gst">${["0", "5", "12", "18", "28"].map((r) => `<option value="${r}"${V.gst === r ? " selected" : ""}>${r === "0" ? "No GST / not claiming" : r + "%"}</option>`).join("")}</select>`)}
+      ${V.gst !== "0" ? f("Supplier's GSTIN", inp("gstin", "text", "Needed to claim the GST"), false, V.gstin && !acGstinOK(V.gstin.toUpperCase()) ? `<span style="color:var(--warn)">That does not look like a GSTIN</span>` : V.gstin && V.gstin.slice(0, 2) !== AC_STATE ? "Other state: counted as IGST" : "") : ""}
+      ${f("Paid", `<select class="select" data-in="aceV" data-k="paidHow"><option value="money"${V.paidHow === "money" ? " selected" : ""}>Paid now</option><option value="later"${V.paidHow === "later" ? " selected" : ""}>To pay later</option></select>`)}
+      ${V.paidHow === "later" ? f("Owed to", acSelect("acv-to", V.to, ["creditors", "curliab"], "aceV", ' data-k="to"'), false, `Not in the list? <button class="btn-plain" data-act="aceLedgerNew" data-g="creditors">Add a supplier</button>`) : f("Paid from", acSelect("acv-money", V.money, AC_MONEY_G, "aceV", ' data-k="money"'))}
+      ${date}${f("Bill no.", inp("bill", "text", "Optional"))}${note}</div>
+      ${sp.gst ? `<div class="row-sub" style="margin-top:10px">Expense ${rs2(sp.net)} + GST ${rs2(sp.gst)}${sp.itc ? " (claimed as input credit)" : ""}</div>` : ""}`;
+  }
+  /* journal */
+  const tdr = V.lines.reduce((a, l) => a + (+l.dr || 0), 0), tcr = V.lines.reduce((a, l) => a + (+l.cr || 0), 0);
+  return `<div class="form-grid">${date}${note}</div>
+    <div class="ac-jrows">${V.lines.map((l, i) => `<div class="ac-jrow">${acSelect("acv-a" + i, l.a, null, "aceJ", ` data-i="${i}" data-k="a" aria-label="Account ${i + 1}"`)}<input class="input num-in" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Debit" data-in="aceJ" data-i="${i}" data-k="dr" value="${esc(l.dr)}" aria-label="Debit"><input class="input num-in" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Credit" data-in="aceJ" data-i="${i}" data-k="cr" value="${esc(l.cr)}" aria-label="Credit">${V.lines.length > 2 ? `<button class="icon-btn" data-act="aceJDel" data-i="${i}" aria-label="Remove line">${ic("x", "sm")}</button>` : "<span></span>"}</div>`).join("")}</div>
+    <div class="hstack gap-8" style="justify-content:space-between;margin-top:10px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" data-act="aceJAdd">${ic("plus", "sm")} Add a line</button><span class="row-sub" id="acv-jtot">${acJTot(tdr, tcr)}</span></div>`;
+}
+const acJTot = (dr, cr) => `Debits ${rs2(dr)} · credits ${rs2(cr)}${Math.abs(dr - cr) > 0.004 ? ` · <span style="color:var(--bad);font-weight:600">differ by ${rs2(Math.abs(dr - cr))}</span>` : dr > 0 ? ` · <span style="color:var(--good);font-weight:600">balanced</span>` : ""}`;
+function acExpenseSplit() {
+  const V = S.acV, tot = +V.amount || 0, r = +V.gst || 0, net = r ? acR2(tot / (1 + r / 100)) : tot, gst = acR2(tot - net);
+  return { tot: acR2(tot), net, gst, itc: !!(gst && V.gstin && acGstinOK(String(V.gstin).toUpperCase())) };
+}
+IN.aceV = (el) => {
+  const V = S.acV; if (!V) return; V[el.dataset.k] = el.value;
+  if (["party", "gst", "paidHow", "gstin"].includes(el.dataset.k) && el.tagName === "SELECT") { part("acv-form", acVoucherForm()); return; }
+  if (el.dataset.k === "gstin" || (V.type === "expense" && el.dataset.k === "amount")) { clearTimeout(IN.aceV._t); IN.aceV._t = setTimeout(() => { const a = document.activeElement, k = a && a.dataset && a.dataset.k, at = a && a.selectionStart; part("acv-form", acVoucherForm()); const n = k && $(`#acv-form [data-k="${k}"]`); if (n) { n.focus(); try { n.setSelectionRange(at, at); } catch (x) {} } }, 500); }
+};
+IN.aceJ = (el) => { const V = S.acV, l = V.lines[+el.dataset.i]; if (!l) return; l[el.dataset.k] = el.value; if (el.dataset.k === "dr" && +el.value) { l.cr = ""; const c = $(`[data-in="aceJ"][data-i="${el.dataset.i}"][data-k="cr"]`); if (c) c.value = ""; } if (el.dataset.k === "cr" && +el.value) { l.dr = ""; const c = $(`[data-in="aceJ"][data-i="${el.dataset.i}"][data-k="dr"]`); if (c) c.value = ""; } part("acv-jtot", acJTot(V.lines.reduce((a, x) => a + (+x.dr || 0), 0), V.lines.reduce((a, x) => a + (+x.cr || 0), 0))); };
+ACT.aceJAdd = () => { S.acV.lines.push({ a: "", dr: "", cr: "" }); part("acv-form", acVoucherForm()); };
+ACT.aceJDel = (el) => { S.acV.lines.splice(+el.dataset.i, 1); part("acv-form", acVoucherForm()); };
+
+/* build the entry from the form; returns an error text or the voucher */
+function acVoucherBuild() {
+  const V = S.acV, ACC = acAccounts(), amt = acR2(V.amount);
+  if (!V.date) return "Choose a date.";
+  if (V.date < AC().from) return `The books start on ${fmtDate(AC().from)} ${AC().from.slice(0, 4)}. Put anything before that in the opening balances.`;
+  const v = { type: V.type, date: V.date, ref: (V.ref || "").trim(), note: (V.note || "").trim(), form: Object.assign({}, V, { lines: undefined }) };
+  if (V.type === "receipt" || V.type === "payment") {
+    if (!V.party) return V.type === "receipt" ? "Choose who paid." : "Choose who was paid.";
+    if (!V.money) return "Choose the bank account or cash."; if (!(amt > 0)) return "Enter the amount.";
+    const sg = V.type === "receipt" ? 1 : -1; v.lines = [{ a: V.money, v: sg * amt }, { a: V.party, v: -sg * amt }]; v.party = acName(V.party, ACC); v.text = `${V.type === "receipt" ? "Received" : "Paid"}${V.ref ? " · " + V.ref : ""} · ${acName(V.money, ACC)}`; v.total = amt;
+  } else if (V.type === "contra") {
+    if (!V.money || !V.to || V.money === V.to) return "Choose two different accounts."; if (!(amt > 0)) return "Enter the amount.";
+    v.lines = [{ a: V.to, v: amt }, { a: V.money, v: -amt }]; v.party = ""; v.text = `${acName(V.money, ACC)} → ${acName(V.to, ACC)}`; v.total = amt;
+  } else if (V.type === "expense") {
+    if (!V.party) return "Choose what the expense was for."; if (!(amt > 0)) return "Enter the amount on the bill.";
+    const sp = acExpenseSplit(), other = V.paidHow === "later" ? V.to : V.money; if (!other) return V.paidHow === "later" ? "Choose whom it is owed to." : "Choose how it was paid.";
+    const gstin = String(V.gstin || "").toUpperCase(), inter = sp.itc && gstin.slice(0, 2) !== AC_STATE;
+    v.lines = [{ a: V.party, v: sp.itc ? sp.net : sp.tot }];
+    if (sp.itc) { const tl = inter ? [{ a: "in-igst", v: sp.gst, tax: "igst" }] : [{ a: "in-cgst", v: acR2(sp.gst / 2), tax: "cgst" }, { a: "in-sgst", v: acR2(sp.gst - acR2(sp.gst / 2)), tax: "sgst" }]; tl.forEach((l) => v.lines.push(l)); v.itc = tl.map((l) => ({ k: l.tax, v: l.v })); v.taxable = sp.net; v.gstin = gstin; }
+    v.lines.push({ a: other, v: -sp.tot }); v.party = V.paidHow === "later" ? acName(V.to, ACC) : acName(V.party, ACC); v.text = `${acName(V.party, ACC)}${V.bill ? " · bill " + V.bill : ""}${V.paidHow === "later" ? " · to pay" : " · " + acName(V.money, ACC)}`; v.total = sp.tot; v.ref = V.bill || v.ref;
+  } else {
+    const L = V.lines.filter((l) => l.a && ((+l.dr || 0) > 0 || (+l.cr || 0) > 0)); if (L.length < 2) return "A journal needs at least two accounts.";
+    const dr = acR2(L.reduce((a, l) => a + (+l.dr || 0), 0)), cr = acR2(L.reduce((a, l) => a + (+l.cr || 0), 0)); if (Math.abs(dr - cr) > 0.004) return `Debits (${rs2(dr)}) and credits (${rs2(cr)}) must be equal.`;
+    v.lines = L.map((l) => ({ a: l.a, v: acR2((+l.dr || 0) - (+l.cr || 0)) })); v.party = ""; v.text = L.map((l) => acName(l.a, ACC)).slice(0, 3).join(", "); v.total = dr; v.form.lines = V.lines;
+  }
+  if (V.note) v.text += " · " + V.note;
+  return v;
+}
+ACT.aceSave = () => {
+  const v = acVoucherBuild(); if (typeof v === "string") { toast(v, "alert"); return; }
+  const A = acStore(), V = S.acV;
+  if (V.id) { const old = A.vouchers.find((x) => x.id === V.id); if (old) { Object.assign(old, v, { id: old.id, no: old.no, by: old.by, time: old.time, edited: iso(NOW()), editedBy: HOST ? ME.name : undefined, bank: old.bank, src: old.src }); logActivity("Accounts entry changed", old.no, old.text); } }
+  else { v.id = acId("V"); v.no = acNextNo(v.type, v.date); v.by = HOST ? ME.name : undefined; v.time = iso(NOW()); if (V.bank) { v.bank = V.bank; v.src = "bank"; } A.vouchers.push(v); logActivity("Accounts entry added", v.no, `${AC_VTYPES[v.type][0]} · ${v.party || v.text} · ${rs2(v.total)}`); if (V.bank) acBankLink(V.bank, v.id); }
+  acDirty(); closeSheet(); render(); toast(`${AC_VTYPES[v.type][0]} saved`, "check");
+};
+ACT.aceEdit = (el) => {
+  const v = AC().vouchers.find((x) => x.id === el.dataset.id); if (!v) return;
+  if (v.form) { S.acV = Object.assign({}, v.form, { id: v.id, lines: v.form.lines || [{ a: "", dr: "", cr: "" }, { a: "", dr: "", cr: "" }] }); }
+  else S.acV = { id: v.id, type: "journal", date: v.date, note: v.note || "", lines: v.lines.map((l) => ({ a: l.a, dr: l.v > 0 ? String(l.v) : "", cr: l.v < 0 ? String(-l.v) : "" })) };
+  if (!AC_VTYPES[S.acV.type]) S.acV.type = "journal";
+  acVoucherOpen();
+};
+ACT.aceDel = (el) => {
+  if (el.dataset.sure !== "1") { el.dataset.sure = "1"; el.innerHTML = "Tap again to delete"; el.classList.add("btn-danger"); return; }
+  const v = AC().vouchers.find((x) => x.id === el.dataset.id); if (!v) return;
+  v.deleted = true; v.deletedAt = iso(NOW()); v.deletedBy = HOST ? ME.name : undefined;
+  if (v.bank) acBankLink(v.bank, null);
+  logActivity("Accounts entry deleted", v.no, v.text); acDirty(); closeSheet(); render(); toast("Entry deleted", "trash");
+};
+
+/* ---------- opening balances ---------- */
+ACT.aceOpening = () => {
+  const A = acStore(), ACC = acAccounts(), d = addDays(A.from, -1);
+  const groups = AC_GROUPS.filter(([g, , , s]) => s === "A" || s === "L");
+  const row = (a) => { const v = +A.opening[a.id] || 0; return `<div class="ac-orow"><span class="grow clip">${esc(a.name)}</span><input class="input sm num-in" type="number" inputmode="decimal" step="0.01" min="0" data-in="aceOpen" data-id="${esc(a.id)}" value="${v ? Math.abs(v) : ""}" placeholder="0.00" aria-label="${esc(a.name)} amount"><select class="select sm" data-in="aceOpen" data-id="${esc(a.id)}" data-k="side" aria-label="Debit or credit"><option value="dr"${v >= 0 ? " selected" : ""}>Dr</option><option value="cr"${v < 0 ? " selected" : ""}>Cr</option></select></div>`; };
+  openSheet(`Opening balances · ${fmtDate(d)} ${d.slice(0, 4)}`, `<div class="row-sub" style="margin-bottom:12px">How things stood the day before the books start. What we have (bank, cash, stock, money owed to us) is a debit; what we owe and partners' capital is a credit. Take them from the closing balance sheet of the year before.</div>
+    ${groups.map(([g, label, formal, side]) => { const L = Object.values(ACC).filter((a) => a.group === g && !(a.sys && !["cash", "stock"].includes(a.id) && g !== "taxin" && g !== "taxout")); if (!L.length) return ""; return `<div style="margin-top:14px"><div class="group-label"><span>${esc(label)} <span class="dim">· ${esc(formal)}</span></span><span>${side === "A" ? "usually Dr" : "usually Cr"}</span></div><div class="group ac-ogroup">${L.sort((a, b) => a.name.localeCompare(b.name)).map(row).join("")}</div></div>`; }).join("")}
+    <div class="hstack gap-8" style="margin-top:12px"><button class="btn btn-secondary btn-sm" data-act="aceLedgerNew">${ic("plus", "sm")} Add an account</button></div>`,
+    `<span class="row-sub grow" id="ac-odiff">${acOpenDiffTxt()}</span><button class="btn btn-primary" data-act="aceOpenDone">Done</button>`, true);
+};
+const acOpenDiffTxt = () => { const d = acOpeningDiff(); return Math.abs(d) < 0.005 ? `<span style="color:var(--good);font-weight:600">${ic("check", "sm")} Balanced</span>` : `Debits and credits differ by <b>${rs2(Math.abs(d))}</b>`; };
+IN.aceOpen = (el) => {
+  const A = acStore(), id = el.dataset.id, amt = $(`[data-in="aceOpen"][data-id="${CSS.escape(id)}"]:not([data-k])`), side = $(`[data-in="aceOpen"][data-id="${CSS.escape(id)}"][data-k="side"]`);
+  const v = acR2(+(amt && amt.value) || 0) * (side && side.value === "cr" ? -1 : 1);
+  if (v) A.opening[id] = v; else delete A.opening[id];
+  acDirty(); part("ac-odiff", acOpenDiffTxt());
+};
+ACT.aceOpenDone = () => { const A = acStore(); A.openingDone = true; logActivity("Opening balances updated", fmtDate(addDays(A.from, -1)), `${Object.keys(A.opening).length} accounts`); closeSheet(); render(); };
+
+/* ---------- accounts (ledgers) ---------- */
+ACT.aceLedgerNew = (el) => {
+  const g = (el && el.dataset && el.dataset.g) || "bank", back = sheetOpen && S.acV ? S.acV : null;
+  S.acL = { name: "", group: g, gstin: "", acno: "", ifsc: "", back };
+  openSheet("New account", `<div id="acl-form">${acLedgerForm()}</div>`, `<button class="btn btn-secondary" data-act="aceLedgerCancel">Cancel</button><button class="btn btn-primary" data-act="aceLedgerSave">${ic("check", "sm")} Add account</button>`);
+  setTimeout(() => { const i = $('#acl-form [data-k="name"]'); if (i) i.focus(); }, 50);
+};
+function acLedgerForm() {
+  const L = S.acL, inp = (k, ph) => `<input class="input" data-in="aceL" data-k="${k}" value="${esc(L[k])}" placeholder="${esc(ph)}">`;
+  return `<div class="form-grid"><div class="field full"><label class="label">Name</label>${inp("name", L.group === "bank" ? "e.g. HDFC Bank current account" : L.group === "capital" ? "e.g. Vishnu – capital" : "Name")}</div>
+    <div class="field full"><label class="label">Kind</label><select class="select" data-in="aceL" data-k="group">${AC_GROUPS.map(([g, label, formal]) => `<option value="${g}"${g === L.group ? " selected" : ""}>${esc(label)} (${esc(formal)})</option>`).join("")}</select></div>
+    ${L.group === "bank" ? `<div class="field"><label class="label">Account number (last 4)</label>${inp("acno", "Optional")}</div><div class="field"><label class="label">IFSC</label>${inp("ifsc", "Optional")}</div>` : ""}
+    ${["debtors", "creditors"].includes(L.group) ? `<div class="field full"><label class="label">GSTIN</label>${inp("gstin", "Optional")}</div>` : ""}</div>`;
+}
+IN.aceL = (el) => { S.acL[el.dataset.k] = el.value; if (el.dataset.k === "group") part("acl-form", acLedgerForm()); };
+ACT.aceLedgerCancel = () => { const b = S.acL && S.acL.back; if (b) { S.acV = b; acVoucherOpen(); } else closeSheet(); };
+ACT.aceLedgerSave = () => {
+  const L = S.acL, name = String(L.name || "").trim(); if (!name) { toast("Give the account a name.", "alert"); return; }
+  const ACC = acAccounts(); if (Object.values(ACC).some((a) => key(a.name) === key(name))) { toast("There is already an account with that name.", "alert"); return; }
+  const A = acStore(), id = "l:" + acId("L").slice(2), x = { id, name, group: L.group, by: HOST ? ME.name : undefined, time: iso(NOW()) };
+  if (L.group === "bank") { x.acno = String(L.acno || "").trim(); x.ifsc = String(L.ifsc || "").trim().toUpperCase(); }
+  if (L.gstin) { x.party = name; A.parties[name] = Object.assign(A.parties[name] || {}, { gstin: String(L.gstin).toUpperCase().trim() }); }
+  A.ledgers.push(x); logActivity("Account added", name, (AC_GROUP[L.group] || {}).label); acDirty(); toast(`${name} added`, "check");
+  const b = L.back; if (b) { S.acV = b; if (b.type === "expense" && L.group === "creditors") { b.to = id; b.paidHow = "later"; } else if (L.group === "bank" && !b.money) b.money = id; acVoucherOpen(); } else { closeSheet(); render(); }
+};
+
+/* ---------- a party's GST details ---------- */
+ACT.aceParty = (el) => {
+  const p = canonDist(el.dataset.p), info = acPartyInfo(p);
+  S.acPty = { p, gstin: info.gstin, addr: info.addr };
+  openSheet(`${esc(p)} · GST details`, `<div class="form-grid"><div class="field full"><label class="label" for="acp-g">GSTIN</label><input class="input mono" id="acp-g" data-in="acePty" data-k="gstin" value="${esc(info.gstin)}" placeholder="15 characters, e.g. 32ABCDE1234F1Z5" maxlength="15" autocapitalize="characters"><div class="row-sub" id="acp-msg" style="margin-top:4px">${acGstinMsg(info.gstin)}</div></div><div class="field full"><label class="label" for="acp-a">Billing address</label><input class="input" id="acp-a" data-in="acePty" data-k="addr" value="${esc(info.addr)}" placeholder="Optional"></div></div>
+    <div class="row-sub" style="margin-top:12px">With a GSTIN, sales go in GSTR-1 as B2B invoices. A GSTIN from outside Kerala (not starting 32) makes the tax IGST instead of CGST + SGST.</div>`,
+    `<button class="btn btn-secondary" data-act="closeSheet">Cancel</button><button class="btn btn-primary" data-act="acePtySave">${ic("check", "sm")} Save</button>`);
+};
+const acGstinMsg = (g) => { g = String(g || "").toUpperCase(); return !g ? "" : acGstinOK(g) ? `<span style="color:var(--good)">${ic("check", "sm")} ${g.slice(0, 2) === AC_STATE ? "Kerala: CGST + SGST" : "State " + g.slice(0, 2) + ": IGST"}</span>` : `<span style="color:var(--warn)">That does not look like a GSTIN yet</span>`; };
+IN.acePty = (el) => { S.acPty[el.dataset.k] = el.value; if (el.dataset.k === "gstin") part("acp-msg", acGstinMsg(el.value)); };
+ACT.acePtySave = () => {
+  const P = S.acPty, g = String(P.gstin || "").toUpperCase().replace(/\s+/g, ""); if (g && !acGstinOK(g)) { toast("Check the GSTIN: it should be 15 characters, like 32ABCDE1234F1Z5.", "alert"); return; }
+  const A = acStore(); A.parties[P.p] = Object.assign(A.parties[P.p] || {}, { gstin: g, addr: String(P.addr || "").trim() });
+  logActivity("Party GST details changed", P.p, g || "GSTIN removed"); acDirty(); closeSheet(); render(); toast("Saved", "check");
+};
+
+/* ---------- a stock value for a day ---------- */
+ACT.aceStock = (el) => {
+  const d = el.dataset.d, A = AC(), cur = A.stockAt[d], tool = d >= (acStockFirst() || "9999") ? acStockQtyValue(d).v : null;
+  openSheet(`Stock value · ${fmtDate(d)} ${d.slice(0, 4)}`, `<div class="row-sub" style="margin-bottom:12px">The value of all stock (SahiReach and quick commerce) at cost, excluding GST, at the end of the day. ${tool != null ? `The tool works it out as <b>${rs2(tool)}</b>; enter a figure only if your count is different.` : `The tool's stock records start on ${fmtDate(acStockFirst())}, so it cannot work this one out. Take it from Vyapar's stock summary for that day.`}</div>
+    <div class="field"><label class="label" for="ac-stk">Stock value (₹)</label><input class="input num-in" id="ac-stk" type="number" inputmode="decimal" step="0.01" min="0" value="${cur != null ? cur : ""}" placeholder="${tool != null ? tool : "0.00"}"></div>`,
+    `${cur != null ? `<button class="btn btn-secondary" data-act="aceStockSave" data-d="${d}" data-clear="1">Use the tool's figure</button>` : ""}<button class="btn btn-primary" data-act="aceStockSave" data-d="${d}">${ic("check", "sm")} Save</button>`);
+};
+ACT.aceStockSave = (el) => {
+  const A = acStore(), d = el.dataset.d;
+  if (el.dataset.clear) delete A.stockAt[d]; else { const v = $("#ac-stk").value; if (v === "" || isNaN(+v)) { toast("Enter the stock value.", "alert"); return; } A.stockAt[d] = acR2(v); }
+  logActivity("Stock value for the books", fmtDate(d), el.dataset.clear ? "Back to the tool's figure" : rs2(A.stockAt[d])); acDirty(); closeSheet(); render();
+};
+
+/* ---------- Vyapar invoice and e-way bill numbers ---------- */
+ACT.aceInvSheet = () => {
+  const L = acToNumber(), next = acNextInv();
+  openSheet("Vyapar invoice numbers", `<div class="row-sub" style="margin-bottom:12px">Vyapar makes the invoice (and the e-way bill); the tool keeps its number against the dispatch, for GSTR-1 and the party statements. The next number after the last one recorded is <b class="mono">${esc(next)}</b>.</div>
+    ${L.length ? `<div class="group">${L.map((x) => `<div class="row ac-invrow"><span class="grow" style="min-width:0"><div class="row-title clip">${esc(x.party)}</div><div class="row-sub">${fmtDate(x.date)} · ${rs2(x.value)} incl. GST · ${x.t === "qc" ? "PO " + esc(x.id) : esc(x.id.replace("ORD-", "Order "))}</div></span><input class="input sm mono" data-in="aceInvNo" data-t="${x.t}" data-id="${esc(x.id)}" placeholder="${esc(next)}" aria-label="Invoice number for ${esc(x.party)}"><input class="input sm mono" data-in="aceEwb" data-t="${x.t}" data-id="${esc(x.id)}" placeholder="E-way bill (optional)" aria-label="E-way bill number"></div>`).join("")}</div>` : `<div class="empty">Every dispatch has its invoice number.</div>`}`,
+    `<button class="btn btn-primary" data-act="aceInvDone">Done</button>`, true);
+};
+ACT.aceInvDone = () => { closeSheet(); render(); };
+const acDoc = (t, id) => (t === "qc" ? D.qcPOs.find((p) => p.po === id) : D.orders.find((o) => o.id === id));
+IN.aceInvNo = (el) => { const o = acDoc(el.dataset.t, el.dataset.id); if (!o) return; const v = el.value.trim().toUpperCase(); if (v) { const dup = D.orders.some((x) => x !== o && x.inv === v) || D.qcPOs.some((x) => x !== o && x.inv === v) || (D.salesBefore || []).some((r) => r.inv === v); el.classList.toggle("bad", dup); if (dup) { toast(`${v} is already used`, "alert"); return; } } if (v) o.inv = v; else delete o.inv; acDirty(); clearTimeout(IN.aceInvNo._t); IN.aceInvNo._t = setTimeout(() => logActivity("Invoice number recorded", el.dataset.id, v || "removed"), 1500); };
+IN.aceEwb = (el) => { const o = acDoc(el.dataset.t, el.dataset.id); if (!o) return; const v = el.value.trim(); if (v) o.ewb = v; else delete o.ewb; acDirty(); };
+ACT.aceInvOne = (el) => {
+  const o = acDoc(el.dataset.t, el.dataset.id); if (!o) return; const back = el.dataset.back;
+  openSheet(`Invoice number · ${esc(el.dataset.t === "qc" ? o.platform + " PO " + o.po : o.dist)}`, `<div class="form-grid"><div class="field"><label class="label">Vyapar invoice number</label><input class="input mono" data-in="aceInvNo" data-t="${el.dataset.t}" data-id="${esc(el.dataset.id)}" value="${esc(o.inv || "")}" placeholder="${esc(acNextInv())}"></div><div class="field"><label class="label">E-way bill number</label><input class="input mono" data-in="aceEwb" data-t="${el.dataset.t}" data-id="${esc(el.dataset.id)}" value="${esc(o.ewb || "")}" placeholder="Optional"></div></div><div class="row-sub" style="margin-top:10px">As made in Vyapar. Used for GSTR-1 and on party statements.</div>`,
+    `<button class="btn btn-primary" data-act="${back === "order" ? "orderSheet" : "closeSheet"}" data-id="${esc(el.dataset.id)}">Done</button>`);
+};
+
+/* ---------- bringing in Vyapar's records from before the tool ---------- */
+ACT.aceVyapar = () => {
+  const A = AC(), first = acStockFirst();
+  openSheet("Bring in from Vyapar", `<div class="row-sub">In Vyapar: <b>Reports → All transactions</b> (or Day book), choose ${fmtDate(A.from)} ${A.from.slice(0, 4)} to today, and export to Excel. Drop the file here. You will see what comes in before anything is added.</div>
+    <ul class="ac-list"><li><b>Purchases</b> from Hangyo dated before ${first ? fmtDate(first) + " " + first.slice(0, 4) : "the tool"} come in (later ones are already in the tool).</li><li><b>Payment-in, payment-out and expenses</b> come in as money in, money out and expenses, so balances are right.</li><li><b>Sales, credit and debit notes</b> are not brought in: the tool has them already.</li></ul>
+    <div style="margin-top:14px">${dropZone({ input: "ac-vy-file", dataIn: "aceVyFile", accept: ".xlsx,.xls,.csv", title: "Vyapar report", sub: "All transactions / Day book, Excel" })}</div><div id="ac-vy-out" style="margin-top:14px">${acVyImportsHtml()}</div>`, `<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
+};
+function acVyImportsHtml() {
+  const I = AC().imports.filter((x) => !x.removed); if (!I.length) return "";
+  return `<div class="group-label"><span>Brought in before</span></div><div class="group">${I.map((x) => `<div class="row"><span class="grow"><div class="row-title">${esc(x.file)}</div><div class="row-sub">${fmtDT(x.at)} · ${x.n} entries${x.by ? " · " + esc(x.by) : ""}</div></span>${AC_CAN ? `<button class="btn btn-secondary btn-sm" data-act="aceVyUndo" data-id="${esc(x.id)}">Take out</button>` : ""}</div>`).join("")}</div>`;
+}
+async function acReadSheetFile(file) {
+  await loadScriptOnce(XLSX_SRC, () => !!window.XLSX);
+  /* a CSV is read as text, so 02/11/2026 stays 2 November (Indian banks write day first), not February */
+  const csv = /\.(csv|txt)$/i.test(file.name || "") || /csv/.test(file.type || "");
+  const wb = csv ? window.XLSX.read(await file.text(), { type: "string", raw: true }) : window.XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true }), out = [];
+  wb.SheetNames.forEach((n) => out.push(window.XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: "", raw: true })));
+  return out;
+}
+/* dates as Vyapar and banks write them: 05/10/2026, 05-10-26, 05-Oct-2026, 2026-10-05, Excel dates */
+function acParseDate(v) {
+  if (v instanceof Date && !isNaN(v)) return ymd(new Date(v.getTime() + 12 * 3600e3));
+  if (typeof v === "number" && v > 30000 && v < 80000) { const d = new Date(Date.UTC(1899, 11, 30) + v * 864e5); return d.toISOString().slice(0, 10); }
+  const s = String(v || "").trim(); let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return `${m[1]}-${pad2(m[2])}-${pad2(m[3])}`;
+  if ((m = s.match(/^(\d{1,2})[\/\-. ](\d{1,2})[\/\-. ](\d{2,4})/))) { const y = m[3].length === 2 ? "20" + m[3] : m[3]; return `${y}-${pad2(m[2])}-${pad2(m[1])}`; }
+  if ((m = s.match(/^(\d{1,2})[\/\-. ]?([A-Za-z]{3})[A-Za-z]*[\/\-. ,]*(\d{2,4})/))) { const mo = MONTHS.findIndex((x) => x.toLowerCase() === m[2].toLowerCase()); if (mo >= 0) { const y = m[3].length === 2 ? "20" + m[3] : m[3]; return `${y}-${pad2(mo + 1)}-${pad2(m[1])}`; } }
+  return "";
+}
+const acNum = (v) => { if (typeof v === "number") return v; const s = String(v || "").replace(/[₹,\s]/g, "").replace(/^\((.*)\)$/, "-$1"); const n = parseFloat(s.replace(/(cr|dr)$/i, "")); return isNaN(n) ? 0 : n; };
+/* find the header row and the columns we need */
+function acFindCols(rows, want) {
+  for (let i = 0; i < Math.min(rows.length, 40); i++) {
+    const r = rows[i].map((c) => key(String(c))), col = {};
+    Object.keys(want).forEach((k) => { const j = r.findIndex((c, ci) => c && want[k].some((re) => re.test(c)) && !Object.values(col).includes(ci)); if (j >= 0) col[k] = j; });
+    if (col.date != null && Object.keys(col).length >= 3) return { at: i, col };
+  }
+  return null;
+}
+/* which account a name in Vyapar (or a bank line) belongs to */
+function acMatchParty(text) {
+  const t = key(text); if (!t) return null; const ACC = acAccounts();
+  if (/hangyo/.test(t)) return acPartyId("Hangyo");
+  if (/swiggy|scootsy|instamart|jupiter ?kart/.test(t)) return acPartyId("Swiggy");
+  if (/zepto|kiranakart|geddit|drogheria/.test(t)) return acPartyId("Zepto");
+  let best = null, score = 0;
+  Object.values(ACC).forEach((a) => {
+    if (a.sys || a.starter || !["debtors", "creditors", "capital", "loans", "deposits"].includes(a.group)) return; const words = key(a.name).replace(/[^a-z0-9 ]/g, " ").split(" ").filter((w) => w.length >= 4 && !/^(traders|agency|agencies|foods|food|distributors|distribution|enterprises|services|private|limited|kerala|marketing|ice|cream|creams|bank|account|charges|payment|transfer)$/.test(w));
+    const d = distByKey[key(a.party || a.name)], sh = d && d.short ? key(d.short) : ""; let s = words.filter((w) => t.includes(w)).length * 2; if (sh && sh.length >= 4 && t.includes(sh)) s += 2; if (key(a.name) && t.includes(key(a.name))) s += 5;
+    if (s > score) { score = s; best = a.id; }
+  });
+  return score >= 2 ? best : null;
+}
+IN.aceVyFile = async (el) => {
+  const f = el.files && el.files[0]; if (!f) return; part("ac-vy-out", `<div class="row-sub">Reading ${esc(f.name)}…</div>`);
+  let sheets; try { sheets = await acReadSheetFile(f); } catch (e) { part("ac-vy-out", `<div class="banner bad">${ic("alert", "sm")}<span>Could not read that file. Export it from Vyapar as Excel and try again.</span></div>`); return; }
+  const want = { date: [/^date$/, /date/], type: [/^type$/, /transaction type|txn type|^type/], party: [/party/, /name/], no: [/ref|invoice|bill|^no|number/], total: [/^total|total amount|^amount/], paid: [/received|paid/], how: [/payment type|mode/], cat: [/category|expense/], desc: [/description|remarks|note/] };
+  let H = null, rows = null; for (const s of sheets) { const h = acFindCols(s, want); if (h && h.col.type != null && h.col.total != null) { H = h; rows = s; break; } }
+  if (!H) { part("ac-vy-out", `<div class="banner bad">${ic("alert", "sm")}<span>This does not look like Vyapar's All transactions report (it needs Date, Type, Party and Total columns).</span></div>`); return; }
+  const first = acStockFirst(), A = AC(), plan = [], skip = {}, money = acMoneyAccs(), bank = (money.find((m) => m.group === "bank") || {}).id || "cash";
+  const seenPur = new Set(D.purchases.map((p) => key(p.inv))), seenV = new Set(A.vouchers.filter((v) => !v.deleted && v.vy).map((v) => v.vy));
+  rows.slice(H.at + 1).forEach((r) => {
+    const g = (k) => (H.col[k] != null ? r[H.col[k]] : ""), date = acParseDate(g("date")), type = key(g("type")), party = String(g("party") || "").trim(), no = String(g("no") || "").trim(), tot = Math.abs(acNum(g("total"))), how = key(g("how")), cat = String(g("cat") || "").trim();
+    if (!date || !type || !(tot > 0)) return; const sk = (why) => (skip[why] = (skip[why] || 0) + 1);
+    if (date < A.from) return sk("Before the books start");
+    const vk = [date, type, no, party, tot].join("|"); if (seenV.has(vk)) return sk("Already brought in");
+    const moneyAcc = /cash/.test(how) ? "cash" : bank, pid = acMatchParty(party);
+    if (/^(sale|sale order|estimate|delivery challan|credit note|debit note|sale return|purchase return|purchase order)$/.test(type) || /sale/.test(type)) return sk(/credit|debit|return/.test(type) ? "Notes (already in the tool)" : "Sales (already in the tool)");
+    if (/^purchase( bill)?$/.test(type)) {
+      if (!/hangyo/i.test(party)) return plan.push({ vk, type: "journal", date, party, no, tot, why: "Purchase from " + party, lines: (() => { const net = acR2(tot / 1.05), tl = acTaxLines(net, false, false); return [{ a: "purchases", v: net }].concat(tl.map((l) => ({ a: l.a, v: l.v, tax: l.tax })), [{ a: pid || "suspense", v: -tot }]); })(), kind: "purchase" });
+      if (first && date >= first) return sk("Purchases already in the tool");
+      if (no && seenPur.has(key(no))) return sk("Purchases already in the tool");
+      const net = acR2(tot / 1.05), tl = acTaxLines(net, acInter("Hangyo"), false);
+      return plan.push({ vk, type: "journal", kind: "purchase", date, party: "Hangyo", no, tot, lines: [{ a: "purchases", v: net }].concat(tl.map((l) => ({ a: l.a, v: l.v, tax: l.tax })), [{ a: acPartyId("Hangyo"), v: -acR2(net + tl.reduce((a, l) => a + l.v, 0)) }]), itc: tl.map((l) => ({ k: l.tax, v: l.v })), taxable: net });
+    }
+    if (/payment.?in|receipt/.test(type)) return plan.push({ vk, type: "receipt", date, party: party || "?", no, tot, lines: [{ a: moneyAcc, v: tot }, { a: pid || "suspense", v: -tot }], unk: !pid });
+    if (/payment.?out/.test(type)) return plan.push({ vk, type: "payment", date, party: party || "?", no, tot, lines: [{ a: pid || "suspense", v: tot }, { a: moneyAcc, v: -tot }], unk: !pid });
+    if (/expense/.test(type)) { const ea = acExpenseAcc(cat + " " + party); return plan.push({ vk, type: "expense", date, party: cat || party || "Expense", no, tot, lines: [{ a: ea, v: tot }, { a: moneyAcc, v: -tot }] }); }
+    if (/other income/.test(type)) return plan.push({ vk, type: "receipt", date, party: party || cat || "Other income", no, tot, lines: [{ a: moneyAcc, v: tot }, { a: "x:interest", v: -tot }] });
+    sk(String(g("type")));
+  });
+  S.acVy = { file: f.name, plan };
+  const by = {}; plan.forEach((p) => { const k = p.kind === "purchase" ? "Purchases" : AC_VTYPES[p.type][0]; const x = (by[k] = by[k] || { n: 0, v: 0 }); x.n++; x.v += p.tot; });
+  const unk = plan.filter((p) => p.unk).length;
+  part("ac-vy-out", `<div class="card card-pad"><div class="card-title">${esc(f.name)}</div><div class="card-sub">What will come in</div>
+    <div class="group" style="margin-top:10px">${Object.keys(by).map((k) => `<div class="row"><span class="grow">${esc(k)}</span><span class="row-sub">${by[k].n}</span><span class="num" style="font-weight:600;min-width:110px;text-align:right">${rs2(by[k].v)}</span></div>`).join("") || `<div class="row"><span class="row-sub">Nothing new to bring in.</span></div>`}</div>
+    ${Object.keys(skip).length ? `<div class="row-sub" style="margin-top:10px">Left out: ${Object.keys(skip).map((k) => `${esc(k)} (${skip[k]})`).join(" · ")}</div>` : ""}
+    ${unk ? `<div class="banner warn" style="margin-top:10px">${ic("alert", "sm")}<span>${unk} payment${unk === 1 ? "" : "s"} could not be matched to a party; they go to “Not yet sorted” and can be changed in the Day book.</span></div>` : ""}
+    ${plan.length ? `<button class="btn btn-primary" style="margin-top:12px" data-act="aceVyGo">${ic("check", "sm")} Bring in ${plan.length} entr${plan.length === 1 ? "y" : "ies"}</button>` : ""}</div>${acVyImportsHtml()}`);
+};
+function acExpenseAcc(t) {
+  t = key(t); const m = [[/salar|wage|staff/, "x:salaries"], [/rent/, "x:rent"], [/cold|storage|tropicana/, "x:storage"], [/load|unload|hamali|coolie/, "x:loading"], [/fuel|diesel|petrol|vehicle/, "x:fuel"], [/electric|power|kseb/, "x:power"], [/phone|mobile|internet|broadband|recharge/, "x:phone"], [/bank|charge/, "x:bankchg"], [/audit|account|ca |legal|professional|consult/, "x:prof"], [/repair|maint|freezer|service/, "x:repairs"]];
+  const hit = m.find(([re]) => re.test(t)); return hit ? hit[1] : "x:office";
+}
+ACT.aceVyGo = () => {
+  const P = S.acVy; if (!P || !P.plan.length) return; const A = acStore(), imp = { id: acId("I"), file: P.file, at: iso(NOW()), n: P.plan.length, by: HOST ? ME.name : undefined };
+  const ACC = acAccounts();
+  P.plan.forEach((p) => { const v = { id: acId("V"), type: p.type, no: acNextNo(p.type, p.date), date: p.date, party: p.party, text: `From Vyapar${p.no ? " · " + p.no : ""}${p.kind === "purchase" ? " · purchase" : ""}`, ref: p.no, lines: p.lines, total: p.tot, src: "vyapar", vy: p.vk, imp: imp.id, by: imp.by, time: imp.at }; if (p.itc) { v.itc = p.itc; v.taxable = p.taxable; } A.vouchers.push(v); });
+  A.imports.push(imp); A.vyDone = true; logActivity("Brought in from Vyapar", P.file, `${P.plan.length} entries`); acDirty(); S.acVy = null;
+  part("ac-vy-out", `<div class="banner good">${ic("check", "sm")}<span>${P.plan.length} entries brought in. They are in the Day book, marked “From Vyapar”.</span></div>${acVyImportsHtml()}`); toast("Brought in from Vyapar", "check");
+};
+ACT.aceVyUndo = (el) => {
+  const A = acStore(), imp = A.imports.find((x) => x.id === el.dataset.id); if (!imp) return;
+  if (el.dataset.sure !== "1") { el.dataset.sure = "1"; el.textContent = "Tap again"; el.classList.add("btn-danger"); return; }
+  let n = 0; A.vouchers.forEach((v) => { if (v.imp === imp.id && !v.deleted) { v.deleted = true; v.deletedAt = iso(NOW()); n++; } }); imp.removed = true;
+  logActivity("Vyapar import taken out", imp.file, `${n} entries`); acDirty(); part("ac-vy-out", acVyImportsHtml()); render(); toast(`${n} entries taken out`, "undo");
+};
+
+/* ===== ACCOUNTS: the bank statement =====
+   Upload the statement (Excel or CSV from net banking). Each line is kept once (a line already uploaded is not
+   added again), and given a suggestion: an entry already in the books with the same amount and a date close by,
+   or the distributor / Hangyo / transporter named in the narration, or an expense head from words like CHARGES
+   or SALARY, or what was chosen last time for a similar narration. Nothing goes into the books until it is added. */
+function acBankParse(rows) {
+  const want = { date: [/^(txn |transaction |value )?date$/, /date/], desc: [/narration|description|particulars|remarks|details/], ref: [/chq|cheque|ref/], dr: [/withdrawal|debit|^dr$|paid out/], cr: [/deposit|credit|^cr$|paid in/], amt: [/^amount/], dc: [/^(dr|cr|dr ?\/ ?cr|type)$/], bal: [/balance/] };
+  const H = acFindCols(rows, want); if (!H || H.col.desc == null || (H.col.dr == null && H.col.amt == null)) return null;
+  const out = [];
+  rows.slice(H.at + 1).forEach((r) => {
+    const g = (k) => (H.col[k] != null ? r[H.col[k]] : ""), date = acParseDate(g("date")); if (!date) return;
+    let dr = Math.abs(acNum(g("dr"))), cr = Math.abs(acNum(g("cr")));
+    if (H.col.dr == null && H.col.amt != null) { const a = acNum(g("amt")), dc = key(g("dc")); if (/^d|dr|debit/.test(dc) || (!dc && a < 0)) dr = Math.abs(a); else cr = Math.abs(a); }
+    if (!(dr > 0) && !(cr > 0)) return;
+    const desc = String(g("desc") || "").replace(/\s+/g, " ").trim(), bal = H.col.bal != null && g("bal") !== "" ? acNum(g("bal")) : null;
+    out.push({ d: date, desc, ref: String(g("ref") || "").trim(), dr: acR2(dr), cr: acR2(cr), bal: bal != null ? acR2(bal) : null });
+  });
+  return out;
+}
+const acBankHash = (r) => [r.d, r.dr, r.cr, key(r.desc).slice(0, 60), r.bal == null ? "" : r.bal].join("|");
+IN.aceBankFile = async (el) => {
+  const f = el.files && el.files[0]; if (!f) return;
+  let sheets; try { sheets = await acReadSheetFile(f); } catch (e) { toast("Could not read that file. Download the statement as Excel or CSV and try again.", "alert"); return; }
+  let rows = null; for (const s of sheets) { rows = acBankParse(s); if (rows && rows.length) break; }
+  if (!rows || !rows.length) { toast("No transactions found. The statement needs Date, Narration and Withdrawal / Deposit columns.", "alert"); return; }
+  const A = acStore(), sel = $("#ac-bank-acc"), acc = (sel && sel.value) || (acMoneyAccs().find((a) => a.group === "bank") || {}).id;
+  const seen = new Set(); A.bank.stmts.filter((s) => s.acc === acc).forEach((s) => s.rows.forEach((r) => seen.add(r.h)));
+  const fresh = rows.map((r) => Object.assign(r, { h: acBankHash(r) })).filter((r) => !seen.has(r.h));
+  const ds = rows.map((r) => r.d).sort(), last = rows.filter((r) => r.bal != null).sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0)).pop();
+  if (!fresh.length) { toast("Every line in this statement is already here.", "info"); return; }
+  A.bank.stmts.push({ id: acId("B"), acc, file: f.name, at: iso(NOW()), by: HOST ? ME.name : undefined, from: ds[0], to: ds[ds.length - 1], bal: last ? last.bal : null, rows: fresh });
+  /* link lines to entries already in the books */
+  acBankAutoLink(acc);
+  logActivity("Bank statement uploaded", f.name, `${fresh.length} new line${fresh.length === 1 ? "" : "s"} · ${acName(acc)}`); acDirty(); render();
+  toast(`${fresh.length} new line${fresh.length === 1 ? "" : "s"}${rows.length > fresh.length ? ` (${rows.length - fresh.length} already here)` : ""}`, "check");
+};
+/* a voucher already in the books for this money, not yet tied to a line: same account, same amount, within 4 days */
+function acBankAutoLink(acc) {
+  const A = acStore(), used = new Set(); A.bank.stmts.forEach((s) => s.rows.forEach((r) => r.v && used.add(r.v)));
+  A.bank.stmts.filter((s) => s.acc === acc).forEach((s) => s.rows.forEach((r) => {
+    if (r.v || r.skip) return; const amt = r.cr > 0 ? r.cr : -r.dr;
+    const v = A.vouchers.find((v) => !v.deleted && !used.has(v.id) && v.lines.some((l) => l.a === acc && Math.abs(l.v - amt) < 0.01) && Math.abs(daysBetween(v.date, r.d)) <= 4);
+    if (v) { r.v = v.id; r.auto = true; used.add(v.id); v.bank = { s: s.id, h: r.h }; }
+  }));
+}
+function acBankLink(ref, vid) { AC().bank.stmts.forEach((s) => { if (s.id !== ref.s) return; s.rows.forEach((r) => { if (r.h === ref.h) { r.v = vid || null; if (!vid) delete r.auto; } }); }); }
+/* what a line probably is */
+function acBankGuess(r) {
+  const A = AC(), t = key(r.desc + " " + r.ref), rule = (A.bank.rules || []).find((x) => x.w.every((w) => t.includes(w)));
+  if (rule) return { a: rule.a, why: "Like last time" };
+  if (/cash dep|by cash|cash deposit/.test(t) && r.cr) return { a: "cash", why: "Cash deposited", contra: true };
+  if (/atm|cash wdl|cash withdrawal|self/.test(t) && r.dr) return { a: "cash", why: "Cash withdrawn", contra: true };
+  const p = acMatchParty(r.desc); if (p) return { a: p, why: "Name in the narration" };
+  if (r.dr) {
+    if (/gst ?(pmt|payment|challan)|cbic|gstn|cpin/.test(t)) return { a: "x:gstpaid", why: "GST payment" };
+    if (/salar|wages/.test(t)) return { a: "x:salaries", why: "Salary" };
+    if (/chg|charges|chrg|sms|fee|commission|gst on|amc|min bal/.test(t)) return { a: "x:bankchg", why: "Bank charges" };
+    if (/rent/.test(t)) return { a: "x:rent", why: "Rent" };
+    if (/kseb|electric/.test(t)) return { a: "x:power", why: "Electricity" };
+    if (/fuel|petrol|diesel|hpcl|iocl|bpcl/.test(t)) return { a: "x:fuel", why: "Fuel" };
+  } else {
+    if (/int\.?pd|interest|int cr|sb int/.test(t)) return { a: "x:interest", why: "Interest" };
+    /* the exact amount of one open bill */
+    const hit = acAgeing(r.d).find((x) => x.bills.some((b) => Math.abs(b.left - r.cr) < 1)); if (hit) return { a: hit.id, why: "Same amount as an open bill" };
+  }
+  return { a: "", why: "" };
+}
+function acBankRowsHtml() {
+  const A = AC(), ACC = acAccounts(), S0 = A.bank.stmts; if (!S0.length) return "";
+  const show = S.acBankAll ? "all" : "open", L = [];
+  S0.forEach((s) => s.rows.forEach((r) => { if (show === "open" && (r.v || r.skip)) return; L.push({ s, r }); }));
+  L.sort((a, b) => (a.r.d < b.r.d ? 1 : a.r.d > b.r.d ? -1 : 0));
+  const sug = S.acBankSug = S.acBankSug || {};
+  const rows = L.slice(0, S.acBankMore ? 600 : 60).map(({ s, r }) => {
+    const k = s.id + "|" + r.h, g = sug[k] || (sug[k] = acBankGuess(r)), v = r.v ? A.vouchers.find((x) => x.id === r.v) : null;
+    const amt = r.cr > 0 ? `<span class="num" style="color:var(--good);font-weight:600">+${rs2(r.cr)}</span>` : `<span class="num" style="font-weight:600">−${rs2(r.dr)}</span>`;
+    const end = v && !v.deleted ? `<span class="pill good" style="height:22px">${r.auto ? "Matched" : "In the books"}</span><button class="btn-plain" data-act="acvEntry" data-id="v:${esc(v.id)}">${esc(v.no || "Open")}</button>` : r.skip ? `<span class="pill plain">Left out</span>${AC_CAN ? `<button class="btn-plain" data-act="aceBankSkip" data-k="${esc(k)}" data-on="0">Undo</button>` : ""}` : AC_CAN ? `<span class="ac-bank-pick">${acSelect("acb-" + s.id + "-" + r.d + "-" + Math.round((r.cr || r.dr) * 100), g.a, null, "aceBankSug", ` data-k="${esc(k)}" aria-label="Account for this line"`)}</span><button class="btn btn-secondary btn-sm" data-act="aceBankAdd" data-k="${esc(k)}">Add</button><button class="icon-btn" data-act="aceBankSkip" data-k="${esc(k)}" data-on="1" title="Leave out (not for the books)" aria-label="Leave out">${ic("x", "sm")}</button>` : "";
+    return `<div class="row ac-bankrow"><span class="pur-date"><b>${toDate(r.d).getDate()}</b><span>${MONTHS[toDate(r.d).getMonth()]}</span></span><span class="grow" style="min-width:0"><div class="row-title clip" title="${esc(r.desc)}">${esc(r.desc || "–")}</div><div class="row-sub clip">${esc(acName(s.acc, ACC))}${r.ref ? " · " + esc(r.ref) : ""}${!v && !r.skip && g.why ? ` · <span style="color:var(--tint)">${esc(g.why)}</span>` : ""}</div></span>${amt}<span class="ac-bank-end">${end}</span></div>`;
+  });
+  const open = S0.reduce((n, s) => n + s.rows.filter((r) => !r.v && !r.skip).length, 0), ready = L.filter(({ s, r }) => !r.v && !r.skip && (sug[s.id + "|" + r.h] || {}).a).length;
+  return `<div><div class="group-label"><span>${show === "open" ? "Lines to sort" : "Every line"} · ${open} open</span><span class="hstack gap-8"><button class="btn-plain" data-act="acvBankAll">${show === "open" ? "Show all lines" : "Show only open"}</button>${AC_CAN && ready ? `<button class="btn btn-primary btn-sm" data-act="aceBankAddAll">${ic("check", "sm")} Add ${ready} with a suggestion</button>` : ""}</span></div>
+    ${L.length ? `<div class="group">${rows.join("")}</div>${L.length > rows.length ? `<button class="btn btn-secondary" style="margin-top:10px" data-act="acvBankMore">Show all ${L.length}</button>` : ""}` : `<div class="empty">Every line is in the books.</div>`}</div>
+    <div><div class="group-label"><span>Statements uploaded</span></div><div class="group">${S0.slice().reverse().map((s) => `<div class="row"><span class="grow"><div class="row-title clip">${esc(s.file)}</div><div class="row-sub">${esc(acName(s.acc, ACC))} · ${fmtDate(s.from)} to ${fmtDate(s.to)} · ${s.rows.length} lines${s.bal != null ? " · closing " + rs2(s.bal) : ""}</div></span><span class="row-sub">${fmtDate(s.at)}</span></div>`).join("")}</div></div>`;
+}
+ACT.acvBankAll = () => { S.acBankAll = !S.acBankAll; render(); };
+ACT.acvBankMore = () => { S.acBankMore = true; render(); };
+const acBankFind = (k) => { const [sid, h] = [k.slice(0, k.indexOf("|")), k.slice(k.indexOf("|") + 1)], s = AC().bank.stmts.find((x) => x.id === sid); return s ? { s, r: s.rows.find((r) => r.h === h) } : {}; };
+IN.aceBankSug = (el) => { const sug = (S.acBankSug = S.acBankSug || {}); sug[el.dataset.k] = { a: el.value, why: el.value ? "Chosen" : "" }; };
+ACT.aceBankSkip = (el) => { const { r } = acBankFind(el.dataset.k); if (!r) return; acStore(); r.skip = el.dataset.on === "1"; acDirty(); render(); };
+/* one line into the books: money in from / money out to the chosen account (a move between bank and cash for cash lines) */
+function acBankPost(k, a) {
+  const { s, r } = acBankFind(k); if (!s || !r || r.v || !a) return null;
+  const A = acStore(), ACC = acAccounts(), inn = r.cr > 0, amt = inn ? r.cr : r.dr, money = ACC[a] && ["bank", "cash"].includes(ACC[a].group), type = money ? "contra" : inn ? "receipt" : "payment";
+  const v = { id: acId("V"), type, date: r.d, no: "", party: money ? "" : acName(a, ACC), ref: r.ref, note: r.desc, lines: inn ? [{ a: s.acc, v: amt }, { a, v: -amt }] : [{ a, v: amt }, { a: s.acc, v: -amt }], total: amt, text: `${money ? (inn ? acName(a, ACC) + " → " + acName(s.acc, ACC) : acName(s.acc, ACC) + " → " + acName(a, ACC)) : (inn ? "Received" : "Paid") + " · " + acName(s.acc, ACC)} · bank: ${r.desc.slice(0, 60)}`, src: "bank", bank: { s: s.id, h: r.h }, by: HOST ? ME.name : undefined, time: iso(NOW()) };
+  v.no = acNextNo(type, r.d); A.vouchers.push(v); r.v = v.id;
+  /* remember for next time: the narration's distinctive words */
+  const w = key(r.desc).replace(/[^a-z ]/g, " ").split(" ").filter((x) => x.length >= 4 && !/^(neft|imps|rtgs|upi|transfer|from|bank|towards|payment|limited|private|ltd)$/.test(x)).slice(0, 3);
+  if (w.length >= 2) { A.bank.rules = (A.bank.rules || []).filter((x) => x.w.join(" ") !== w.join(" ")); A.bank.rules.unshift({ w, a }); A.bank.rules = A.bank.rules.slice(0, 200); }
+  return v;
+}
+ACT.aceBankAdd = (el) => {
+  const k = el.dataset.k, sel = el.parentElement && el.parentElement.querySelector("select"), a = (sel && sel.value) || ((S.acBankSug || {})[k] || {}).a;
+  if (!a) { toast("Choose an account for this line first.", "alert"); return; }
+  const v = acBankPost(k, a); if (!v) return; logActivity("Bank line added to the books", v.no, `${v.party || v.text} · ${rs2(v.total)}`); acDirty(); render(); toast("Added to the books", "check");
+};
+ACT.aceBankAddAll = () => {
+  const sug = S.acBankSug || {}; let n = 0, t = 0;
+  AC().bank.stmts.forEach((s) => s.rows.forEach((r) => { if (r.v || r.skip) return; const g = sug[s.id + "|" + r.h]; if (!g || !g.a) return; const v = acBankPost(s.id + "|" + r.h, g.a); if (v) { n++; t += v.total; } }));
+  if (n) logActivity("Bank lines added to the books", `${n} lines`, rs2(t)); acDirty(); render(); toast(`${n} line${n === 1 ? "" : "s"} added`, "check");
+};
+
+/* ===== ACCOUNTS: downloads =====
+   Styled Excel for whatever Accounts is showing (profit and loss, balance sheet, trial balance, day book, ledgers,
+   money owed), a ledger or party statement, the GST workings (GSTR-1 tables and 3B), and a party statement as a PDF
+   to send to a distributor. */
+const AC_X = { NUM: "#,##0", RS: '"₹"#,##0.00;[Red]-"₹"#,##0.00', DATE: "dd-mmm-yyyy" };
+async function acXlsx(el) {
+  if (el) el.disabled = true;
+  try { await loadScriptOnce(XLSXS_SRC, () => !!(window.XLSX && window.XLSX.style_version)); return window.XLSX; }
+  catch (e) { toast("Could not prepare the Excel file. Check your internet and try again.", "alert"); return null; }
+  finally { if (el) el.disabled = false; }
+}
+const acCo = () => CO.name || "SahiReach LLP";
+const acD = (d) => ({ v: ilSerial(d), t: "n", z: AC_X.DATE });
+/* a two-column statement (label, amount) with section rows */
+function acStmtSheet(X, title, sub, lines) {
+  const head = [{ t: "Particulars" }, { t: "Amount", r: 1, z: AC_X.RS }], body = lines.map((l) => l.sec ? [{ v: l.label, bold: true, color: IL.tint }, l.v != null ? { v: l.v, bold: true } : ""] : [{ v: (l.sub ? "    " : "") + l.label, bold: !!l.bold }, l.v == null ? "" : { v: l.v, bold: !!l.bold }]);
+  const L = ilLedgerRows(title, sub, [], head, body, null);
+  return ilSheet(X, L.rows, [58, 20], L.merges);
+}
+function acPLLines(P) {
+  const out = [{ sec: 1, label: "Sales" }]; P.sales.forEach((x) => out.push({ sub: 1, label: x.name, v: -x.v })); out.push({ bold: 1, label: "Net sales", v: P.salesNet });
+  out.push({ sec: 1, label: "Cost of the stock sold" }, { sub: 1, label: "Opening stock", v: P.os.v }); P.purch.concat(P.direct).forEach((x) => out.push({ sub: 1, label: x.name, v: x.v })); out.push({ sub: 1, label: "Less closing stock", v: P.cs.v == null ? null : -P.cs.v }, { bold: 1, label: "Cost of goods sold", v: P.stockGap ? null : P.cogs });
+  out.push({ sec: 1, label: "Gross profit", v: P.stockGap ? null : P.gp });
+  if (P.inc.length) { out.push({ sec: 1, label: "Other income" }); P.inc.forEach((x) => out.push({ sub: 1, label: x.name, v: -x.v })); out.push({ bold: 1, label: "Total other income", v: P.incT }); }
+  out.push({ sec: 1, label: "Running costs" }); P.exp.forEach((x) => out.push({ sub: 1, label: x.name, v: x.v })); out.push({ bold: 1, label: "Total running costs", v: P.expT });
+  out.push({ sec: 1, label: "Net profit", v: P.stockGap ? null : P.np });
+  return out;
+}
+function acBSLines(BS) {
+  const lab = (g) => (AC_GROUP[g] || {}).label || { advrecv: "Advances received", advpaid: "Advances paid", gst: "GST", profit: "Profit and loss", diff: "Opening balances", stock: "Stock" }[g] || g, out = [];
+  const side = (S0, name, total) => { out.push({ sec: 1, label: name }); Object.keys(S0).forEach((g) => { const L = S0[g]; out.push({ bold: 1, label: lab(g), v: L.reduce((a, x) => a + x.v, 0) }); L.forEach((x) => out.push({ sub: 1, label: x.name, v: x.v })); }); out.push({ sec: 1, label: "Total " + name.toLowerCase(), v: total }); };
+  side(BS.sides.A, "What we have (assets)", BS.assets); side(BS.sides.L, "What we owe and partners' money (liabilities and capital)", BS.liab);
+  return out;
+}
+ACT.acvExcel = async (el) => {
+  const X = await acXlsx(el); if (!X) return;
+  const R = acRange(), tab = S.acTab || "overview", rep = S.acRep || "pl", wb = X.utils.book_new(), co = acCo(), per = `${R.label} (${dmyOf(R.from)} to ${dmyOf(R.to)})`;
+  const add = (ws, n) => X.utils.book_append_sheet(wb, ws, n);
+  const P = acPL(R.from, R.to); add(acStmtSheet(X, "Profit and loss", `${co} · ${per} · excl. GST`, acPLLines(P)), "Profit and loss");
+  const BS = acBS(R.to); add(acStmtSheet(X, "Balance sheet", `${co} · as on ${dmyOf(R.to)}`, acBSLines(BS)), "Balance sheet");
+  const T = acTB(R.to); { const L = ilLedgerRows("Trial balance", `${co} · as on ${dmyOf(R.to)}`, [["Total debits", T.dr, AC_X.RS], ["Total credits", T.cr, AC_X.RS]], [{ t: "Account" }, { t: "Group" }, { t: "Debit", r: 1, z: AC_X.RS }, { t: "Credit", r: 1, z: AC_X.RS }], T.rows.map((r) => [r.name, (AC_GROUP[r.group] || {}).formal || r.group, r.v > 0 ? r.v : "", r.v < 0 ? -r.v : ""]), ["Total", "", T.dr, T.cr]); add(ilSheet(X, L.rows, [44, 30, 18, 18], L.merges), "Trial balance"); }
+  /* the day book: every entry and its accounts */
+  { const ACC = acAccounts(), E = acEntries().filter((e) => e.date >= R.from && e.date <= R.to), body = []; E.forEach((e) => e.lines.forEach((l, i) => body.push([i ? "" : acD(e.date), i ? "" : AC_KIND[e.kind] || "", i ? "" : e.no || "", i ? "" : e.party || "", acName(l.a, ACC), l.v > 0 ? l.v : "", l.v < 0 ? -l.v : "", i ? "" : e.text || ""])));
+    const L = ilLedgerRows("Day book", `${co} · ${per} · ${E.length} entries`, [], [{ t: "Date", z: AC_X.DATE }, { t: "Type" }, { t: "Number" }, { t: "Party" }, { t: "Account" }, { t: "Debit", r: 1, z: AC_X.RS }, { t: "Credit", r: 1, z: AC_X.RS }, { t: "Details" }], body, null); add(ilSheet(X, L.rows, [12, 16, 18, 28, 32, 15, 15, 50], L.merges), "Day book"); }
+  /* money owed to us */
+  { const age = acAgeing(R.to), L = ilLedgerRows("Money owed to us", `${co} · as on ${dmyOf(R.to)} · oldest bills cleared first`, [["Owed to us", age.reduce((a, x) => a + x.total, 0), AC_X.RS], ["Overdue", age.reduce((a, x) => a + x.overdue, 0), AC_X.RS, IL.bad]], [{ t: "Party" }, { t: "Credit days", r: 1, z: AC_X.NUM }, { t: "Up to 30 days", r: 1, z: AC_X.RS }, { t: "31–60", r: 1, z: AC_X.RS }, { t: "61–90", r: 1, z: AC_X.RS }, { t: "Over 90", r: 1, z: AC_X.RS }, { t: "Total", r: 1, z: AC_X.RS }, { t: "Overdue", r: 1, z: AC_X.RS }], age.map((x) => [x.name, x.credit, x.d0, x.d30, x.d60, x.d90, x.total, x.overdue ? { v: x.overdue, color: IL.bad } : 0]), ["Total", "", ...["d0", "d30", "d60", "d90", "total", "overdue"].map((k) => age.reduce((a, x) => a + x[k], 0))]);
+    add(ilSheet(X, L.rows, [36, 11, 15, 15, 15, 15, 16, 15], L.merges), "Money owed to us"); }
+  X.writeFile(wb, `SahiReach accounts ${R.label.replace(/[^\w\s-]/g, "")} ${dmyOf(acToday())}.xlsx`, { compression: true, cellStyles: true });
+  logActivity("Accounts downloaded", R.label, "Excel"); toast("Accounts downloaded", "doc");
+};
+/* one ledger or party statement */
+ACT.acvStmtExcel = async (el) => {
+  const X = await acXlsx(el); if (!X) return; const id = el.dataset.id, R = acRange(), L = acLedger(id, R.from, R.to), name = acName(id), info = id.startsWith("p:") ? acPartyInfo(id.slice(2)) : null;
+  const body = [["", { v: "Opening balance", bold: true }, "", "", "", { v: L.open, bold: true }, L.open >= 0 ? "Dr" : "Cr"]].concat(L.rows.map((r) => [acD(r.e.date), `${AC_KIND[r.e.kind] || "Entry"}${r.e.no ? " " + r.e.no : ""}`, r.e.text || r.e.party || "", r.v > 0 ? r.v : "", r.v < 0 ? -r.v : "", r.bal, r.bal >= 0 ? "Dr" : "Cr"]));
+  const T = ilLedgerRows(`${name}`, `${info ? "Statement of account" : "Ledger"} · ${acCo()} · ${R.label} (${dmyOf(R.from)} to ${dmyOf(R.to)})${info && info.gstin ? " · GSTIN " + info.gstin : ""}`, [["Opening", L.open, AC_X.RS], ["Debits", L.dr, AC_X.RS], ["Credits", L.cr, AC_X.RS], ["Closing", L.close, AC_X.RS, IL.tint]], [{ t: "Date", z: AC_X.DATE }, { t: "Voucher" }, { t: "Particulars" }, { t: "Debit", r: 1, z: AC_X.RS }, { t: "Credit", r: 1, z: AC_X.RS }, { t: "Balance", r: 1, z: AC_X.RS }, { t: "" }], body, ["", "Closing balance", "", L.dr, L.cr, L.close, L.close >= 0 ? "Dr" : "Cr"]);
+  const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ilSheet(X, T.rows, [12, 26, 56, 15, 15, 16, 5], T.merges), "Statement");
+  X.writeFile(wb, `${name.replace(/[^\w\s-]/g, "")} statement ${dmyOf(R.to)}.xlsx`, { compression: true, cellStyles: true }); logActivity("Statement downloaded", name, "Excel"); toast("Statement downloaded", "doc");
+};
+/* GST workings: B2B, B2C, credit / debit notes and HSN in the GSTR-1 layout, the 3B summary, and input credit */
+ACT.acvGstExcel = async (el) => {
+  const X = await acXlsx(el); if (!X) return; const m = el.dataset.m, from = m + "-01", end = ymd(new Date(+m.slice(0, 4), +m.slice(5, 7), 0)), to = end > acToday() ? acToday() : end, G = acGST(from, to), co = acCo(), mon = `${MONTH_LONG[+m.slice(5) - 1]} ${m.slice(0, 4)}`;
+  const wb = X.utils.book_new(), add = (ws, n) => X.utils.book_append_sheet(wb, ws, n), RS = AC_X.RS, pos = (r) => (r.gstin ? r.gstin.slice(0, 2) : AC_STATE) + "-" + (r.gstin && r.gstin.slice(0, 2) !== AC_STATE ? "Other state" : "Kerala");
+  const s3 = ilLedgerRows("GSTR-3B summary", `${co} · GSTIN ${CO.gstin || ""} · ${mon}`, [["GST on sales", G.outTax, RS], ["Input credit", G.inTax, RS], [G.net >= 0 ? "To pay" : "Credit", Math.abs(G.net), RS, G.net >= 0 ? IL.bad : IL.good]], [{ t: "Section" }, { t: "Taxable value", r: 1, z: RS }, { t: "IGST", r: 1, z: RS }, { t: "CGST", r: 1, z: RS }, { t: "SGST", r: 1, z: RS }],
+    [["3.1 (a) Outward taxable supplies (other than zero rated, nil rated and exempted)", G.taxable, G.tax.igst, G.tax.cgst, G.tax.sgst], ["4 (A)(5) All other ITC", G.itcTaxable, G.itc.igst, G.itc.cgst, G.itc.sgst]], ["Net", "", G.tax.igst - G.itc.igst, G.tax.cgst - G.itc.cgst, G.tax.sgst - G.itc.sgst]);
+  add(ilSheet(X, s3.rows, [70, 16, 14, 14, 14], s3.merges), "3B");
+  const inv = (L, title, sheet, note) => { const T = ilLedgerRows(title, `${co} · ${mon}${note ? " · " + note : ""}`, [], [{ t: "GSTIN of recipient" }, { t: "Receiver name" }, { t: "Invoice number" }, { t: "Invoice date", z: AC_X.DATE }, { t: "Invoice value", r: 1, z: RS }, { t: "Place of supply" }, { t: "Rate", r: 1 }, { t: "Taxable value", r: 1, z: RS }, { t: "IGST", r: 1, z: RS }, { t: "CGST", r: 1, z: RS }, { t: "SGST", r: 1, z: RS }], L.map((r) => [r.gstin || "", r.party, r.no || { v: "No number", color: IL.bad }, acD(r.date), r.total, pos(r), "5%", r.taxable, r.igst, r.cgst, r.sgst]), ["", "Total", "", "", L.reduce((a, r) => a + r.total, 0), "", "", L.reduce((a, r) => a + r.taxable, 0), L.reduce((a, r) => a + r.igst, 0), L.reduce((a, r) => a + r.cgst, 0), L.reduce((a, r) => a + r.sgst, 0)]); add(ilSheet(X, T.rows, [19, 32, 18, 13, 15, 16, 7, 15, 12, 12, 12], T.merges), sheet); };
+  inv(G.b2b, "B2B invoices (4A)", "b2b"); if (G.b2c.length) inv(G.b2c, "B2C small (7)", "b2cs", "parties without a GSTIN, reported as totals"); if (G.cdn.length) inv(G.cdn, "Credit / debit notes (9B)", "cdnr", "negative = credit note");
+  const hs = Object.values(G.hsn), H = ilLedgerRows("HSN summary (12)", `${co} · ${mon}`, [], [{ t: "HSN" }, { t: "Description" }, { t: "UQC" }, { t: "Total quantity", r: 1, z: AC_X.NUM }, { t: "Taxable value", r: 1, z: RS }, { t: "Rate", r: 1 }], hs.map((h) => [h.hsn, h.desc, "BOX-BOX", Math.round(h.qty), h.taxable, "5%"]), null);
+  add(ilSheet(X, H.rows, [12, 36, 10, 15, 16, 8], H.merges), "hsn");
+  const I = ilLedgerRows("Input tax credit (purchase bills)", `${co} · ${mon} · check against GSTR-2B`, [], [{ t: "Supplier" }, { t: "Bill" }, { t: "Date", z: AC_X.DATE }, { t: "Taxable value", r: 1, z: RS }, { t: "IGST", r: 1, z: RS }, { t: "CGST", r: 1, z: RS }, { t: "SGST", r: 1, z: RS }], G.purchases.map((r) => [r.party, r.no || "", acD(r.date), r.taxable, r.igst, r.cgst, r.sgst]), ["Total", "", "", G.itcTaxable, G.itc.igst, G.itc.cgst, G.itc.sgst]);
+  add(ilSheet(X, I.rows, [28, 20, 13, 16, 13, 13, 13], I.merges), "ITC");
+  X.writeFile(wb, `SahiReach GST ${mon}.xlsx`, { compression: true, cellStyles: true }); logActivity("GST workings downloaded", mon, "Excel"); toast("GST workings downloaded", "doc");
+};
+/* a party statement as a PDF, to send */
+ACT.acvStmtPdf = async (el) => {
+  const id = el.dataset.id, R = acRange(), L = acLedger(id, R.from, R.to), name = acName(id), party = id.slice(2), info = acPartyInfo(party), O = (acAccounts()[id] || {}).group === "debtors" ? acOpenBills(party, R.to) : null;
+  if (el) el.disabled = true;
+  try { await loadJsPdf(); } catch (e) { if (el) el.disabled = false; toast("Could not prepare the PDF. Check your internet and try again.", "alert"); return; }
+  if (el) el.disabled = false;
+  const { jsPDF } = window.jspdf, doc = new jsPDF({ unit: "mm", format: "a4", compress: true }), W = 210, M = 16, C = Object.assign({}, D.company || {});
+  const TINT = [11, 122, 112], INK = [29, 29, 31], GREY = [110, 110, 115], LINE = [229, 229, 234], SOFT = [230, 242, 241], ZEBRA = [248, 248, 250], dd = (d) => { const t = toDate(d); return `${pad2(t.getDate())} ${MONTHS[t.getMonth()]} ${t.getFullYear()}`; };
+  const dc = (v) => `${pdfMoney(Math.abs(v))} ${Math.abs(v) < 0.005 ? "" : v > 0 ? "Dr" : "Cr"}`;
+  doc.setProperties({ title: `Statement of account · ${name}`, author: C.name || "SahiReach LLP", creator: "SahiReach Order Tool" });
+  try { if (LOGO && /^data:image\/(png|jpe?g)/.test(LOGO)) doc.addImage(LOGO, LOGO.includes("png") ? "PNG" : "JPEG", M, 14, 13, 13); } catch (e) {}
+  doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...INK); doc.text(C.name || "SahiReach LLP", M + 17, 19.5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...GREY); doc.text(doc.splitTextToSize([C.address, C.gstin ? "GSTIN " + C.gstin : ""].filter(Boolean).join("  ·  "), 100), M + 17, 24.5);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(19); doc.setTextColor(...TINT); doc.text("Statement of account", W - M, 20, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(...INK); doc.text(`${dd(R.from)} to ${dd(R.to)}`, W - M, 26, { align: "right" });
+  doc.setDrawColor(...LINE); doc.setLineWidth(0.3); doc.line(M, 33, W - M, 33);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.text("TO", M, 40);
+  doc.setFontSize(11); doc.setTextColor(...INK); doc.text(name, M, 45.5); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...GREY); let y0 = 50; [info.addr, info.gstin ? "GSTIN " + info.gstin : ""].filter(Boolean).forEach((t) => { doc.text(t, M, y0); y0 += 4.2; });
+  const sy = Math.max(58, y0 + 3), chips = [["OPENING", dc(L.open)], ["BILLED", pdfMoney(L.dr)], ["PAID / CREDITED", pdfMoney(L.cr)], ["BALANCE " + (L.close > 0 ? "DUE" : ""), dc(L.close)]], cw = (W - 2 * M) / chips.length;
+  doc.setFillColor(...SOFT); doc.roundedRect(M, sy, W - 2 * M, 15, 3, 3, "F");
+  chips.forEach(([k, v], i) => { const x = M + 5 + i * cw; doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...GREY); doc.text(k, x, sy + 5.5); doc.setFontSize(11); doc.setTextColor(...(i === 3 ? TINT : INK)); doc.text("Rs " + v, x, sy + 11.5); });
+  const body = [[dd(R.from), { content: "Opening balance", styles: { fontStyle: "bold" } }, "", "", "", dc(L.open)]].concat(L.rows.map((r) => [dd(r.e.date), `${AC_KIND[r.e.kind] || "Entry"}${r.e.no ? " " + r.e.no : ""}`, (r.e.kind === "sale" ? (r.e.text || "").replace(/^Invoice for order \S+ · /, "") : r.e.v && r.e.v.ref ? "Ref " + r.e.v.ref : "").slice(0, 60), r.v > 0 ? pdfMoney(r.v) : "", r.v < 0 ? pdfMoney(-r.v) : "", dc(r.bal)]));
+  body.push([{ content: "Closing balance", colSpan: 3, styles: { fontStyle: "bold" } }, { content: pdfMoney(L.dr), styles: { fontStyle: "bold", halign: "right" } }, { content: pdfMoney(L.cr), styles: { fontStyle: "bold", halign: "right" } }, { content: dc(L.close), styles: { fontStyle: "bold", halign: "right" } }]);
+  doc.autoTable({ startY: sy + 21, head: [["Date", "Document", "Details", "Debit (Rs)", "Credit (Rs)", "Balance (Rs)"]], body, theme: "plain", margin: { left: M, right: M, bottom: 20 },
+    styles: { font: "helvetica", fontSize: 8, textColor: INK, cellPadding: { top: 1.6, bottom: 1.6, left: 1.8, right: 1.8 }, lineColor: LINE, lineWidth: { bottom: 0.2 }, valign: "middle" },
+    headStyles: { fontStyle: "bold", fontSize: 7.5, textColor: GREY, lineWidth: { bottom: 0.5 }, lineColor: INK }, alternateRowStyles: { fillColor: ZEBRA },
+    columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 40 }, 2: { cellWidth: "auto", textColor: GREY }, 3: { cellWidth: 22, halign: "right" }, 4: { cellWidth: 22, halign: "right" }, 5: { cellWidth: 26, halign: "right" } },
+    didParseCell: (d) => { if (d.section === "head" && d.column.index >= 3) d.cell.styles.halign = "right"; } });
+  let y = doc.lastAutoTable.finalY + 8;
+  if (O && O.bills.length) {
+    if (y > 240) { doc.addPage(); y = 24; }
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...INK); doc.text("Bills still to be paid", M, y); y += 2;
+    doc.autoTable({ startY: y + 2, head: [["Bill", "Date", "Days", "Amount due (Rs)"]], body: O.bills.map((b) => [b.no || "Bill", dd(b.date), String(daysBetween(b.date, R.to)), pdfMoney(b.left)]).concat([[{ content: "Total due", colSpan: 3, styles: { fontStyle: "bold" } }, { content: pdfMoney(O.bills.reduce((a, b) => a + b.left, 0)), styles: { fontStyle: "bold", halign: "right" } }]]), theme: "plain", margin: { left: M, right: M },
+      styles: { font: "helvetica", fontSize: 8, textColor: INK, cellPadding: 1.6, lineColor: LINE, lineWidth: { bottom: 0.2 } }, headStyles: { fontStyle: "bold", fontSize: 7.5, textColor: GREY, lineWidth: { bottom: 0.5 }, lineColor: INK }, columnStyles: { 2: { halign: "right" }, 3: { halign: "right" } }, didParseCell: (d) => { if (d.section === "head" && d.column.index >= 2) d.cell.styles.halign = "right"; } });
+    y = doc.lastAutoTable.finalY + 8;
+  }
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...GREY);
+  doc.text(doc.splitTextToSize("Please check this statement and tell us of any difference within 7 days. Payments clear the oldest bills first.", W - 2 * M), M, Math.min(y, 270));
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setDrawColor(...LINE); doc.setLineWidth(0.3); doc.line(M, 285, W - M, 285); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.text(`${C.name || "SahiReach LLP"} · Statement of account · ${name}`, M, 289.5); doc.text(`Page ${i} of ${pages}`, W - M, 289.5, { align: "right" }); }
+  doc.save(`${name.replace(/[^\w\s-]/g, "")} statement ${dmyOf(R.to)}.pdf`);
+  logActivity("Statement downloaded", name, "PDF"); toast("Statement PDF downloaded", "doc");
+};
+
 /* ===== shell markup (sidebar + phone tab bar), then first render ===== */
 (function buildShell() {
   const item = (r, extra = "") => `<button class="nav-item" data-act="nav" data-to="${r}" data-nav="${r}">${ic(ROUTES[r].icon)}<span>${ROUTES[r].label}</span>${extra}</button>`;
@@ -6191,13 +7385,13 @@ ACT.tripJoinTo = (el) => {
     ${item("home")}
     <div class="nav-label">Sell</div>${item("orders")}${item("dispatch", `<span class="nav-badge hot" id="badge-dispatch" hidden></span>`)}${item("quick", `<span class="nav-badge" id="badge-quick" hidden></span>`)}
     <div class="nav-label">Stock</div>${item("stock")}${item("replenish")}
-    ${SEE_MONEY ? `<div class="nav-label">Money</div>${item("tod")}${item("logistics")}` : ""}
+    ${SEE_MONEY ? `<div class="nav-label">Money</div>${item("accounts")}${item("tod")}${item("logistics")}` : ""}
     <div class="nav-label">Manage</div>${item("setup")}${item("activity")}${ROUTES.backups ? item("backups") : ""}
-    <div class="side-foot"><button class="nav-item" data-act="cmd">${ic("search")}<span>Search</span><span class="nav-badge">⌘K</span></button><${HOST ? 'button class="me me-btn" data-act="account" aria-label="Account"' : 'div class="me"'}><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow" style="text-align:left;min-width:0"><span class="clip" style="display:block;font-weight:600;font-size:14px">${esc(ME.name)}</span><span class="brand-sub" style="display:block">${ROLE === "owner" ? "SahiReach LLP" : ROLE_LABEL[ROLE] + (CAN_EDIT ? "" : " · view only")}</span></span>${HOST ? ic("chevR", "sm chev") : ""}</${HOST ? "button" : "div"}></div>`;
+    <div class="side-foot"><button class="nav-item" data-act="cmd">${ic("search")}<span>Search</span><span class="nav-badge">⌘K</span></button><${HOST ? 'button class="me me-btn" data-act="account" aria-label="Account"' : 'div class="me"'}><span class="avatar">${esc(initials(ME.name).slice(0, 1) || "S")}</span><span class="grow" style="text-align:left;min-width:0"><span class="clip" style="display:block;font-weight:600;font-size:14px">${esc(ME.name)}</span><span class="brand-sub" style="display:block">${ROLE === "owner" ? "SahiReach LLP" : ROLE_LABEL[ROLE] + (CAN_EDIT || ROLE === "accountant" ? "" : " · view only")}</span></span>${HOST ? ic("chevR", "sm chev") : ""}</${HOST ? "button" : "div"}></div>`;
   const tab = (r, label) => `<button class="tab" data-act="nav" data-to="${r}" data-nav="${r}">${ic(ROUTES[r].icon)}<span>${label}</span></button>`;
   $("#tabbar").innerHTML = tab("home", "Home") + tab("orders", "Orders") + tab("dispatch", "Dispatch") + tab("stock", "Stock") + tab("more", "More");
 })();
-go(ROUTES[location.hash.slice(1)] ? location.hash.slice(1) : "home");
+go(ROUTES[location.hash.slice(1)] ? location.hash.slice(1) : ROLE === "accountant" ? "accounts" : "home");
 
 let wasNarrow = isNarrow(), rzT = 0;
 window.addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { if (isNarrow() !== wasNarrow) { wasNarrow = isNarrow(); if (S.route === "home") render(); } }, 150); });
@@ -6215,7 +7409,7 @@ function snapshot() {
 const SAVE = { on: false, why: "", version: null, last: null, lastObj: null, undoQ: [], busy: false, again: false, timer: 0, state: "", conflict: false };
 (function initSave() {
   if (!HOST) return;
-  if (!CAN_EDIT) { SAVE.why = "view"; return; }
+  if (!CAN_EDIT && ROLE !== "accountant") { SAVE.why = "view"; return; }
   if (!HOST.save || HOST.version == null) { SAVE.why = "setup"; return; }
   if (DATA_OLD) { SAVE.why = "old"; return; }
   SAVE.on = true; SAVE.version = HOST.version; SAVE.last = snapshot(); try { SAVE.lastObj = JSON.parse(SAVE.last); } catch (e) {}
