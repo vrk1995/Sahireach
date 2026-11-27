@@ -340,7 +340,7 @@ function monthsSeries(facts) {
   facts.forEach((f) => { const k = f.date.slice(0, 7); if (m[k] && chMatch(f, S.dash.ch, S.dash.district)) m[k][f.ch] += f.value; });
   return Object.values(m).map((x) => ({ ...x, net: x.gt + x.swiggy + x.zepto, label: MONTH_LONG[+x.k.slice(5) - 1].slice(0, 3) + (x.k === ymd(now).slice(0, 7) ? "*" : "") }));
 }
-function purchasesIn(from, to) { let own = 0, qc = 0; D.purchases.forEach((p) => { const d = (p.time || "").slice(0, 10); if (p.supplier !== "Hangyo" || d < from || d > to) return; if (/QC/i.test(p.pool || "")) qc += p.value || 0; else own += p.value || 0; }); return { own, qc, total: own + qc }; }
+function purchasesIn(from, to) { let own = 0, qc = 0; D.purchases.forEach((p) => { const d = String(p.invDate || p.time || "").slice(0, 10); /* by invoice date */ if (p.supplier !== "Hangyo" || d < from || d > to) return; if (/QC/i.test(p.pool || "")) qc += p.value || 0; else own += p.value || 0; }); return { own, qc, total: own + qc }; }
 function stockValue() {
   let own = 0, qc = 0; const cats = {};
   D.stock.forEach((s) => { const uc = unitCost(s.sap), v = (s.ea || 0) * (uc || 0); own += v; if (v) cats[s.cat || "Other"] = (cats[s.cat || "Other"] || 0) + v; });
@@ -858,7 +858,6 @@ VIEWS.home = () => {
   if (showGT && (!showQC || !SEE_MONEY)) tiles.push(tile("o2d", "Order to dispatch", cur.o2dAvg != null ? nf(cur.o2dAvg, 1) : "–", cur.o2dAvg != null ? "days" : "", `${cur.o2d.length} order${cur.o2d.length === 1 ? "" : "s"} dispatched`, ""));
   if (SEE_MONEY) { const lg = logiForDash(R.from, R.to, F.ch), lp = R.pFrom ? logiForDash(R.pFrom, R.pTo, F.ch) : null; tiles.push(`<button class="tile" data-act="nav" data-to="logistics"><div class="tile-label"><span>Logistics cost</span>${ic("chevR", "sm dim")}</div><div class="tile-value">${lg.pct != null ? pct(lg.pct, 2) : "–"}<small>of sales</small></div>${lp && lp.pct != null && lg.pct != null ? `<span class="delta ${lg.pct > lp.pct ? "down" : "up"}">${lg.pct > lp.pct ? "↑" : "↓"} ${Math.abs((lg.pct - lp.pct) * 100).toFixed(1)} pts vs ${esc(cmp)}</span>` : ""}<div class="tile-sub">${rs(lg.cost)} on ${lg.n} trip${lg.n === 1 ? "" : "s"}${lg.perCrate != null ? " · " + rs2(lg.perCrate) + " per crate" : ""}</div></button>`); }
   if (SEE_MONEY) tiles.push(tile("stock", "Stock on hand, at cost", lakhS(sv.total), "L", `Own ₹${lakh(sv.own)} L · QC ₹${lakh(sv.qc)} L · today`, ""));
-  if (SEE_MONEY && tiles.length < 8) tiles.push(tile("purchases", "Purchases from Hangyo", lakhS(pur.total), "L", `Own ₹${lakh(pur.own)} L · QC ₹${lakh(pur.qc)} L`, ""));
   const pace = R.isMonthToDate ? (() => { const t = NOW(), dim = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate(); return ` · on pace for ₹${lakh((cur.net / t.getDate()) * dim)} L`; })() : "";
   const n = R.days, labels = [], prevLabels = R.pFrom ? [] : null;
   for (let i = 0; i < n; i++) { labels.push(fmtDate(addDays(R.from, i))); if (prevLabels) prevLabels.push(fmtDate(addDays(R.pFrom, i))); }
@@ -890,7 +889,7 @@ VIEWS.home = () => {
     ${filterBar(R)}
     <div class="card hero"><div class="hero-left"><div class="tile-label">Net sales · ${esc(R.label)}${filterNote ? " · " + esc(filterNote) : ""}</div><div class="hero-figure">₹${lakh(cur.net)}<small>lakh</small></div>${deltaChip(chgTxt(cur.net, prev.net, cmp))}<div class="tile-sub" style="margin-top:6px">${R.pFrom ? `${esc(cmp.replace(/^the /, "The "))}: ₹${lakh(prev.net)} L` : `Since ${fmtDate(R.from)} ${R.from.slice(0, 4)}`}${pace}</div></div>
       <div class="hero-right">${n > 1 ? `<div class="legend" style="margin:4px 0 6px 34px"><span><i class="kl" style="background:var(--s-gt)"></i>${esc(R.label)}</span>${R.pFrom ? `<span><i class="kl" style="background:var(--s-prev)"></i>${esc(cmp.replace(/^the /, ""))}</span>` : ""}<span class="dim">Cumulative ₹ lakh</span></div>${S.chartMode.line === "table" ? `<div style="overflow:auto;max-height:240px">${lineTable}</div>` : lineChart(lineData)}` : `<div class="legend" style="margin:8px 0 10px">Today so far, by channel</div>${bars(barRows)}`}</div></div>
-    <div class="tiles tiles-4">${tiles.join("")}</div>
+    <div class="tiles tiles-4">${tiles.join("")}</div>${purBand(R, cmp)}
     <div class="grid-2">
       ${chartCard("months", "Sales by month and channel", "₹ lakh · *this month so far" + (filterNote ? " · " + esc(filterNote) : ""), legendSeries, monthChart(months), monthTable)}
       <div class="card"><div class="card-head"><div><div class="card-title">${F.ch === "all" ? "Districts and quick commerce" : showGT ? "By district" : "By platform"}</div><div class="card-sub">${esc(R.label)}${cmp ? " against " + esc(cmp) : ""}</div></div><div class="legend"><span><i style="background:var(--s-gt)"></i>Now</span>${cmp ? `<span><i style="background:var(--s-prev)"></i>Before</span>` : ""}</div></div><div class="card-pad" style="padding-top:10px">${barRows.length ? bars(barRows) : `<div class="empty" style="padding:24px">No sales in this period.</div>`}</div></div>
@@ -947,9 +946,7 @@ ACT.drill = (el) => {
     const sv = stockValue(); title = "Stock on hand, at cost"; big = `₹${lakh(sv.total)}<small>lakh</small>`; sub = `Own ₹${lakh(sv.own)} L · QC ₹${lakh(sv.qc)} L · at the SS rate, today`;
     body = tbl(["Category", "Value at cost"], Object.entries(sv.cats).sort((a, b) => b[1] - a[1]).map(([c, v]) => [esc(c), rs(v)]));
   } else if (k === "purchases") {
-    const p = purchasesIn(R.from, R.to); title = "Purchases from Hangyo"; big = `₹${lakh(p.total)}<small>lakh</small>`; sub = `Own ₹${lakh(p.own)} L · QC ₹${lakh(p.qc)} L`;
-    const g = {}; D.purchases.forEach((x) => { const d = (x.time || "").slice(0, 10); if (x.supplier !== "Hangyo" || d < R.from || d > R.to) return; const r = (g[x.sap || x.product] = g[x.sap || x.product] || { n: x.product, v: 0, c: 0 }); r.v += x.value || 0; r.c += x.crates || 0; });
-    body = tbl(["Product", "Crates", "Value"], Object.values(g).sort((a, b) => b.v - a.v).map((r) => [esc(shortName(r.n)), nf(r.c, 1), rs(r.v)]));
+    const P = purDrill(R); title = P.title; big = P.big; sub = P.sub; body = P.body;
   } else {
     title = "Products"; big = `₹${lakh(cur.net)}<small>lakh</small>`; sub = "Every product sold in this period";
     const g = Object.values(groupBy(cur.facts.filter((f) => f.product && f.kind !== "note"), (f) => f.sap || f.product)).sort((a, b) => b.value - a.value);
@@ -2999,11 +2996,6 @@ function qcStockGrid() {
   return `<div class="dg" style="--cols:minmax(0,2fr) 76px 80px 84px 96px 100px 100px 100px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">Current</span><span class="r c-hide">Reserved</span><span class="r">Available</span><span class="r c-hide">On open POs</span><span class="r c-hide">Free after POs</span><span class="r c-hide">Swiggy / piece</span><span class="r c-hide">Zepto / piece</span></div>
   ${rows.map((s) => `<div class="dg-row"><span><div class="strong clip">${esc(shortName(s.name))}</div><div class="row-sub clip">${esc(s.trop || "Not on the Tropicana ledger")} · ${s.ppc || "–"} pieces per crate${(() => { const x = qcSplit(s); return [x.held ? `${nf(x.held)} held for a sent pick list` : "", x.gt > 1e-9 ? `${nf(x.gt, 1)} promised to distributor orders` : ""].filter(Boolean).map((t) => ` · <span style="color:var(--tint);font-weight:600">${t}</span>`).join(""); })()}</div></span>${(() => { const x = qcSplit(s); return `<span class="r c-hide">${nf(x.cur, 1)}</span><span class="r c-hide" ${x.res > 1e-9 ? 'style="color:var(--warn);font-weight:600"' : ""}>${x.res > 1e-9 ? nf(x.res, 1) : `<span class="dim">–</span>`}</span><span class="r strong" ${!(x.avail > 1e-9) ? 'style="color:var(--bad)"' : ""}>${nf(x.avail, 1)}</span>`; })()}<span class="r c-hide">${s.openCrates ? nf(s.openCrates, 1) : `<span class="dim">–</span>`}</span><span class="r c-hide" ${s.free < 0 ? 'style="color:var(--bad);font-weight:600"' : ""}>${s.free != null ? nf(s.free, 1) : "–"}</span><span class="r c-hide">${s.swPrice ? rs2(s.swPrice) : `<span class="dim">–</span>`}</span><span class="r c-hide">${s.zpPrice ? rs2(s.zpPrice) : `<span class="dim">–</span>`}</span></div>`).join("")}</div>`;
 }
-function purchasesHtml() {
-  const byId = {}; D.purchases.forEach((p) => { const g = (byId[p.id] = byId[p.id] || { id: p.id, inv: p.inv, time: p.time, invDate: p.invDate, supplier: p.supplier, pool: p.pool, lines: [], crates: 0, value: 0 }); g.lines.push(p); g.crates += p.crates || 0; g.value += p.value || 0; });
-  const list = Object.values(byId).sort((a, b) => (a.time < b.time ? 1 : -1));
-  return `<div class="group">${list.map((g) => `<button class="row" data-act="purchaseSheet" data-id="${esc(g.id)}"><span class="attn-ic tint">${ic("box")}</span><span class="grow"><div class="row-title clip">${g.inv ? "Invoice " + esc(g.inv) : esc(g.supplier)}</div><div class="row-sub clip">${fmtDT(g.time)} · ${esc(g.supplier)} · into ${esc(String(g.pool).toLowerCase())} · ${g.lines.length} lines</div></span><span class="row-end"><span style="text-align:right">${SEE_MONEY ? `<div class="row-value">${rs(g.value)}</div>` : ""}<div class="row-sub num">${nf(g.crates, 1)} crates</div></span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div>`;
-}
 function missedHtml() {
   const real = D.oos.filter((o) => typeof o.missed === "number" && o.missed > 0), agg = {};
   real.forEach((o) => { const a = (agg[o.sap] = agg[o.sap] || { name: o.product, sap: o.sap, crates: 0, value: 0, times: 0 }); a.crates += o.missed; a.value += typeof o.value === "number" ? o.value : 0; a.times++; });
@@ -4363,6 +4355,140 @@ ACT.hpoPdf = async (el) => {
   logActivity("Hangyo PO downloaded", P.po, "PDF"); toast("Purchase order PDF downloaded", "doc");
 };
 
+/* ===== PURCHASES REPORT: what was bought from Hangyo, when, and how it is trending =====
+   Every purchase is dated by its invoice date (when it was bought), falling back to when it was entered.
+   The Stock → Purchases tab is the full report (period, SahiReach / quick commerce, figures, months, invoices,
+   products, ordered vs received, Excel); the dashboard carries a purchases strip for the dashboard's period. */
+const purDate = (p) => String(p.invDate || p.time || "").slice(0, 10);
+const purIsBuy = (p) => p.supplier === "Hangyo";
+const purPoolOK = (p, pool) => pool === "all" || (pool === "qc" ? /QC/i.test(p.pool || "") : !/QC/i.test(p.pool || ""));
+function purInvoices(from, to, pool, all) {
+  const g = {};
+  D.purchases.forEach((p) => {
+    const d = purDate(p); if (d < from || d > to || !purPoolOK(p, pool || "all") || (!all && !purIsBuy(p))) return;
+    const x = (g[p.id] = g[p.id] || { id: p.id, inv: p.inv || "", date: d, entered: p.time, supplier: p.supplier, pool: /QC/i.test(p.pool || "") ? "qc" : "own", lines: [], crates: 0, boxes: 0, value: 0 });
+    x.lines.push(p); x.crates += +p.crates || 0; x.boxes += +p.ea || 0; x.value += +p.value || 0;
+  });
+  return Object.values(g).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.entered < b.entered ? 1 : -1));
+}
+function purStats(from, to, pool) {
+  const I = purInvoices(from, to, pool), s = { n: I.length, value: 0, crates: 0, boxes: 0, own: 0, qc: 0, lines: 0, last: null };
+  I.forEach((x) => { s.value += x.value; s.crates += x.crates; s.boxes += x.boxes; s[x.pool] += x.value; s.lines += x.lines.length; if (!s.last || x.date > s.last) s.last = x.date; });
+  s.inv = I; return s;
+}
+/* when the very last purchase was, whatever the period */
+const purLast = () => D.purchases.filter(purIsBuy).reduce((a, p) => (purDate(p) > a ? purDate(p) : a), "");
+const purMonths = (n, pool) => { const out = [], t = NOW(); for (let i = n - 1; i >= 0; i--) { const d = new Date(t.getFullYear(), t.getMonth() - i, 1), from = ymd(d), to = ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)), s = purStats(from, to, pool || "all"); out.push({ k: from.slice(0, 7), label: MONTH_LONG[d.getMonth()].slice(0, 3), from, to, ...s }); } return out; };
+/* POs placed with Hangyo in the period: how much of what was ordered has come in */
+function purOrdered(from, to, pool) {
+  const L = D.hpoLog.filter((l) => { const d = String(l.placed || "").slice(0, 10); return d >= from && d <= to && (pool === "all" || (pool === "qc" ? /QC/i.test(l.pool || "") : !/QC/i.test(l.pool || ""))); });
+  const ord = L.reduce((a, l) => a + (l.boxes || (l.crates || 0) * (l.upc || 0)), 0), got = L.reduce((a, l) => a + Math.min(l.received || 0, l.boxes || (l.crates || 0) * (l.upc || 0)), 0);
+  return { pos: new Set(L.map((l) => l.po)).size, lines: L.length, ordered: ord, received: got, fill: ord > 0 ? got / ord : null, open: L.filter((l) => l.status === "Open" || l.status === "Part received").length };
+}
+const daysAgo = (d) => { const n = Math.round((toDate(ymd(NOW())) - toDate(d)) / 864e5); return n <= 0 ? "today" : n === 1 ? "yesterday" : `${n} days ago`; };
+
+/* ---------- small month bars (value for owners, crates for staff) ---------- */
+function purBars(months, opt) {
+  const money = SEE_MONEY, W = opt && opt.w ? opt.w : 620, H = opt && opt.h ? opt.h : 220, mini = !!(opt && opt.mini), m = mini ? { l: 0, r: 0, t: 6, b: 14 } : { l: 40, r: 10, t: 24, b: 26 };
+  const val = (x, part) => (money ? (part ? x[part] : x.value) : part ? x.inv.filter((i) => i.pool === part).reduce((a, i) => a + i.crates, 0) : x.crates);
+  const max = Math.max(1, ...months.map((x) => val(x))), sc = mini ? { max, n: 0, step: 0 } : niceScale(money ? max / 100000 : max), top = mini ? max : sc.max * (money ? 100000 : 1);
+  const y = (v) => H - m.b - (v / top) * (H - m.t - m.b), band = (W - m.l - m.r) / months.length, bw = Math.min(mini ? 16 : 34, band * 0.56);
+  let g = "";
+  if (!mini) for (let i = 0; i <= sc.n; i++) { const v = sc.step * i; g += `<line class="gridline" x1="${m.l}" x2="${W - m.r}" y1="${y(v * (money ? 100000 : 1))}" y2="${y(v * (money ? 100000 : 1))}"/><text x="${m.l - 8}" y="${y(v * (money ? 100000 : 1)) + 4}" text-anchor="end">${+v.toFixed(1)}</text>`; }
+  months.forEach((x, i) => {
+    const cx = m.l + band * i + band / 2, own = val(x, "own"), qc = val(x, "qc"), yo = y(own), yq = y(own + qc);
+    if (own > 0) g += `<rect x="${cx - bw / 2}" y="${yo}" width="${bw}" height="${Math.max(0, y(0) - yo)}" rx="${mini ? 2 : 3}" fill="var(--s-gt)"><title>${esc(x.label)}: SahiReach ${money ? rs(own) : nf(own) + " crates"}</title></rect>`;
+    if (qc > 0) g += `<rect x="${cx - bw / 2}" y="${yq}" width="${bw}" height="${Math.max(0, yo - yq)}" rx="${mini ? 2 : 3}" fill="var(--s-swiggy)"><title>${esc(x.label)}: quick commerce ${money ? rs(qc) : nf(qc) + " crates"}</title></rect>`;
+    if (!own && !qc) g += `<rect x="${cx - bw / 2}" y="${y(0) - 2}" width="${bw}" height="2" rx="1" fill="var(--hairline)"/>`;
+    g += `<text x="${cx}" y="${H - (mini ? 2 : 8)}" text-anchor="middle"${mini ? ' style="font-size:10px"' : ""}>${esc(x.label)}</text>`;
+    if (!mini && val(x) > 0) g += `<text class="lbl" x="${cx}" y="${yq - 6}" text-anchor="middle">${money ? "₹" + lakh(val(x)) + "L" : nf(val(x))}</text>`;
+  });
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Purchases by month${money ? " in rupees lakh" : " in crates"}, SahiReach and quick commerce">${g}</svg></div>`;
+}
+
+/* ---------- the report (Stock → Purchases) ---------- */
+function purRange(preset) {
+  if (preset === "fy") { const t = NOW(), y = t.getMonth() >= 3 ? t.getFullYear() : t.getFullYear() - 1, from = `${y}-04-01`; return { from, to: ymd(t), pFrom: `${y - 1}-04-01`, pTo: ymd(new Date(t.getFullYear() - 1, t.getMonth(), t.getDate())), label: `FY ${y}-${String(y + 1).slice(2)} so far`, cmp: "the same days last year" }; }
+  return logiRange(preset);
+}
+function purchasesHtml() {
+  const F = (S.pur = S.pur || { preset: "month", pool: "all" }), R = purRange(F.preset), cur = purStats(R.from, R.to, F.pool), prev = R.pFrom ? purStats(R.pFrom, R.pTo, F.pool) : null, money = SEE_MONEY;
+  const last = purLast(), O = purOrdered(R.from, R.to, F.pool), months = purMonths(6, F.pool);
+  const chips = (name, list, val) => list.map(([v, l]) => `<button class="chip" data-act="purF" data-f="${name}" data-v="${esc(v)}" aria-pressed="${val === v}">${esc(l)}</button>`).join("");
+  const byP = {}; cur.inv.forEach((x) => x.lines.forEach((l) => { const k = l.sap || l.product, r = (byP[k] = byP[k] || { sap: l.sap, name: l.product, n: 0, crates: 0, boxes: 0, value: 0, last: "" }); r.n++; r.crates += +l.crates || 0; r.boxes += +l.ea || 0; r.value += +l.value || 0; if (x.date > r.last) r.last = x.date; }));
+  const prods = Object.values(byP).sort((a, b) => (money ? b.value - a.value : b.crates - a.crates));
+  const other = purInvoices(R.from, R.to, F.pool, true).filter((x) => x.supplier !== "Hangyo");
+  const byMonth = {}; cur.inv.forEach((x) => (byMonth[x.date.slice(0, 7)] = byMonth[x.date.slice(0, 7)] || []).push(x));
+  const tile = (label, value, unit, sub, delta, cls) => `<div class="tile"><div class="tile-label">${esc(label)}</div><div class="tile-value"${cls ? ` style="color:var(--${cls})"` : ""}>${value}${unit ? `<small>${unit}</small>` : ""}</div>${delta ? deltaChip(delta) : ""}<div class="tile-sub">${sub}</div></div>`;
+  return `<div class="stack gap-16">
+    <div class="pur-filters"><div class="pur-chips"><div class="chips" style="margin:0">${chips("preset", [["month", "This month"], ["lastMonth", "Last month"], ["3m", "Last 3 months"], ["fy", "This financial year"], ["all", "All time"]], F.preset)}</div><div class="chips" style="margin:0">${chips("pool", [["all", "All stock"], ["own", "SahiReach"], ["qc", "Quick commerce"]], F.pool)}</div></div><button class="btn btn-secondary btn-sm" data-act="purExcel">${ic("doc", "sm")} Download Excel</button></div>
+    <div class="tiles tiles-4">
+      ${money ? tile(`Purchases · ${R.label}`, lakhS(cur.value), "L", `Excl. GST${F.pool === "all" ? ` · SahiReach ₹${lakh(cur.own)} L · QC ₹${lakh(cur.qc)} L` : ""}`, prev ? chgTxt(cur.value, prev.value, R.cmp) : "") : ""}
+      ${tile("Crates received", nf(cur.crates, 0), "", `${nf(cur.boxes)} boxes · ${cur.lines} invoice lines`, prev ? chgTxt(cur.crates, prev.crates, R.cmp) : "")}
+      ${tile("Invoices", nf(cur.n), "", cur.n ? `${money ? "Avg " + rs(cur.value / cur.n) + " · " : ""}${cur.last ? "latest " + fmtDate(cur.last) : ""}` : "None in this period", "")}
+      ${tile("Last purchase", last ? fmtDate(last) : "–", "", last ? daysAgo(last) : "No purchases yet", "", last && (toDate(ymd(NOW())) - toDate(last)) / 864e5 > 10 ? "warn" : "")}
+      ${!money ? tile("Ordered vs received", O.fill != null ? pct(O.fill, 0) : "–", "", O.pos ? `${O.pos} Hangyo PO${O.pos > 1 ? "s" : ""} placed · ${O.open} line${O.open === 1 ? "" : "s"} still to come` : "No POs placed in this period", "") : ""}
+    </div>
+    ${money ? `<div class="banner ${O.pos ? "info" : "plain"}" style="${O.pos ? "" : "background:var(--fill-2);color:var(--ink-2)"}">${ic("truck", "sm")}<span>${O.pos ? `<b>Ordered vs received:</b> ${O.pos} Hangyo PO${O.pos > 1 ? "s" : ""} placed in this period, ${pct(O.fill || 0, 0)} of the boxes ordered have come in${O.open ? ` · ${O.open} line${O.open === 1 ? "" : "s"} still to come` : ""}.` : "No Hangyo POs were placed in this period."}</span></div>` : ""}
+    <div class="grid-2">
+      ${chartCard("purMonths", "Purchases by month", money ? "₹ lakh, excl. GST · last 6 months" : "Crates received · last 6 months", `<span><i style="background:var(--s-gt)"></i>SahiReach</span><span><i style="background:var(--s-swiggy)"></i>Quick commerce</span>`, purBars(months), `<div class="table-wrap"><table class="t"><thead><tr><th>Month</th><th class="r">Invoices</th><th class="r">Crates</th>${money ? `<th class="r">Value</th>` : ""}</tr></thead><tbody>${months.map((x) => `<tr><td>${esc(x.label)} ${x.k.slice(0, 4)}</td><td class="r">${x.n}</td><td class="r">${nf(x.crates)}</td>${money ? `<td class="r">${rs(x.value)}</td>` : ""}</tr>`).join("")}</tbody></table></div>`)}
+      <div class="card"><div class="card-head"><div><div class="card-title">What was bought</div><div class="card-sub">${esc(R.label)} · by product</div></div></div><div class="card-pad" style="padding-top:6px">${prods.length ? `<div class="table-wrap" style="max-height:330px;overflow:auto"><table class="t"><thead><tr><th>Product</th><th class="r">Times</th><th class="r">Crates</th>${money ? `<th class="r">Value</th><th class="r">Rate / box</th>` : ""}<th class="r">Last</th></tr></thead><tbody>${prods.map((r) => `<tr><td>${esc(shortName(r.name))}</td><td class="r">${r.n}</td><td class="r">${nf(r.crates, 1)}</td>${money ? `<td class="r">${rs(r.value)}</td><td class="r">${r.boxes ? rs2(r.value / r.boxes) : "–"}</td>` : ""}<td class="r">${fmtDate(r.last)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">Nothing bought in this period.</div>`}</div></div>
+    </div>
+    <div><div class="group-label"><span>Every purchase · ${esc(R.label)}</span><span>${cur.n}</span></div>
+      ${cur.n ? Object.keys(byMonth).sort().reverse().map((mk) => { const L = byMonth[mk], mv = L.reduce((a, x) => a + x.value, 0), mc = L.reduce((a, x) => a + x.crates, 0); return `<div class="pur-month"><div class="pur-month-head"><span>${MONTH_LONG[+mk.slice(5) - 1]} ${mk.slice(0, 4)}</span><span>${L.length} invoice${L.length > 1 ? "s" : ""} · ${nf(mc)} crates${money ? " · " + rs(mv) : ""}</span></div><div class="group">${L.map((x) => `<button class="row" data-act="purchaseSheet" data-id="${esc(x.id)}"><span class="pur-date"><b>${toDate(x.date).getDate()}</b><span>${MONTHS[toDate(x.date).getMonth()]}</span></span><span class="grow"><div class="row-title clip">${x.inv ? "Invoice " + esc(x.inv) : "Hangyo purchase"}</div><div class="row-sub clip">${x.pool === "qc" ? `<span class="pill plain" style="height:20px;font-size:11px">Quick commerce</span> ` : ""}${x.lines.length} line${x.lines.length > 1 ? "s" : ""} · ${nf(x.crates, 1)} crates${x.entered && x.entered.slice(0, 10) !== x.date ? ` · entered ${fmtDate(x.entered)}` : ""}</div></span><span class="row-end"><span style="text-align:right">${money ? `<div class="row-value">${rs(x.value)}</div>` : `<div class="row-value">${nf(x.crates, 1)} cr</div>`}</span>${ic("chevR", "sm chev")}</span></button>`).join("")}</div></div>`; }).join("") : `<div class="group"><div class="empty"><div class="big">No purchases in this period</div>Received stock appears here by its invoice date.</div></div>`}</div>
+    ${other.length ? `<div><div class="group-label"><span>Other stock received (not a Hangyo purchase)</span><span>${other.length}</span></div><div class="group">${other.map((x) => `<button class="row" data-act="purchaseSheet" data-id="${esc(x.id)}"><span class="grow"><div class="row-title clip">${esc(x.supplier)}${x.inv ? " · " + esc(x.inv) : ""}</div><div class="row-sub">${fmtDate(x.date)} · ${nf(x.crates, 1)} crates</div></span>${ic("chevR", "sm chev")}</button>`).join("")}</div></div>` : ""}
+  </div>`;
+}
+ACT.purF = (el) => { S.pur = S.pur || { preset: "month", pool: "all" }; S.pur[el.dataset.f] = el.dataset.v; render(); };
+
+/* ---------- dashboard: a purchases strip for the dashboard's period ---------- */
+function purBand(R, cmp) {
+  if (S.dash && S.dash.district !== "all") return "";
+  const pool = S.dash && S.dash.ch === "gt" ? "own" : S.dash && ["qc", "swiggy", "zepto"].includes(S.dash.ch) ? "qc" : "all";
+  const cur = purStats(R.from, R.to, pool), prev = R.pFrom ? purStats(R.pFrom, R.pTo, pool) : null, last = purLast(), money = SEE_MONEY;
+  const d = prev ? (money ? chgTxt(cur.value, prev.value, cmp) : chgTxt(cur.crates, prev.crates, cmp)) : "";
+  return `<button class="pur-band" data-act="drill" data-k="purchases">
+    <span class="pur-band-main"><span class="tile-label"><span>Purchases from Hangyo${pool !== "all" ? pool === "qc" ? " · quick commerce" : " · SahiReach" : ""}</span>${ic("chevR", "sm dim")}</span><span class="tile-value">${money ? `${lakhS(cur.value)}<small>L</small>` : `${nf(cur.crates)}<small>crates</small>`}</span>${d ? deltaChip(d) : ""}</span>
+    <span class="pur-band-stats"><span><b>${nf(cur.n)}</b> invoice${cur.n === 1 ? "" : "s"}</span><span><b>${nf(cur.crates)}</b> crates</span>${money && pool === "all" ? `<span>SahiReach <b>₹${lakh(cur.own)} L</b> · QC <b>₹${lakh(cur.qc)} L</b></span>` : ""}<span>Last purchase <b>${last ? fmtDate(last) : "–"}</b>${last ? " · " + daysAgo(last) : ""}</span></span>
+    <span class="pur-band-chart">${purBars(purMonths(6, pool), { mini: true, w: 220, h: 64 })}</span>
+  </button>`;
+}
+function purDrill(R) {
+  const pool = S.dash && S.dash.ch === "gt" ? "own" : S.dash && ["qc", "swiggy", "zepto"].includes(S.dash.ch) ? "qc" : "all", cur = purStats(R.from, R.to, pool), money = SEE_MONEY;
+  const g = {}; cur.inv.forEach((x) => x.lines.forEach((l) => { const r = (g[l.sap || l.product] = g[l.sap || l.product] || { n: l.product, v: 0, c: 0 }); r.v += +l.value || 0; r.c += +l.crates || 0; }));
+  const tbl = (head, rows) => `<div class="table-wrap"><table class="t"><thead><tr>${head.map((h, i) => `<th class="${i ? "r" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="${i ? "r" : ""}">${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  return {
+    title: "Purchases from Hangyo", big: money ? `₹${lakh(cur.value)}<small>lakh</small>` : `${nf(cur.crates)}<small>crates</small>`,
+    sub: `${cur.n} invoice${cur.n === 1 ? "" : "s"} · ${nf(cur.crates)} crates${money ? ` · SahiReach ₹${lakh(cur.own)} L · QC ₹${lakh(cur.qc)} L` : ""} · by invoice date`,
+    body: `${tbl(["Invoice", "Date", "Crates"].concat(money ? ["Value"] : []), cur.inv.map((x) => [`${x.inv ? esc(x.inv) : "Hangyo purchase"}${x.pool === "qc" ? `<div class="row-sub">Quick commerce</div>` : ""}`, fmtDate(x.date), nf(x.crates, 1)].concat(money ? [rs(x.value)] : [])))}
+      <div class="group-label" style="padding-bottom:0"><span>By product</span></div>${tbl(["Product", "Crates"].concat(money ? ["Value"] : []), Object.values(g).sort((a, b) => (money ? b.v - a.v : b.c - a.c)).map((r) => [esc(shortName(r.n)), nf(r.c, 1)].concat(money ? [rs(r.v)] : [])))}
+      <button class="btn btn-secondary" style="margin-top:12px" data-act="purOpen">${ic("box", "sm")} Open the purchases report</button>`,
+  };
+}
+ACT.purOpen = () => { closeSheet(); S.stockTab = "purchases"; go("stock"); };
+
+/* ---------- Excel (styled, like the item ledger) ---------- */
+ACT.purExcel = async (el) => {
+  if (el) el.disabled = true;
+  try { await loadScriptOnce(XLSXS_SRC, () => !!(window.XLSX && window.XLSX.style_version)); }
+  catch (e) { if (el) el.disabled = false; toast("Could not prepare the Excel file. Check your internet and try again.", "alert"); return; }
+  const X = window.XLSX, F = S.pur || { preset: "month", pool: "all" }, R = purRange(F.preset), cur = purStats(R.from, R.to, F.pool), money = SEE_MONEY;
+  const NUM = "#,##0", DEC = "#,##0.00", RS = '"₹"#,##0.00', DATE = "dd-mmm-yyyy", poolTxt = F.pool === "all" ? "SahiReach and quick commerce" : F.pool === "qc" ? "quick commerce" : "SahiReach stock";
+  const sum = [["Invoices", cur.n, NUM], ["Crates received", cur.crates, DEC], ["Boxes received", cur.boxes, NUM], ["Last purchase", cur.last ? fmtDate(cur.last) : "–"]].concat(money ? [["Value excl. GST", cur.value, RS], ["SahiReach stock", cur.own, RS], ["Quick commerce", cur.qc, RS], ["Average per invoice", cur.n ? cur.value / cur.n : null, RS]] : []);
+  const head1 = [{ t: "Invoice date", z: DATE }, { t: "Invoice" }, { t: "Into" }, { t: "Lines", r: 1, z: NUM }, { t: "Crates", r: 1, z: DEC }, { t: "Boxes", r: 1, z: NUM }].concat(money ? [{ t: "Value excl. GST", r: 1, z: RS }] : [], [{ t: "Entered in the tool", z: DATE }, { t: "Reference" }]);
+  const body1 = cur.inv.slice().reverse().map((x) => [{ v: ilSerial(x.date), t: "n" }, x.inv || "", x.pool === "qc" ? "Quick commerce" : "SahiReach stock", x.lines.length, x.crates, x.boxes].concat(money ? [x.value] : [], [x.entered ? { v: ilSerial(x.entered.slice(0, 10)), t: "n" } : "", x.id]));
+  const foot1 = ["", "Total", "", cur.lines, cur.crates, cur.boxes].concat(money ? [cur.value] : [], ["", ""]);
+  const L1 = ilLedgerRows("Purchases from Hangyo", `${R.label} (${dmyOf(R.from)} to ${dmyOf(R.to)}) · ${poolTxt} · by invoice date · ${CO.name || "SahiReach LLP"}`, sum, head1, body1, foot1);
+  const head2 = [{ t: "Invoice date", z: DATE }, { t: "Invoice" }, { t: "Into" }, { t: "Product" }, { t: "SAP code" }, { t: "Batch" }, { t: "Crates", r: 1, z: DEC }, { t: "Boxes", r: 1, z: NUM }].concat(money ? [{ t: "Rate / box", r: 1, z: RS }, { t: "Value", r: 1, z: RS }] : []);
+  const body2 = []; cur.inv.slice().reverse().forEach((x) => x.lines.forEach((l) => body2.push([{ v: ilSerial(x.date), t: "n" }, x.inv || "", x.pool === "qc" ? "Quick commerce" : "SahiReach stock", l.product, l.sap || "", l.batch || "", +l.crates || 0, +l.ea || 0].concat(money ? [l.rate != null ? +l.rate : "", +l.value || 0] : []))));
+  const L2 = ilLedgerRows("Purchase lines", `${R.label} · ${poolTxt} · every product on every invoice`, [], head2, body2, ["", "Total", "", "", "", "", cur.crates, cur.boxes].concat(money ? ["", cur.value] : []));
+  const wb = X.utils.book_new();
+  X.utils.book_append_sheet(wb, ilSheet(X, L1.rows, [13, 18, 16, 8, 10, 10].concat(money ? [15] : [], [14, 24]), L1.merges), "Purchases");
+  X.utils.book_append_sheet(wb, ilSheet(X, L2.rows, [13, 18, 16, 44, 11, 14, 9, 9].concat(money ? [12, 14] : []), L2.merges), "Lines");
+  X.writeFile(wb, `SahiReach purchases ${R.label.replace(/[^\w\s-]/g, "")} ${dmyOf(ymd(NOW()))}.xlsx`, { compression: true, cellStyles: true });
+  if (el) el.disabled = false; logActivity("Purchases report downloaded", R.label, "Excel"); toast("Purchases report downloaded", "doc");
+};
+
 /* ===== TOD & NOTES ===== */
 function todState() {
   const by = {}; let total = 0;
@@ -4598,7 +4724,7 @@ function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
 /* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
-const VIEW_ACTS = new Set("hpoPdf itemExcel reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_ACTS = new Set("purF purExcel purOpen hpoPdf itemExcel reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("stkDate stkMonth ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 const viewOK = (el) => CAN_EDIT || (el.dataset.act ? VIEW_ACTS.has(el.dataset.act) : VIEW_INS.has(el.dataset.in));
 function viewOnlyMark(root) {

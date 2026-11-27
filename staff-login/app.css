@@ -607,3 +607,24 @@ body.dragging .drop { border-color: color-mix(in srgb, var(--tint) 55%, transpar
 .drop-paste-in { height: 44px; border-radius: var(--r-md); text-align: center; caret-color: transparent; }
 .drop-paste-in::placeholder { color: var(--tint); font-weight: 600; }
 @media (max-width: 600px) { .drop-paste { padding-left: 0; } }
+
+/* ---- purchases: dashboard strip and the report ---- */
+.pur-band { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 1.6fr) 220px; gap: 20px; align-items: center; width: 100%; margin-top: 14px; padding: 18px 20px; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-1); text-align: left; border: none; color: inherit; font: inherit; cursor: pointer; transition: transform 0.2s var(--ease), box-shadow 0.2s var(--ease); }
+.pur-band:hover { box-shadow: var(--shadow-2); }
+.pur-band:active { transform: scale(0.995); }
+.pur-band-main { display: flex; flex-direction: column; gap: 4px; }
+.pur-band-main .tile-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pur-band-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; color: var(--ink-2); }
+.pur-band-stats b { color: var(--ink); font-weight: 600; }
+.pur-band-chart .chart svg { width: 100%; height: auto; display: block; }
+.pur-month { margin-bottom: 14px; }
+.pur-month-head { display: flex; justify-content: space-between; gap: 12px; padding: 4px 4px 8px; font-size: 13px; color: var(--ink-2); }
+.pur-month-head span:first-child { font-weight: 650; color: var(--ink); font-size: 14px; }
+.pur-date { width: 42px; height: 42px; border-radius: 12px; background: var(--tint-soft); color: var(--tint); display: flex; flex-direction: column; align-items: center; justify-content: center; flex: none; line-height: 1; }
+.pur-date b { font-size: 16px; font-weight: 700; }
+.pur-date span { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 2px; }
+@media (max-width: 900px) { .pur-band { grid-template-columns: 1fr; gap: 12px; } .pur-band-chart { max-width: 260px; } }
+.pur-filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.pur-chips { display: flex; flex-wrap: wrap; gap: 8px 12px; min-width: 0; max-width: 100%; }
+.pur-chips .chips { min-width: 0; max-width: 100%; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+.pur-chips .chips::-webkit-scrollbar { display: none; }
