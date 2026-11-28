@@ -705,3 +705,7 @@ table.t .btn-plain:hover { color: var(--tint); }
   .ac-tabs .seg button { flex: 1 1 auto; padding: 6px 3px; font-size: 12.5px; justify-content: center; }
 }
 .banner .btn-plain { height: auto; padding: 0; display: inline; font-weight: 600; text-align: left; }
+.ql-row { flex-wrap: wrap; row-gap: 8px; }
+.ql-sel { width: 300px; max-width: 100%; }
+.btn-plain.qc-why { height: auto; padding: 0; display: inline; font-size: inherit; }
+@media (max-width: 720px) { .ql-sel { width: 100%; } }

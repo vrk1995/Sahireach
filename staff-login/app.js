@@ -124,7 +124,7 @@ const S = {
 };
 const newDraft = () => ({ dist: null, lines: [], editId: null, q: "", dq: "", notes: "" });
 S.draft = newDraft();
-D.qcPOs.forEach((p) => { if (p.status === "Open" && p.daysLeft >= 0) S.qcPicked[p.po] = true; });
+D.qcPOs.forEach((p) => { if (p.status === "Open" && daysLeft(p) >= 0) S.qcPicked[p.po] = true; }); /* days left worked out today, not the figure stored when the PO was added */
 
 /* ===== shell: router, sheet, modal, toast ===== */
 const ROUTES = {
@@ -2518,16 +2518,31 @@ function expiryPill(p) { const d = daysLeft(p); return d < 0 ? `<span class="pil
 function qcDeliveryLive() {
   const pos = openQC().filter((p) => p.platform === S.qcPlatform && S.qcPicked[p.po] && daysLeft(p) >= 0 && !qcLockOf(p.po)), agg = {};
   pos.forEach((p) => (qcLinesByPO[p.po] || []).forEach((l) => { const k = l.sap || l.product, a = (agg[k] = agg[k] || { sap: l.sap, name: l.product, pcs: 0, value: 0, ppc: l.ppc }); a.pcs += l.pcs; a.value += l.value; }));
-  const rows = Object.values(agg).map((a) => {
-    const qc = qcBySap[a.sap] || {}, own = stockBySap[a.sap] || {}, ppc = a.ppc || qc.ppc || 1;
-    const held = qcHeld(a.sap), full = Math.floor(a.pcs / ppc), qcCr = Math.max(0, Math.floor((qc.crates || 0) - held.q - gtFromQC(a.sap) + 1e-9)), ownCr = own.upc ? Math.max(0, Math.floor(own.ea / own.upc - held.o + 1e-9)) : 0;
+  /* SahiReach stock is shared by quick commerce products linked to the same SahiReach product: hand it out in turn */
+  const ownLeft = {};
+  const rows = Object.values(agg).sort((a, b) => a.name.localeCompare(b.name)).map((a) => {
+    const qc = qcBySap[a.sap] || {}, ownSap = ownSapFor(a.sap), own = stockBySap[ownSap] || {}, ppc = a.ppc || qc.ppc || 1;
+    const held = qcHeld(a.sap), full = Math.floor(a.pcs / ppc), qcCr = Math.max(0, Math.floor((qc.crates || 0) - held.q - gtFromQC(a.sap) + 1e-9));
+    if (!(ownSap in ownLeft)) ownLeft[ownSap] = own.upc ? Math.max(0, Math.floor(own.ea / own.upc - ownHeldCr(ownSap) + 1e-9)) : 0;
+    const ownCr = ownLeft[ownSap];
     let fromQC = Math.min(full, qcCr), fromOwn = S.qcOwn ? Math.min(full - fromQC, ownCr) : 0;
     const ov = (S.qcOverride[S.qcPlatform] || {})[a.sap], edited = !!ov;
     if (ov) { fromQC = Math.max(0, Math.min(ov.q, qcCr)); fromOwn = Math.max(0, Math.min(ov.o, ownCr)); }
+    ownLeft[ownSap] -= fromOwn;
     const send = fromQC + fromOwn, sendPcs = Math.min(a.pcs, send * ppc);
-    return { ...a, ppc, full, qcCr, ownCr, fromQC, fromOwn, send, edited, sendPcs, notSent: a.pcs - sendPcs, extra: Math.max(0, send * ppc - a.pcs), sendValue: a.pcs ? (a.value / a.pcs) * sendPcs : 0 };
-  }).sort((a, b) => a.name.localeCompare(b.name));
+    /* why SahiReach stock could not help: none, not linked, or held for distributor orders not yet dispatched */
+    const res = own.upc ? ownReservedBy(ownSap) : [], resCr = res.reduce((x, r) => x + r.ea, 0) / (own.upc || 1);
+    const why = send < full ? (!own.upc ? (stockBySap[a.sap] ? "" : "nolink") : resCr >= 1 && ownCr < full - fromQC ? "reserved" : "") : "";
+    return { ...a, ppc, full, qcCr, ownCr, fromQC, fromOwn, send, edited, sendPcs, notSent: a.pcs - sendPcs, extra: Math.max(0, send * ppc - a.pcs), sendValue: a.pcs ? (a.value / a.pcs) * sendPcs : 0, ownSap, ownName: ownSap !== a.sap ? own.name || "" : "", ownTrop: own.trop || "", res, resCr, why };
+  });
   return { pos, rows, crates: rows.reduce((a, r) => a + r.send, 0), value: rows.reduce((a, r) => a + r.sendValue, 0), min: S.qcPlatform === "Swiggy" ? D.qcPick.minSwiggy : D.qcPick.minZepto };
+}
+/* under a pick row: which SahiReach product its own crates come from, or why none could */
+function qcWhyHtml(r) {
+  if (r.fromOwn && r.ownName) return `<div class="row-sub" style="color:var(--tint)">Own stock: ${esc(shortName(r.ownName))}${r.ownTrop && r.ownTrop !== "TBD" ? " · " + esc(r.ownTrop) : ""}</div>`;
+  if (r.why === "reserved") return `<div class="row-sub" style="color:var(--warn)">${nf(r.resCr, 1)} crate${r.resCr === 1 ? "" : "s"} in SahiReach stock ${r.resCr === 1 ? "is" : "are"} reserved for ${r.res.map((x) => `<button class="btn-plain qc-why" data-act="orderSheet" data-id="${esc(x.id)}">${esc(shortOf(x.dist))}</button>`).join(", ")} (not dispatched yet)</div>`;
+  if (r.why === "nolink") return `<div class="row-sub" style="color:var(--warn)">No SahiReach product linked · <button class="btn-plain qc-why" data-act="qcLinkSheet">Link</button></div>`;
+  return "";
 }
 function qcOpenHtml() {
   qcLocksClean(); if (!sheetOpen) S.qcLockView = null;
@@ -2536,7 +2551,7 @@ function qcOpenHtml() {
   if (!list.length) return `${locks}<div class="group"><div class="empty"><div class="big">No ${locks ? "other " : ""}open ${esc(S.qcPlatform)} POs</div>Add a PO when it arrives and it will show here until it is delivered or lapses.</div></div>`;
   return `${locks}<div class="split s320">
     <div class="stack gap-20"><div><div class="group-label"><span>Open POs, soonest expiry first</span></div><div class="group">${list.map((p) => { const exp = daysLeft(p) < 0; return `<div class="row tap" ${exp ? "" : `role="checkbox" tabindex="0" aria-checked="${!!S.qcPicked[p.po]}" data-act="toggleQC" data-po="${esc(p.po)}" style="cursor:pointer"`}><span class="check" aria-checked="${!exp && !!S.qcPicked[p.po]}" ${exp ? 'style="opacity:.3"' : ""}>${ic("check")}</span><span class="grow"><div class="row-title mono" style="font-size:14.5px">${esc(p.po)}</div><div class="row-sub">${p.lines} lines · ${nf(p.pcs)} pieces · PO of ${fmtDate(p.date)}${p.edited ? " · edited" : ""}</div></span><span class="row-end"><span style="text-align:right"><div class="row-value">${rs(p.value)}</div><div style="margin-top:3px">${expiryPill(p)}</div></span><button class="icon-btn" data-act="qcPOSheet" data-po="${esc(p.po)}" aria-label="Open PO">${ic("chevR", "sm")}</button></span></div>`; }).join("")}</div></div>
-      ${Dl.rows.length ? `<div><div class="group-label"><span>What goes on this delivery</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="qcPickEdit">${ic("pencil", "sm")} Edit crates</button></div><div class="dg" style="--cols:minmax(0,1.6fr) 80px 80px 90px 90px 90px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">Pieces on POs</span><span class="r c-hide">Per crate</span><span class="r c-hide">From QC stock</span><span class="r c-hide">From own stock</span><span class="r">Crates to send</span></div>${Dl.rows.map((r) => `<div class="dg-row"><span><div class="strong clip">${esc(shortName(r.name))}</div>${r.notSent > 0 ? `<div class="row-sub" style="color:var(--warn)">${nf(r.notSent)} pieces not sent${r.edited ? " · changed by you" : r.send < r.full ? " · stock short" : " · under a full crate"}</div>` : `<div class="row-sub">${r.extra ? nf(r.extra) + " pieces over the PO" : "Sent in full"}${r.edited ? " · changed by you" : ""}</div>`}</span><span class="r c-hide">${nf(r.pcs)}</span><span class="r c-hide">${r.ppc}</span><span class="r c-hide">${r.fromQC}<span class="dim"> of ${r.qcCr}</span></span><span class="r c-hide">${r.fromOwn || `<span class="dim">–</span>`}</span><span class="r strong">${r.send}</span></div>`).join("")}</div></div>` : ""}</div>
+      ${Dl.rows.length ? `<div><div class="group-label"><span>What goes on this delivery</span><button class="btn-plain" style="height:auto;font-size:13px;font-weight:600" data-act="qcPickEdit">${ic("pencil", "sm")} Edit crates</button></div><div class="dg" style="--cols:minmax(0,1.6fr) 80px 80px 90px 90px 90px;--cols-sm:minmax(0,1fr) auto"><div class="dg-row dg-head"><span>Product</span><span class="r c-hide">Pieces on POs</span><span class="r c-hide">Per crate</span><span class="r c-hide">From QC stock</span><span class="r c-hide">From own stock</span><span class="r">Crates to send</span></div>${Dl.rows.map((r) => `<div class="dg-row"><span><div class="strong clip">${esc(shortName(r.name))}</div>${r.notSent > 0 ? `<div class="row-sub" style="color:var(--warn)">${nf(r.notSent)} pieces not sent${r.edited ? " · changed by you" : r.send < r.full ? " · stock short" : " · under a full crate"}</div>` : `<div class="row-sub">${r.extra ? nf(r.extra) + " pieces over the PO" : "Sent in full"}${r.edited ? " · changed by you" : ""}</div>`}${qcWhyHtml(r)}</span><span class="r c-hide">${nf(r.pcs)}</span><span class="r c-hide">${r.ppc}</span><span class="r c-hide">${r.fromQC}<span class="dim"> of ${r.qcCr}</span></span><span class="r c-hide">${r.fromOwn || `<span class="dim">–</span>`}</span><span class="r strong">${r.send}</span></div>`).join("")}</div></div>` : ""}</div>
     <div class="sticky"><div class="card card-pad"><div class="card-title">This delivery</div><div class="row-sub">${esc(S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo)}</div>
       <div class="tile-value" style="margin-top:10px">${nf(Dl.crates)}<small>crates</small></div><div class="row-sub">${Dl.pos.length} PO${Dl.pos.length === 1 ? "" : "s"} ticked · ${rs(Dl.value)} excl. GST</div>
       ${Dl.min ? `<div style="margin-top:14px"><div class="hstack between" style="font-size:13px"><span class="muted">Minimum per delivery ${rs(Dl.min)}</span>${ok ? `<span class="pill good">OK</span>` : `<span class="pill warn">${rs(Dl.min - Dl.value)} short</span>`}</div><div class="meter ${ok ? "" : "warn"}" style="margin-top:7px;height:8px"><i style="width:${prog}%"></i></div></div>` : ""}
@@ -2556,20 +2571,20 @@ function qcGrnHtml() {
 VIEWS.quick = () => {
   const open = openQC(), tabs = { open: qcOpenHtml, add: qcNewHtml, grn: qcGrnHtml, history: qcHistoryHtml };
   return `<div class="page">
-    <div class="page-head"><div><h1 class="title">Quick commerce</h1><div class="subtitle">Swiggy and Zepto purchase orders, from the day they arrive to the GRN.</div></div><div class="head-actions">${S.qcTab === "open" ? seg("qcPlatform", S.qcPlatform, [["Swiggy", "Swiggy", open.filter((p) => p.platform === "Swiggy").length], ["Zepto", "Zepto", open.filter((p) => p.platform === "Zepto").length]]) : ""}</div></div>
+    <div class="page-head"><div><h1 class="title">Quick commerce</h1><div class="subtitle">Swiggy and Zepto purchase orders, from the day they arrive to the GRN.</div></div><div class="head-actions">${S.qcTab === "open" ? `<button class="btn btn-secondary" data-act="qcLinkSheet">${ic("repeat", "sm")} Link products</button>` : ""}${S.qcTab === "open" ? seg("qcPlatform", S.qcPlatform, [["Swiggy", "Swiggy", open.filter((p) => p.platform === "Swiggy").length], ["Zepto", "Zepto", open.filter((p) => p.platform === "Zepto").length]]) : ""}</div></div>
     ${seg("qcTab", S.qcTab, [["open", "Open POs"], ["add", S.qcNew && S.qcNew.editPo ? "Edit PO" : "New PO"], ["grn", "GRN"], ["history", "History"]])}
     ${tabs[S.qcTab]()}</div>`;
 };
 function qcPickTable(Dl, editing) {
   if (isNarrow()) {
     const inp = (r, k, v, max) => `<input class="pick-in" type="number" inputmode="numeric" min="0" max="${max}" step="1" value="${v}" data-sap="${esc(r.sap)}" data-k="${k}" data-in="pickCell" data-was="${v}" aria-label="${esc(shortName(r.name))} from ${k === "q" ? "QC" : "own"} stock">`;
-    return `<div class="group">${Dl.rows.map((r) => `<div class="row" style="align-items:flex-start"><span class="grow"><div class="row-title clip">${esc(shortName(r.name))}</div><div class="row-sub">${esc(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "")} · ${nf(r.pcs)} pcs · ${r.ppc} per crate${r.notSent > 0 ? ` · <span style="color:var(--warn)">${nf(r.notSent)} not sent</span>` : ""}</div>
+    return `<div class="group">${Dl.rows.map((r) => `<div class="row" style="align-items:flex-start"><span class="grow"><div class="row-title clip">${esc(shortName(r.name))}</div><div class="row-sub">${esc(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "")} · ${nf(r.pcs)} pcs · ${r.ppc} per crate${r.notSent > 0 ? ` · <span style="color:var(--warn)">${nf(r.notSent)} not sent</span>` : ""}</div>${qcWhyHtml(r)}
       ${editing ? `<div class="qc-ins"><label>QC ${inp(r, "q", r.fromQC, r.qcCr)}<small>of ${r.qcCr}</small></label><label>Own ${inp(r, "o", r.fromOwn, r.ownCr)}<small>of ${r.ownCr}</small></label></div>` : `<div class="row-sub">${r.fromQC} from QC stock${r.fromOwn ? ` · ${r.fromOwn} from own stock` : ""}</div>`}</span>
       <span class="row-end"><span style="text-align:right"><div class="row-value">${r.send}</div><div class="row-sub">crates</div></span></span></div>`).join("")}
       <div class="row"><span class="grow"><b>Total</b></span><span class="row-end"><span class="row-value">${Dl.crates} crates</span></span></div></div>`;
   }
   return `<div class="table-wrap"><table class="t"><thead><tr><th class="sticky-col">Product</th><th class="r">Pieces on POs</th><th class="r">Per crate</th><th class="r">From QC stock</th><th class="r">From own stock</th><th class="r">Crates to send</th></tr></thead><tbody>
-    ${Dl.rows.map((r) => `<tr><td class="sticky-col"><div class="clip" style="max-width:240px">${esc(shortName(r.name))}</div><div class="row-sub">${esc(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "")}${r.notSent > 0 ? ` · <span style="color:var(--warn)">${nf(r.notSent)} pcs not sent</span>` : ""}</div></td><td class="r">${nf(r.pcs)}</td><td class="r">${r.ppc}</td>
+    ${Dl.rows.map((r) => `<tr><td class="sticky-col"><div class="clip" style="max-width:240px">${esc(shortName(r.name))}</div><div class="row-sub">${esc(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "")}${r.notSent > 0 ? ` · <span style="color:var(--warn)">${nf(r.notSent)} pcs not sent</span>` : ""}</div>${qcWhyHtml(r)}</td><td class="r">${nf(r.pcs)}</td><td class="r">${r.ppc}</td>
       ${editing ? `<td class="r edit-cell"><input class="pick-in" type="number" inputmode="numeric" min="0" max="${r.qcCr}" step="1" value="${r.fromQC}" data-sap="${esc(r.sap)}" data-k="q" data-in="pickCell" data-was="${esc(r.fromQC)}" aria-label="${esc(shortName(r.name))} from QC stock"><div class="row-sub">of ${r.qcCr}</div></td><td class="r edit-cell"><input class="pick-in" type="number" inputmode="numeric" min="0" max="${r.ownCr}" step="1" value="${r.fromOwn}" data-sap="${esc(r.sap)}" data-k="o" data-in="pickCell" data-was="${esc(r.fromOwn)}" aria-label="${esc(shortName(r.name))} from own stock"><div class="row-sub">of ${r.ownCr}</div></td>`
         : `<td class="r">${r.fromQC || `<span class="dim">–</span>`}</td><td class="r">${r.fromOwn || `<span class="dim">–</span>`}</td>`}
       <td class="r"><b>${r.send}</b></td></tr>`).join("")}
@@ -2615,7 +2630,7 @@ function qcPickAoa(Dl) {
     [],
     ["Tropicana SKU Code", "Product", "Crates from QC Stock", "Crates from SahiReach Stock", "Total Crates to Pick and Send"],
   ];
-  Dl.rows.filter((r) => r.send).forEach((r) => aoa.push([tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "", r.name, r.fromQC, r.fromOwn, r.send]));
+  Dl.rows.filter((r) => r.send).forEach((r) => aoa.push([(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "") + (r.fromOwn && r.ownName ? ` / own ${r.ownTrop}` : ""), r.name + (r.fromOwn && r.ownName ? ` (own stock: ${r.ownName})` : ""), r.fromQC, r.fromOwn, r.send]));
   aoa.push(["", "TOTAL", Dl.rows.reduce((a, r) => a + r.fromQC, 0), Dl.rows.reduce((a, r) => a + r.fromOwn, 0), Dl.crates]);
   return { rows: aoa, cols: [18, 46, 14, 18, 18], stampTxt };
 }
@@ -2627,7 +2642,7 @@ ACT.qcPickExcel = async (el) => {
 };
 ACT.qcPickCopy = () => {
   const Dl = qcDelivery(), to = S.qcPlatform === "Swiggy" ? D.qcPick.swiggyTo : D.qcPick.zeptoTo;
-  const txt = `SahiReach ${S.qcPlatform} pick list (${fmtDT(NOW())})\nExpected dispatch: ${dateLong(qcDispatchOn())}\nDeliver to: ${to}\nPOs: ${Dl.pos.map((p) => p.po).join(", ")}\n${Dl.crates} crates\n\n` + Dl.rows.filter((r) => r.send).map((r) => `  ${r.send} x ${shortName(r.name)}${tropCode(r.sap) ? " (" + tropCode(r.sap) + ")" : ""}${r.fromOwn ? `  [${r.fromOwn} from own stock]` : ""}`).join("\n");
+  const txt = `SahiReach ${S.qcPlatform} pick list (${fmtDT(NOW())})\nExpected dispatch: ${dateLong(qcDispatchOn())}\nDeliver to: ${to}\nPOs: ${Dl.pos.map((p) => p.po).join(", ")}\n${Dl.crates} crates\n\n` + Dl.rows.filter((r) => r.send).map((r) => `  ${r.send} x ${shortName(r.name)}${tropCode(r.sap) ? " (" + tropCode(r.sap) + ")" : ""}${r.fromOwn ? `  [${r.fromOwn} from own stock${r.ownName ? ": " + shortName(r.ownName) + (r.ownTrop && r.ownTrop !== "TBD" ? " (" + r.ownTrop + ")" : "") : ""}]` : ""}`).join("\n");
   copyText(txt, "Pick list copied. Paste it into WhatsApp");
 };
 ACT.qcDeliverAsk = () => { S.qcLockView = null; const Dl = qcDelivery(); part("qc-confirm", `<div class="confirm" style="margin-top:12px;background:var(--tint-soft);color:var(--tint)"><span><b>Delivered to ${esc(S.qcPlatform)}?</b> ${nf(Dl.crates)} crates come off stock and ${rs(Dl.value)} counts as sales today.</span><span class="hstack gap-8"><button class="btn btn-sm btn-secondary" data-act="qcDeliverNo">Not yet</button><button class="btn btn-sm btn-primary" data-act="qcDeliver">Yes, delivered</button></span></div>`); };
@@ -2645,7 +2660,7 @@ ACT.qcPOSheet = (el) => {
 ACT.qcDeliver = () => {
   const Dl = qcDelivery(), now = iso(NOW()); if (!Dl.crates) return;
   S.qcDispatchOn = null;
-  Dl.rows.forEach((r) => { const qc = qcBySap[r.sap], own = stockBySap[r.sap]; if (qc) { qc.crates -= r.fromQC; qc.ea = qc.crates * (qc.upc || 1); } if (own && r.fromOwn) { own.ea -= r.fromOwn * own.upc; own.crates = own.ea / own.upc; } });
+  Dl.rows.forEach((r) => { const qc = qcBySap[r.sap], own = stockBySap[r.ownSap || ownSapFor(r.sap)]; if (qc) { qc.crates -= r.fromQC; qc.ea = qc.crates * (qc.upc || 1); } if (own && r.fromOwn) { own.ea -= r.fromOwn * own.upc; own.crates = own.ea / own.upc; } });
   Dl.pos.forEach((p) => { const sent = (qcLinesByPO[p.po] || []).reduce((a, l) => { const r = Dl.rows.find((x) => x.sap === l.sap), share = r && r.pcs ? Math.min(l.pcs, Math.round((l.pcs / r.pcs) * r.sendPcs)) : 0; l.status = "Delivered"; l.delivered = share; l.accepted = share; l.short = 0; l.lapsed = l.pcs - share; l.valueAccepted = Math.round(share * l.price * 100) / 100; return a + share; }, 0); Object.assign(p, { status: "Delivered", deliveredOn: now, pcsDelivered: sent, pcsAccepted: sent, valueAccepted: (qcLinesByPO[p.po] || []).reduce((a, l) => a + (l.valueAccepted || 0), 0), fill: sent / p.pcs }); delete S.qcPicked[p.po]; });
   S.qcOverride[S.qcPlatform] = {}; closeSheet();
   logActivity("QC delivered", S.qcPlatform, `${Dl.pos.length} PO(s), ${Dl.crates} crates`); render(); toast(`${Dl.crates} crates delivered to ${S.qcPlatform} · ${rs(Dl.pos.reduce((a, p) => a + (p.valueAccepted || 0), 0))} added to sales`, "truck");
@@ -2921,7 +2936,7 @@ const qcLocks = () => (D.qcPickLocks = D.qcPickLocks || []);
 function qcLockOf(po) { return qcLocks().find((l) => l.pos.includes(po)) || null; }
 function qcHeld(sap) { let q = 0, o = 0; qcLocks().forEach((l) => l.rows.forEach((r) => { if (r.sap === sap) { q += r.fromQC || 0; o += r.fromOwn || 0; } })); return { q, o }; }
 /* crates of SahiReach stock not held for a sent QC pick list (what distributors can still be given) */
-const ownHeldEA = (sap) => { const st = stockBySap[sap]; return st && st.upc ? qcHeld(sap).o * st.upc : 0; };
+const ownHeldEA = (sap) => { const st = stockBySap[sap]; return st && st.upc ? (typeof ownHeldCr === "function" ? ownHeldCr(sap) : qcHeld(sap).o) * st.upc : 0; };
 function qcLockDl(L) {
   const pos = L.pos.map((po) => D.qcPOs.find((p) => p.po === po)).filter(Boolean), rows = L.rows.map((r) => ({ ...r }));
   return { pos, rows, crates: rows.reduce((a, r) => a + (r.send || 0), 0), value: rows.reduce((a, r) => a + (r.sendValue || 0), 0), min: L.platform === "Swiggy" ? D.qcPick.minSwiggy : D.qcPick.minZepto, locked: L };
@@ -2933,7 +2948,7 @@ function qcDelivery() {
 function qcLockNow(via, Dl) {
   Dl = Dl || qcDeliveryLive(); if (!Dl.rows.length || !Dl.crates) return null;
   const base = "QCL-" + stamp(NOW()); let id = base, k = 1; while (qcLocks().some((l) => l.id === id)) id = base + "-" + ++k;
-  const L = { id, platform: S.qcPlatform, pos: Dl.pos.map((p) => p.po), rows: Dl.rows.map((r) => ({ sap: r.sap, name: r.name, pcs: r.pcs, ppc: r.ppc, full: r.full, qcCr: r.qcCr, ownCr: r.ownCr, fromQC: r.fromQC, fromOwn: r.fromOwn, send: r.send, sendPcs: r.sendPcs, notSent: r.notSent, extra: r.extra, value: r.value, sendValue: r.sendValue, edited: r.edited })), crates: Dl.crates, value: Math.round(Dl.value * 100) / 100, at: iso(NOW()), via, by: ME.name, dispatchOn: typeof qcDispatchOn === "function" ? qcDispatchOn() : null };
+  const L = { id, platform: S.qcPlatform, pos: Dl.pos.map((p) => p.po), rows: Dl.rows.map((r) => ({ sap: r.sap, ownSap: r.ownSap, name: r.name, pcs: r.pcs, ppc: r.ppc, full: r.full, qcCr: r.qcCr, ownCr: r.ownCr, fromQC: r.fromQC, fromOwn: r.fromOwn, send: r.send, sendPcs: r.sendPcs, notSent: r.notSent, extra: r.extra, value: r.value, sendValue: r.sendValue, edited: r.edited })), crates: Dl.crates, value: Math.round(Dl.value * 100) / 100, at: iso(NOW()), via, by: ME.name, dispatchOn: typeof qcDispatchOn === "function" ? qcDispatchOn() : null };
   qcLocks().push(L);
   L.pos.forEach((po) => { delete S.qcPicked[po]; }); S.qcOverride[L.platform] = {};
   const hq = L.rows.reduce((a, r) => a + (r.fromQC || 0), 0), ho = L.rows.reduce((a, r) => a + (r.fromOwn || 0), 0);
@@ -2981,6 +2996,47 @@ ACT.qcLockEditYes = () => {
   /* a PO on a sent pick list cannot be edited or cancelled until that pick list is unlocked */
   ["qcEditPO", "qcCancelAsk"].forEach((a) => { const f = ACT[a]; ACT[a] = (el, e) => { const L = qcLockOf(el && el.dataset && el.dataset.po); if (L) { toast(`PO ${el.dataset.po} is on a pick list that was sent. Open that pick list and tap Edit first.`, "alert"); return; } return f(el, e); }; });
 }
+
+/* ===== LINK QUICK COMMERCE PRODUCTS TO SAHIREACH PRODUCTS =====
+   Quick commerce sometimes lists a product under its own code (Strawberry Rush Oval Tub, Vanilla Magic Oval Tub…)
+   while SahiReach stock holds the same ice cream under another (New MRP-Strawberry Oval Tub…). Linking them lets a
+   Swiggy / Zepto delivery use SahiReach stock of the linked product when quick commerce stock is short.
+   D.qcLinks = { quick commerce code: SahiReach code }; with no link, the same code is used. */
+const qcLinks = () => D.qcLinks || {};
+const ownSapFor = (qcSap) => qcLinks()[qcSap] || qcSap;
+/* crates of SahiReach stock held for pick lists already sent, by SahiReach product */
+function ownHeldCr(ownSap) { let o = 0; (typeof qcLocks === "function" ? qcLocks() : []).forEach((l) => l.rows.forEach((r) => { if ((r.ownSap || ownSapFor(r.sap)) === ownSap) o += r.fromOwn || 0; })); return o; }
+/* the pending distributor orders holding a product's SahiReach stock */
+function ownReservedBy(ownSap) {
+  const out = []; D.orders.forEach((o) => { if (o.status !== "Pending") return; const ea = (linesByOrder[o.id] || []).filter((l) => l.sap === ownSap).reduce((a, l) => a + (l.ea || 0), 0); if (ea > 0) out.push({ id: o.id, dist: o.dist, ea }); });
+  return out;
+}
+/* a likely SahiReach product for a quick commerce product listed under its own code: same kind and pack, most words in common */
+const QL_SKIP = /^(new|mrp|np|oval|tub|tubs|ml|ltr|litre|litres|liter|x|pre|ov|premium|the|and|with|of)$/;
+const qlWords = (n) => key(n).replace(/butter\s*scotch/g, "butterscotch").replace(/choc\.?(olate)?\b|choco\b/g, "chocolate").replace(/[^a-z0-9 ]/g, " ").split(" ").filter((w) => w && !QL_SKIP.test(w) && !/\d/.test(w)); /* sizes are compared separately */
+const qlPack = (n) => { const m = key(n).replace(/\s+/g, "").match(/(\d+)x(\d+)(ml|ltr|l|litre|liter|litres)/); return m ? m[1] + "x" + (/l/.test(m[3]) && !/ml/.test(m[3]) ? +m[2] * 1000 : +m[2]) : ""; };
+function qcLinkGuess(q) {
+  if (stockBySap[q.sap]) return null;
+  const w = qlWords(q.name), pk = qlPack(q.name); let best = null, bs = 0;
+  D.stock.forEach((s) => { if (s.sap === q.sap) return; let sc = 0; const sw = qlWords(s.name); w.forEach((x) => { if (sw.includes(x)) sc += 2; }); if (pk && qlPack(s.name) === pk) sc += 2; else if (pk) sc -= 3; if (s.cat && q.cat && s.cat === q.cat) sc += 1; if (sc > bs) { bs = sc; best = s; } });
+  return bs >= 5 ? best : null;
+}
+ACT.qcLinkSheet = () => {
+  const L = qcLinks(), own = D.stock.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const rows = D.qcStock.slice().sort((a, b) => (!!stockBySap[a.sap] - !!stockBySap[b.sap]) || a.name.localeCompare(b.name)).map((q) => {
+    const cur = L[q.sap] || (stockBySap[q.sap] ? q.sap : ""), g = !L[q.sap] && !stockBySap[q.sap] ? qcLinkGuess(q) : null, link = L[q.sap] ? stockBySap[L[q.sap]] : null;
+    return `<div class="row ql-row"><span class="grow" style="min-width:0"><div class="row-title clip">${esc(shortName(q.name))}</div><div class="row-sub">${esc(q.trop || "")}${q.trop ? " · " : ""}${nf(q.crates || 0, 1)} crates in quick commerce stock${link ? ` · SahiReach has ${nf(stockSplit(link).cr.avail, 1)} free` : ""}${g ? ` · <button class="btn-plain" data-act="qcLinkUse" data-q="${esc(q.sap)}" data-o="${esc(g.sap)}">Suggested: ${esc(shortName(g.name))}</button>` : ""}</div></span>
+      <select class="select sm ql-sel" data-in="qcLink" data-q="${esc(q.sap)}" aria-label="SahiReach product for ${esc(q.name)}"><option value="">${stockBySap[q.sap] ? "Same product" : "Not linked"}</option>${own.filter((s) => s.sap !== q.sap).map((s) => `<option value="${esc(s.sap)}"${L[q.sap] === s.sap ? " selected" : ""}>${esc(shortName(s.name))}${s.trop && s.trop !== "TBD" ? " · " + esc(s.trop) : ""}</option>`).join("")}</select></div>`;
+  }).join("");
+  openSheet("Link quick commerce products", `<div class="row-sub" style="margin-bottom:12px">When quick commerce stock is short, a Swiggy / Zepto delivery can use SahiReach stock. Products with the same code are linked already; link the ones quick commerce lists under a different code to the SahiReach product they are.</div><div class="group">${rows}</div>`, `<button class="btn btn-primary" data-act="closeSheet">Done</button>`, true);
+};
+function qcLinkSet(q, o) {
+  D.qcLinks = D.qcLinks || {}; const was = D.qcLinks[q];
+  if (o && o !== q) D.qcLinks[q] = o; else delete D.qcLinks[q];
+  if (was !== D.qcLinks[q]) logActivity("Quick commerce product linked", (qcBySap[q] || {}).name || q, o && o !== q ? "Uses SahiReach stock of " + ((stockBySap[o] || {}).name || o) : "Link removed");
+}
+IN.qcLink = (el) => { qcLinkSet(el.dataset.q, el.value); toast(el.value ? "Linked" : "Link removed", "check"); if (S.route === "quick") render(); };
+ACT.qcLinkUse = (el) => { qcLinkSet(el.dataset.q, el.dataset.o); ACT.qcLinkSheet(); if (S.route === "quick") render(); toast("Linked", "check"); };
 
 /* ===== STOCK ===== */
 const cratesOf = (s) => (s.upc ? s.ea / s.upc : s.crates || 0);
@@ -3676,7 +3732,7 @@ function stkMoves(from, to) {
     (t.lines || []).forEach((l) => {
       const u = stkUpc(l.sap);
       if (t.kind === "purchase") { O(l.sap).fromQC += l.crates * u; Q(l.sap).dist -= l.crates; }
-      else if (t.kind === "credit") { O(l.sap).toPlat -= l.crates * u; Q(l.sap)[/zepto/i.test(t.ref || "") ? "zp" : "sw"] += l.crates; /* sent from SahiReach stock, not from quick commerce stock */ }
+      else if (t.kind === "credit") { O(l.sap).toPlat -= l.crates * u; Q(l.qcSap || l.sap)[/zepto/i.test(t.ref || "") ? "zp" : "sw"] += l.crates; /* sent from SahiReach stock, not from quick commerce stock */ }
     });
   });
   D.qcPOs.forEach((p) => {
@@ -4729,7 +4785,7 @@ function afterRender() { bindCharts(); }
 /* viewers: looking, searching, filtering and downloading work; anything that would change data is greyed out and refused */
 /* an action that finishes later (sending an email, reading a file) saves what it changed when it finishes */
 const afterAsync = (r) => { if (r && typeof r.then === "function") r.then(() => setTimeout(() => typeof queueSave === "function" && queueSave(), 0), () => {}); return r; };
-const VIEW_ACTS = new Set("purF purExcel purOpen hpoPdf itemExcel reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
+const VIEW_ACTS = new Set("qcLinkSheet purF purExcel purOpen hpoPdf itemExcel reconSheet reconExcel rcShowAll stkPool stkAsOn stkMonthDl stockFull noteOpen ssCmp salesShare ssCopy ssDownload ssShare actWho actMore qcLockOpen soPrint xferSheet stockExcel account pwOpen pwCancel pwSave backInStock bisPreview chartMode closeSheet cmd cmdClose cmdRun copyPO copyPick dashReset distSheet drill lineInfo logiExcel logiF mailPick nav nav2 orderSheet pendingBackSheet pickExcel poSheet priceNudge productSheet purchaseSheet qcPOSheet qcPickCopy qcPickExcel reloadLatest replExcel replFilter replToggle saveRetry seeAll seeExcel seg signOut slowDays slowExcel slowList slowSheet soPreview stockCat stockLow toggleOwn whyDist whyProd".split(" "));
 const VIEW_INS = new Set("stkDate stkMonth ssMonth actQ specialQ cmdQ dashF distQ ordersQ seeQ setupQ stockQ logiTr".split(" "));
 /* the books: anyone who sees them can look (acv…); owners and the accountant can enter (ace…); staff and owners can also record invoice numbers at dispatch */
 const acOK = (n) => /^acv/.test(n || "") || (ROLE === "accountant" && /^ace/.test(n || ""));
@@ -5065,7 +5121,7 @@ function qcPickEmail(Dl, xlsxB64) {
     preheader: `${S.qcPlatform} delivery · ${nf(Dl.crates)} crates`,
     heading: `${S.qcPlatform} delivery pick list`,
     paras: ["Hi Tropicana team,", `Please pick the following for the ${escE(S.qcPlatform)} delivery to <b>${escE(to)}</b>. The Excel sheet is attached.`],
-    blocks: [factsE([["Expected dispatch", escE(dateLong(qcDispatchOn()))], ["POs", escE(Dl.pos.map((p) => p.po).join(", "))], ["Crates", nf(Dl.crates)]]), tableE(["Product", "Code", "From QC stock", "From own stock", "Crates"], Dl.rows.filter((r) => r.send).map((r) => [escE(shortName(r.name)), escE(tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "–"), nf(r.fromQC), nf(r.fromOwn), `<b>${nf(r.send)}</b>`]), ["Total", "", nf(Dl.rows.reduce((a, r) => a + r.fromQC, 0)), nf(Dl.rows.reduce((a, r) => a + r.fromOwn, 0)), nf(Dl.crates)])],
+    blocks: [factsE([["Expected dispatch", escE(dateLong(qcDispatchOn()))], ["POs", escE(Dl.pos.map((p) => p.po).join(", "))], ["Crates", nf(Dl.crates)]]), tableE(["Product", "Code", "From QC stock", "From own stock", "Crates"], Dl.rows.filter((r) => r.send).map((r) => [escE(shortName(r.name)) + (r.fromOwn && r.ownName ? `<div style="color:#6e6e73;font-size:12px">own stock: ${escE(shortName(r.ownName))}</div>` : ""), escE((tropCode(r.sap) || (qcBySap[r.sap] || {}).trop || "–") + (r.fromOwn && r.ownName && r.ownTrop ? " / " + r.ownTrop : "")), nf(r.fromQC), nf(r.fromOwn), `<b>${nf(r.send)}</b>`]), ["Total", "", nf(Dl.rows.reduce((a, r) => a + r.fromQC, 0)), nf(Dl.rows.reduce((a, r) => a + r.fromOwn, 0)), nf(Dl.crates)])],
     signoff: "Thank you,",
   });
   return { kind: "qc_pick_list", ref: S.qcPlatform + " " + Dl.pos.map((p) => p.po).join(","), to: emails(D.qcPick.tropEmail), cc: [], subject: `SahiReach ${S.qcPlatform} pick list for dispatch ${dmyK(qcDispatchOn()).slice(0, 5)} · ${nf(Dl.crates)} crates`, html, text: textOf(["Hi Tropicana team,", "", `${S.qcPlatform} delivery to ${to}. POs ${Dl.pos.map((p) => p.po).join(", ")}.`, `Expected dispatch: ${dateLong(qcDispatchOn())}`, "", ...Dl.rows.filter((r) => r.send).map((r) => `  ${r.send} x ${shortName(r.name)}`), "", "Team SahiReach"]), attachments: xlsxB64 ? [{ filename: `SahiReach ${S.qcPlatform} pick list ${stampOf(now).replace(":", "")}.xlsx`, content: xlsxB64 }] : [] };
@@ -5527,7 +5583,7 @@ const xferEst = (t) => t.lines.reduce((a, l) => { const st = stockBySap[l.sap] |
 function xferAdd(kind, ref, lines) {
   D.transfers = D.transfers || [];
   const base = "TRF-" + stamp(NOW()); let id = base, k = 1; while (D.transfers.some((t) => t.id === id)) id = base + "-" + ++k;
-  const t = { id, time: iso(NOW()), kind, ref, lines: lines.map((l) => ({ sap: l.sap, name: l.name, crates: l.crates })), crates: lines.reduce((a, l) => a + l.crates, 0), status: "Pending" };
+  const t = { id, time: iso(NOW()), kind, ref, lines: lines.map((l) => Object.assign({ sap: l.sap, name: l.name, crates: l.crates }, l.qcSap && l.qcSap !== l.sap ? { qcSap: l.qcSap } : {})), crates: lines.reduce((a, l) => a + l.crates, 0), status: "Pending" };
   D.transfers.unshift(t);
   logActivity(kind === "credit" ? "Credit note needed" : "Purchase invoice pending", id, `${nf(t.crates)} crates of ${XFER[kind].from} · ${ref}`);
   return t;
@@ -5611,7 +5667,7 @@ ACT.xferOK = (el) => { S.xferOK = el.dataset.sig; part(el.dataset.t, ""); const 
   };
   const qd = ACT.qcDeliver;
   ACT.qcDeliver = (el, e) => {
-    const Dl = qcDelivery(), own = Dl.rows.filter((r) => r.fromOwn > 0).map((r) => ({ sap: r.sap, name: r.name, crates: r.fromOwn })), plat = S.qcPlatform, pos = Dl.pos.map((p) => p.po).join(", ");
+    const Dl = qcDelivery(), own = Dl.rows.filter((r) => r.fromOwn > 0).map((r) => { const os = r.ownSap || ownSapFor(r.sap); return { sap: os, qcSap: r.sap, name: (stockBySap[os] || {}).name || r.name, crates: r.fromOwn }; }), plat = S.qcPlatform, pos = Dl.pos.map((p) => p.po).join(", ");
     qd(el, e);
     if (own.length && Dl.crates) { xferAdd("credit", `${plat} delivery · PO ${pos}`, own); S.xferOK = null; render(); }
   };
